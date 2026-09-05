@@ -1,0 +1,21 @@
+# MediaMTX RTSP-to-WebRTC gateway configuration.
+# Replace the camera source URLs with the real RTSP endpoints.
+
+logLevel: info
+
+rtsp: yes
+rtspAddress: :8554
+
+webrtc: yes
+webrtcAddress: :8889
+
+paths:
+  cam-01:
+    source: rtsp://camera01.srnhs.local:554/live/ch0
+    sourceProtocol: tcp
+  cam-02:
+    source: rtsp://camera02.srnhs.local:554/live/ch0
+    sourceProtocol: tcp
+  cam-03:
+    source: rtsp://camera03.srnhs.local:554/live/ch0
+    sourceProtocol: tcp
