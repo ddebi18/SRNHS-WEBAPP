@@ -97,6 +97,8 @@ export interface RecognitionEvent {
   student_lrn?: string;
   student_photo?: string;
   section_name?: string;
+  camera_id?: string;
+  gate_id?: string;
   event_type: EventType;
   room_id?: string | null;
   room_name?: string;

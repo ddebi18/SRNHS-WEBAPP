@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS public.recognition_events (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   student_id UUID NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
   event_type event_type NOT NULL,
+  camera_id TEXT,
+  gate_id TEXT,
   room_id UUID REFERENCES public.rooms(id) ON DELETE SET NULL,
   subject_id UUID REFERENCES public.subjects(id) ON DELETE SET NULL,
   confidence_score NUMERIC(5,4) NOT NULL CHECK (confidence_score BETWEEN 0 AND 1),

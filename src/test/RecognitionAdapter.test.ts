@@ -27,4 +27,20 @@ describe('MockRecognitionAdapter', () => {
 
     unsubscribe();
   });
+
+  it('preserves camera direction, identity, and confidence for recognition events', async () => {
+    const event = await mockRecognitionAdapter.logRecognitionEvent({
+      student_id: 'std-test',
+      event_type: 'exit',
+      camera_id: 'cam-02',
+      gate_id: 'gate-02',
+      confidence_score: 0.82,
+    });
+
+    expect(event.event_type).toBe('exit');
+    expect(event.camera_id).toBe('cam-02');
+    expect(event.gate_id).toBe('gate-02');
+    expect(event.confidence_score).toBe(0.82);
+    expect(event.source).toBe('camera');
+  });
 });

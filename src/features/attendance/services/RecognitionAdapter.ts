@@ -18,6 +18,8 @@ export interface RecognitionAdapter {
   logRecognitionEvent(eventData: {
     student_id: string;
     event_type: EventType;
+    camera_id: string;
+    gate_id: string;
     room_id?: string;
     room_name?: string;
     confidence_score: number;

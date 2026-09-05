@@ -57,6 +57,8 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
       student_lrn: row.students?.lrn,
       student_photo: row.students?.photo_urls?.[0],
       event_type: row.event_type,
+      camera_id: row.camera_id,
+      gate_id: row.gate_id,
       room_name: row.rooms?.name,
       subject_title: row.subjects?.title,
       confidence_score: row.confidence_score,
@@ -96,6 +98,8 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
   async logRecognitionEvent(eventData: {
     student_id: string;
     event_type: EventType;
+    camera_id: string;
+    gate_id: string;
     room_id?: string;
     room_name?: string;
     confidence_score: number;
@@ -107,6 +111,8 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
       .insert({
         student_id: eventData.student_id,
         event_type: eventData.event_type,
+        camera_id: eventData.camera_id,
+        gate_id: eventData.gate_id,
         room_id: eventData.room_id || null,
         confidence_score: eventData.confidence_score,
         source: 'camera',

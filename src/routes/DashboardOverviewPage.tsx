@@ -5,7 +5,7 @@ import type { Variants } from 'framer-motion';
 import { useRole } from '@/hooks/useRole';
 import { SITE_CONFIG } from '@/config/siteConfig';
 import { RecognitionEvent } from '@/types/domain.types';
-import { mockRecognitionAdapter } from '@/features/attendance/services/MockRecognitionAdapter';
+import { supabaseRecognitionAdapter } from '@/features/attendance/services/SupabaseRecognitionAdapter';
 import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
 import { LiveCameraFeedCard } from '@/features/attendance/components/LiveCameraFeedCard';
 import {
@@ -80,10 +80,10 @@ export const DashboardOverviewPage: React.FC = () => {
     hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
   useEffect(() => {
-    mockRecognitionAdapter.getEvents({ limit: 6 }).then(setRecentEvents);
+    supabaseRecognitionAdapter.getEvents({ limit: 6 }).then(setRecentEvents);
     mockNotificationAdapter.getSmsLogs(100).then(logs => setSmsCount(logs.length));
 
-    const unsub1 = mockRecognitionAdapter.subscribeToEvents(evt => {
+    const unsub1 = supabaseRecognitionAdapter.subscribeToEvents(evt => {
       setRecentEvents(prev => [evt, ...prev.slice(0, 5)]);
     });
     const unsub2 = mockNotificationAdapter.subscribeToSms(() => {

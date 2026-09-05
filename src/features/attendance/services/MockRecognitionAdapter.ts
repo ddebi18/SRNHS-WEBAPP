@@ -115,10 +115,12 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
       student_lrn: eventData.student_lrn || '109823456701',
       student_photo: eventData.student_photo || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80',
       section_name: eventData.section_name || 'Grade 10 – Sampaguita',
+      camera_id: eventData.camera_id,
+      gate_id: eventData.gate_id,
       event_type: eventData.event_type || 'entry',
       room_name: eventData.room_name || 'Main Gate Turnstile 01',
       subject_title: eventData.subject_title,
-      confidence_score: Number((0.95 + Math.random() * 0.048).toFixed(4)),
+      confidence_score: eventData.confidence_score ?? Number((0.95 + Math.random() * 0.048).toFixed(4)),
       source: 'camera',
       captured_at: new Date().toISOString(),
     };
@@ -130,6 +132,8 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
   async logRecognitionEvent(eventData: {
     student_id: string;
     event_type: EventType;
+    camera_id: string;
+    gate_id: string;
     room_id?: string;
     room_name?: string;
     confidence_score: number;
@@ -137,6 +141,8 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     return this.simulateScan({
       student_id: eventData.student_id,
       event_type: eventData.event_type,
+      camera_id: eventData.camera_id,
+      gate_id: eventData.gate_id,
       room_name: eventData.room_name || 'Main Gate Turnstile 01',
       confidence_score: eventData.confidence_score,
     });

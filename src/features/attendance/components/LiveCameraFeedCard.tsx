@@ -15,6 +15,7 @@ import { useFaceDetection } from '@/features/faceRegistration/hooks/useFaceDetec
 import { useFaceRecognition } from '../hooks/useFaceRecognition';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
+import type { EventType } from '@/types/domain.types';
 
 interface LiveCameraFeedCardProps {
   className?: string;
@@ -37,9 +38,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   }, []);
 
   const cameras = [
-    { id: 'cam-01', name: 'Gate 01 — Main Entrance Turnstile', location: 'Main Gate', node: 'Node-Turnstile-01' },
-    { id: 'cam-02', name: 'Gate 02 — High School Quadrangle',  location: 'Junior High Wing', node: 'Node-Turnstile-02' },
-    { id: 'cam-03', name: 'Gate 03 — Senior High Annex Gate', location: 'SHS Building', node: 'Node-Turnstile-03' },
+    { id: 'cam-01', name: 'Gate 01 — Main Entrance Turnstile', location: 'Main Gate', node: 'Node-Turnstile-01', eventType: (import.meta.env.VITE_TURNSTILE_CAM_01_EVENT_TYPE || 'entry') as EventType },
+    { id: 'cam-02', name: 'Gate 02 — High School Quadrangle',  location: 'Junior High Wing', node: 'Node-Turnstile-02', eventType: (import.meta.env.VITE_TURNSTILE_CAM_02_EVENT_TYPE || 'entry') as EventType },
+    { id: 'cam-03', name: 'Gate 03 — Senior High Annex Gate', location: 'SHS Building', node: 'Node-Turnstile-03', eventType: (import.meta.env.VITE_TURNSTILE_CAM_03_EVENT_TYPE || 'entry') as EventType },
   ];
 
   const currentCam = cameras.find(c => c.id === selectedCamera) || cameras[0]!;
@@ -87,7 +88,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     loggedMatchesRef.current.set(matchedStudent.id, Date.now());
     supabaseRecognitionAdapter.logRecognitionEvent({
       student_id: matchedStudent.id,
-      event_type: 'entry',
+      event_type: currentCam.eventType,
+      camera_id: currentCam.id,
+      gate_id: currentCam.id,
       room_name: currentCam.name,
       confidence_score: matchedStudent.confidence,
     }).catch(error => {
