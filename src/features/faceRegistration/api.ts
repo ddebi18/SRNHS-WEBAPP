@@ -352,7 +352,7 @@ async function savePhotosToDb(studentId: string, photos: { front?: string; left?
   }
 }
 
-async function getPhotosFromDb(studentId: string): Promise<{ front?: string; left?: string; right?: string } | null> {
+export async function getPhotosFromDb(studentId: string): Promise<{ front?: string; left?: string; right?: string } | null> {
   try {
     const db = await openFaceDb();
     if (!db) return null;
@@ -409,7 +409,7 @@ async function resizeBlobToDataUrl(blob: Blob, maxDim = 420): Promise<string> {
   });
 }
 
-function getStoredStudents(): Student[] {
+export function getStoredStudents(): Student[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY_STUDENTS);
     if (raw) return JSON.parse(raw);
@@ -421,12 +421,35 @@ function getStoredStudents(): Student[] {
 }
 
 export async function fetchRegisteredStudents(): Promise<Student[]> {
-  return getStoredStudents().filter(student => (
+  const students = getStoredStudents();
+  // Hydrate all registered students with high-res photos from IndexedDB
+  const hydrated = await Promise.all(
+    students.map(async s => {
+      if (s.faceRegistrationStatus === 'registered' || s.registeredPhotos?.front || s.photoUrl) {
+        const dbPhotos = await getPhotosFromDb(s.id);
+        if (dbPhotos) {
+          return {
+            ...s,
+            faceRegistrationStatus: 'registered' as const,
+            photoUrl: dbPhotos.front || s.photoUrl,
+            registeredPhotos: {
+              front: dbPhotos.front || s.registeredPhotos?.front || s.photoUrl,
+              left: dbPhotos.left || s.registeredPhotos?.left,
+              right: dbPhotos.right || s.registeredPhotos?.right,
+            },
+          };
+        }
+      }
+      return s;
+    })
+  );
+
+  return hydrated.filter(student => (
     student.faceRegistrationStatus === 'registered' && Boolean(student.registeredPhotos?.front || student.photoUrl)
   ));
 }
 
-function saveStoredStudents(students: Student[]): void {
+export function saveStoredStudents(students: Student[]): void {
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(students));
   } catch (err) {
@@ -434,7 +457,93 @@ function saveStoredStudents(students: Student[]): void {
   }
 }
 
-function getStoredSections(): Section[] {
+export async function deleteStudent(studentId: string): Promise<void> {
+  const students = getStoredStudents().filter(s => s.id !== studentId);
+  saveStoredStudents(students);
+  try {
+    const db = await openFaceDb();
+    if (db) {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).delete(studentId);
+    }
+  } catch {}
+}
+
+export async function addNewStudent(studentData: {
+  id?: string;
+  name: string;
+  studentNumber: string; // LRN
+  sectionId: string;
+  sectionName?: string;
+  guardianName?: string;
+  guardianPhone?: string;
+  photoUrl?: string;
+}): Promise<Student> {
+  const students = getStoredStudents();
+  const sections = getStoredSections();
+  const section = sections.find(s => s.id === studentData.sectionId);
+
+  const cleanLrn = studentData.studentNumber.trim();
+  const existingIndex = students.findIndex(s => s.studentNumber === cleanLrn);
+
+  const student: Student = {
+    id: studentData.id || (existingIndex >= 0 ? students[existingIndex]!.id : `std-${Date.now()}`),
+    name: studentData.name.trim(),
+    studentNumber: cleanLrn,
+    sectionId: studentData.sectionId,
+    sectionName: studentData.sectionName || section?.name || 'Grade 10 – Sampaguita',
+    faceRegistrationStatus: existingIndex >= 0 ? students[existingIndex]!.faceRegistrationStatus : 'unregistered',
+    lastRegisteredAt: existingIndex >= 0 ? students[existingIndex]!.lastRegisteredAt : undefined,
+    photoUrl: studentData.photoUrl || (existingIndex >= 0 ? students[existingIndex]!.photoUrl : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=350&auto=format&fit=crop&q=80'),
+    registeredPhotos: existingIndex >= 0 ? students[existingIndex]!.registeredPhotos : undefined,
+    guardianName: studentData.guardianName?.trim() || 'Parent / Guardian',
+    guardianPhone: studentData.guardianPhone?.trim() || '+639170000000',
+  };
+
+  if (existingIndex >= 0) {
+    students[existingIndex] = student;
+  } else {
+    students.push(student);
+  }
+
+  saveStoredStudents(students);
+
+  // If Supabase is configured, also attempt to insert into Supabase
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const nameParts = student.name.split(' ');
+      const firstName = nameParts.slice(0, -1).join(' ') || nameParts[0] || 'Student';
+      const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
+
+      const { data: inserted } = await supabase.from('students').insert({
+        lrn: student.studentNumber,
+        first_name: firstName,
+        last_name: lastName,
+        gender: 'Not Specified',
+        grade_level: section?.gradeLevel === 'Grade 12' ? 12 : section?.gradeLevel === 'Grade 11' ? 11 : 10,
+        section_id: student.sectionId,
+        parent_consent: true,
+        consent_date: new Date().toISOString().split('T')[0],
+      }).select().single();
+
+      if (inserted && (student.guardianName || student.guardianPhone)) {
+        await supabase.from('student_guardians').insert({
+          student_id: inserted.id,
+          name: student.guardianName,
+          relationship: 'Guardian',
+          phone_number: student.guardianPhone,
+          is_primary: true,
+        });
+      }
+    } catch (e) {
+      console.warn('Supabase student save fallback:', e);
+    }
+  }
+
+  return student;
+}
+
+export function getStoredSections(): Section[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY_SECTIONS);
     if (raw) return JSON.parse(raw);
@@ -446,8 +555,19 @@ function getStoredSections(): Section[] {
 }
 
 export async function fetchSections(): Promise<Section[]> {
-  await new Promise(r => setTimeout(r, 100));
-  return getStoredSections();
+  await new Promise(r => setTimeout(r, 50));
+  const sections = getStoredSections();
+  const students = getStoredStudents();
+
+  return sections.map(sec => {
+    const secStudents = students.filter(s => s.sectionId === sec.id);
+    const regStudents = secStudents.filter(s => s.faceRegistrationStatus === 'registered');
+    return {
+      ...sec,
+      totalStudents: secStudents.length,
+      registeredStudents: regStudents.length,
+    };
+  });
 }
 
 export async function fetchSectionRoster(sectionId: string): Promise<Student[]> {

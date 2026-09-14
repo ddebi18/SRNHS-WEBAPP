@@ -1,71 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRole } from '@/hooks/useRole';
 import { Student, StudentViolation } from '@/types/domain.types';
 import { DataTable, Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
-import { ConsentBadge, ViolationSeverityBadge } from '@/components/ui/StatusBadge';
-import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Image as ImageIcon, Eye } from 'lucide-react';
-
-const INITIAL_STUDENTS: Student[] = [
-  {
-    id: 'std-101',
-    lrn: '109823456701',
-    first_name: 'Juan Carlos',
-    last_name: 'Garcia',
-    gender: 'Male',
-    grade_level: 10,
-    section_id: 'sec-101',
-    section_name: 'Grade 10 – Sampaguita',
-    parent_consent: true,
-    consent_date: '2026-06-01',
-    photo_urls: [
-      'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=300&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop&q=80',
-    ],
-    guardians: [
-      { id: 'g-1', student_id: 'std-101', name: 'Mrs. Elena Garcia', relationship: 'Mother', phone_number: '+639171234567', is_primary: true, created_at: '' },
-      { id: 'g-2', student_id: 'std-101', name: 'Mr. Carlos Garcia', relationship: 'Father', phone_number: '+639179998877', is_primary: false, created_at: '' },
-    ],
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'std-102',
-    lrn: '109823456702',
-    first_name: 'Sophia Nicole',
-    last_name: 'Reyes',
-    gender: 'Female',
-    grade_level: 10,
-    section_id: 'sec-101',
-    section_name: 'Grade 10 – Sampaguita',
-    parent_consent: true,
-    consent_date: '2026-06-05',
-    photo_urls: ['https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300&auto=format&fit=crop&q=80'],
-    guardians: [
-      { id: 'g-3', student_id: 'std-102', name: 'Mrs. Beatriz Reyes', relationship: 'Mother', phone_number: '+639189876543', is_primary: true, created_at: '' },
-    ],
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'std-103',
-    lrn: '109823456703',
-    first_name: 'Angelo Gabriel',
-    last_name: 'Mendoza',
-    gender: 'Male',
-    grade_level: 11,
-    section_id: 'sec-102',
-    section_name: 'Grade 11 – STEM A',
-    parent_consent: true,
-    consent_date: '2026-06-10',
-    photo_urls: ['https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop&q=80'],
-    guardians: [
-      { id: 'g-4', student_id: 'std-103', name: 'Mr. Gabriel Mendoza', relationship: 'Father', phone_number: '+639194443322', is_primary: true, created_at: '' },
-    ],
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-];
+import { ViolationSeverityBadge } from '@/components/ui/StatusBadge';
+import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Image as ImageIcon, Eye, CheckCircle2, AlertCircle, Trash2, ArrowRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { addNewStudent, getStoredStudents, getPhotosFromDb, deleteStudent } from '@/features/faceRegistration/api';
 
 const INITIAL_VIOLATIONS: StudentViolation[] = [
   {
@@ -82,9 +23,65 @@ const INITIAL_VIOLATIONS: StudentViolation[] = [
   },
 ];
 
+const SECTIONS_CONFIG = [
+  { id: 'sec-101', name: 'Grade 10 – Sampaguita', gradeLevel: 10 },
+  { id: 'sec-102', name: 'Grade 11 – STEM A', gradeLevel: 11 },
+  { id: 'sec-103', name: 'Grade 12 – ABM A', gradeLevel: 12 },
+];
+
+async function loadUnifiedStudents(): Promise<Student[]> {
+  const rawList = getStoredStudents();
+  return Promise.all(
+    rawList.map(async fs => {
+      const nameParts = fs.name.split(' ');
+      const first = nameParts.slice(0, -1).join(' ') || nameParts[0] || 'Student';
+      const last = nameParts.length > 1 ? nameParts[nameParts.length - 1]! : '';
+      const sec = SECTIONS_CONFIG.find(sc => sc.id === fs.sectionId) || SECTIONS_CONFIG[0]!;
+
+      // Hydrate high-res photos from IndexedDB
+      const dbPhotos = await getPhotosFromDb(fs.id);
+      const photoUrls: string[] = [];
+      if (dbPhotos?.front) photoUrls.push(dbPhotos.front);
+      if (dbPhotos?.left) photoUrls.push(dbPhotos.left);
+      if (dbPhotos?.right) photoUrls.push(dbPhotos.right);
+      if (photoUrls.length === 0) {
+        if (fs.registeredPhotos?.front) photoUrls.push(fs.registeredPhotos.front);
+        if (fs.registeredPhotos?.left) photoUrls.push(fs.registeredPhotos.left);
+        if (fs.registeredPhotos?.right) photoUrls.push(fs.registeredPhotos.right);
+        if (photoUrls.length === 0 && fs.photoUrl) photoUrls.push(fs.photoUrl);
+      }
+
+      return {
+        id: fs.id,
+        lrn: fs.studentNumber,
+        first_name: first,
+        last_name: last,
+        gender: 'Not Specified',
+        grade_level: sec.gradeLevel,
+        section_id: fs.sectionId,
+        section_name: fs.sectionName || sec.name,
+        parent_consent: true,
+        consent_date: fs.lastRegisteredAt ? fs.lastRegisteredAt.split('T')[0] : '2026-06-01',
+        photo_urls: photoUrls,
+        guardians: fs.guardianName ? [{
+          id: `g-${fs.id}`,
+          student_id: fs.id,
+          name: fs.guardianName,
+          relationship: 'Guardian',
+          phone_number: fs.guardianPhone || '+639170000000',
+          is_primary: true,
+          created_at: new Date().toISOString(),
+        }] : [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    })
+  );
+}
+
 export const StudentManager: React.FC = () => {
   const { isAdmin, user } = useRole();
-  const [students, setStudents] = useState<Student[]>(INITIAL_STUDENTS);
+  const [students, setStudents] = useState<Student[]>([]);
   const [violations, setViolations] = useState<StudentViolation[]>(INITIAL_VIOLATIONS);
 
   // Detail Modal
@@ -95,23 +92,34 @@ export const StudentManager: React.FC = () => {
   const [lrn, setLrn] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [gender] = useState('Male');
-  const [gradeLevel, setGradeLevel] = useState(10);
-  const [sectionName, setSectionName] = useState('Grade 10 – Sampaguita');
+  const [sectionId, setSectionId] = useState('sec-101');
   const [guardianName, setGuardianName] = useState('');
   const [guardianPhone, setGuardianPhone] = useState('');
   const [guardianRel, setGuardianRel] = useState('Mother');
 
   // Violation Modal
   const [violationModalOpen, setViolationModalOpen] = useState(false);
-  const [violationStudentId, setViolationStudentId] = useState('std-101');
+  const [violationStudentId, setViolationStudentId] = useState('');
   const [violationTitle, setViolationTitle] = useState('');
   const [violationDesc, setViolationDesc] = useState('');
   const [violationSeverity, setViolationSeverity] = useState<'minor' | 'moderate' | 'severe'>('minor');
 
   const [enrollError, setEnrollError] = useState<string | null>(null);
 
-  const handleCreateStudent = (e: React.FormEvent) => {
+  // Reload unified students list
+  const refreshStudents = async () => {
+    const list = await loadUnifiedStudents();
+    setStudents(list);
+    if (list.length > 0 && !violationStudentId) {
+      setViolationStudentId(list[0]!.id);
+    }
+  };
+
+  useEffect(() => {
+    refreshStudents();
+  }, []);
+
+  const handleCreateStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     setEnrollError(null);
 
@@ -141,40 +149,36 @@ export const StudentManager: React.FC = () => {
       cleanPhone = rawPhone.startsWith('09') ? `+63${rawPhone.slice(1)}` : rawPhone.startsWith('9') ? `+63${rawPhone}` : rawPhone;
     }
 
-    const newStd: Student = {
-      id: `std-${Date.now()}`,
-      lrn: cleanLrn,
-      first_name: cleanFirst,
-      last_name: cleanLast,
-      gender,
-      grade_level: Number(gradeLevel),
-      section_id: `sec-${Date.now()}`,
-      section_name: sectionName,
-      parent_consent: true,
-      consent_date: new Date().toISOString().split('T')[0],
-      photo_urls: ['https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80'],
-      guardians: [
-        {
-          id: `g-${Date.now()}`,
-          student_id: `std-${Date.now()}`,
-          name: guardianName.trim() || 'Parent / Guardian',
-          relationship: guardianRel,
-          phone_number: cleanPhone,
-          is_primary: true,
-          created_at: new Date().toISOString(),
-        },
-      ],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+    const sec = SECTIONS_CONFIG.find(s => s.id === sectionId) || SECTIONS_CONFIG[0]!;
 
-    setStudents(prev => [...prev, newStd]);
+    // Register with unified store
+    await addNewStudent({
+      id: `std-${Date.now()}`,
+      name: `${cleanFirst} ${cleanLast}`,
+      studentNumber: cleanLrn,
+      sectionId: sec.id,
+      sectionName: sec.name,
+      guardianName: guardianName.trim() || 'Parent / Guardian',
+      guardianPhone: cleanPhone,
+    });
+
+    await refreshStudents();
+
     setLrn('');
     setFirstName('');
     setLastName('');
     setGuardianName('');
     setGuardianPhone('');
     setNewModalOpen(false);
+  };
+
+  const handleDeleteStudent = async (studentId: string, studentName: string) => {
+    if (!confirm(`Are you sure you want to remove ${studentName}?`)) return;
+    await deleteStudent(studentId);
+    await refreshStudents();
+    if (selectedStudent?.id === studentId) {
+      setSelectedStudent(null);
+    }
   };
 
   const handleCreateViolation = (e: React.FormEvent) => {
@@ -235,18 +239,44 @@ export const StudentManager: React.FC = () => {
       },
     },
     {
-      header: 'Biometric Consent',
-      cell: s => <ConsentBadge consent={s.parent_consent} date={s.consent_date} />,
+      header: 'Face Biometrics',
+      cell: s => (
+        s.photo_urls.length > 0 ? (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            Registered ({s.photo_urls.length} {s.photo_urls.length === 1 ? 'Angle' : 'Angles'})
+          </span>
+        ) : (
+          <Link
+            to="/face-registration"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
+          >
+            <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+            Capture Face <ArrowRight className="w-3 h-3" />
+          </Link>
+        )
+      ),
     },
     {
       header: 'Actions',
       cell: s => (
-        <button
-          onClick={() => setSelectedStudent(s)}
-          className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1"
-        >
-          <Eye className="w-3.5 h-3.5" /> Profile Details
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setSelectedStudent(s)}
+            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1"
+          >
+            <Eye className="w-3.5 h-3.5" /> Details
+          </button>
+          {isAdmin && (
+            <button
+              onClick={() => handleDeleteStudent(s.id, `${s.first_name} ${s.last_name}`)}
+              className="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
+              title="Delete student record"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       ),
     },
   ];
@@ -337,18 +367,31 @@ export const StudentManager: React.FC = () => {
             {/* Reference Photos */}
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1">
-                <ImageIcon className="w-4 h-4" /> Facial Recognition Reference Training Photos
+                <ImageIcon className="w-4 h-4" /> Facial Recognition Reference Training Photos ({selectedStudent.photo_urls.length})
               </h4>
-              <div className="flex gap-3">
-                {selectedStudent.photo_urls.map((url, i) => (
-                  <img
-                    key={i}
-                    src={url}
-                    alt={`Reference ${i + 1}`}
-                    className="w-24 h-24 rounded-2xl object-cover border-2 border-brand-500 shadow-sm"
-                  />
-                ))}
-              </div>
+              {selectedStudent.photo_urls.length > 0 ? (
+                <div className="grid grid-cols-3 gap-3">
+                  {selectedStudent.photo_urls.map((url, i) => (
+                    <div key={i} className="text-center">
+                      <img
+                        src={url}
+                        alt={`Angle ${i + 1}`}
+                        className="w-full h-28 rounded-2xl object-cover border-2 border-brand-500 shadow-sm"
+                      />
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 block font-medium">
+                        {i === 0 ? 'Front Angle' : i === 1 ? 'Left Profile' : 'Right Profile'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-300 flex items-center justify-between">
+                  <span>No facial reference photos registered yet.</span>
+                  <Link to="/face-registration" className="font-bold underline">
+                    Go to Face Registration
+                  </Link>
+                </div>
+              )}
             </div>
 
             {/* Guardian Contacts (1:N) */}
@@ -411,19 +454,19 @@ export const StudentManager: React.FC = () => {
               <input required type="text" value={lastName} onChange={e => setLastName(e.target.value)} className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Grade Level</label>
-              <select value={gradeLevel} onChange={e => setGradeLevel(Number(e.target.value))} className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">
-                <option value={10}>Grade 10</option>
-                <option value={11}>Grade 11</option>
-                <option value={12}>Grade 12</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Section</label>
-              <input required type="text" value={sectionName} onChange={e => setSectionName(e.target.value)} className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
-            </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Section & Grade Level</label>
+            <select
+              value={sectionId}
+              onChange={e => setSectionId(e.target.value)}
+              className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+            >
+              {SECTIONS_CONFIG.map(sec => (
+                <option key={sec.id} value={sec.id}>
+                  {sec.name} (Grade {sec.gradeLevel})
+                </option>
+              ))}
+            </select>
           </div>
           <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
             <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">Primary Guardian Contact</h5>

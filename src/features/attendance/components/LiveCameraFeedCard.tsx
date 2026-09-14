@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcStream';
 import { useFaceDetection } from '@/features/faceRegistration/hooks/useFaceDetection';
 import { useFaceRecognition } from '../hooks/useFaceRecognition';
+import { getRecognitionStatusText } from '../lib/recognitionStatus';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
 import type { EventType } from '@/types/domain.types';
@@ -26,6 +27,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [streamState, setStreamState] = useState<'standby' | 'connecting' | 'live' | 'error'>('standby');
+  const [isVideoReady, setIsVideoReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const webRtcConnectionRef = useRef<WebRtcStreamConnection | null>(null);
   const loggedMatchesRef = useRef<Map<string, number>>(new Map());
@@ -59,8 +61,12 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const useWebcam = import.meta.env.VITE_TURNSTILE_USE_WEBCAM === 'true';
   const { stream: webcamStream, start: startWebcam, stop: stopWebcam } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
-  const { isFaceDetected, faceBox } = useFaceDetection(videoRef, 'front', hasVideoSource);
-  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent } = useFaceRecognition(videoRef, hasVideoSource);
+  const { isFaceDetected, faceBox, detectorError } = useFaceDetection(videoRef, 'front', hasVideoSource && isVideoReady);
+  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, isLive, isAnalyzing } = useFaceRecognition(videoRef, hasVideoSource);
+
+  useEffect(() => {
+    setIsVideoReady(false);
+  }, [selectedCamera, streamUrl, whepUrl, useWebcam]);
 
   useEffect(() => {
     if (!useWebcam) {
@@ -80,7 +86,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   }, [webcamStream]);
 
   useEffect(() => {
-    if (!matchedStudent || matchedStudent.confidence < 0.75) return;
+    if (!matchedStudent || matchedStudent.confidence < 0.48) return;
 
     const lastLoggedAt = loggedMatchesRef.current.get(matchedStudent.id) || 0;
     if (Date.now() - lastLoggedAt < 30_000) return;
@@ -212,28 +218,76 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
           {((useWebcam && webcamStream) || (!useWebcam && (streamUrl || whepUrl))) && (
             <video
               ref={videoRef}
-              src={streamUrl}
+              {...(!useWebcam && streamUrl ? { src: streamUrl } : {})}
               autoPlay
               muted
               playsInline
               onLoadStart={() => setStreamState('connecting')}
-              onPlaying={() => setStreamState('live')}
-              onError={() => setStreamState('error')}
+              onLoadedData={() => setIsVideoReady(true)}
+              onPlaying={() => {
+                setIsVideoReady(true);
+                setStreamState('live');
+              }}
+              onError={() => {
+                // Don't set error state for webcam mode (no src attribute to fail)
+                if (!useWebcam) setStreamState('error');
+              }}
               className="absolute inset-0 z-0 w-full h-full object-cover"
             />
           )}
 
-          {faceBox && (
-            <div
-              className="absolute z-10 border-2 border-emerald-400 rounded-lg pointer-events-none transition-all duration-150"
-              style={{
-                left: `${((faceBox.videoWidth - faceBox.x - faceBox.width) / faceBox.videoWidth) * 100}%`,
-                top: `${(faceBox.y / faceBox.videoHeight) * 100}%`,
-                width: `${(faceBox.width / faceBox.videoWidth) * 100}%`,
-                height: `${(faceBox.height / faceBox.videoHeight) * 100}%`,
-              }}
-            />
-          )}
+          {faceBox && (() => {
+            const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.70);
+            const isRecognized = Boolean(matchedStudent);
+            const isDetecting = !isRecognized && (isAnalyzing || !isRecognitionReady);
+
+            return (
+              <div
+                className={cn(
+                  'absolute z-10 border-2 rounded-lg pointer-events-none transition-all duration-150',
+                  isHighConfidence
+                    ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
+                    : isRecognized
+                    ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
+                    : isDetecting
+                    ? 'border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.3)]'
+                    : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)]'
+                )}
+                style={{
+                  left: `${(faceBox.x / faceBox.videoWidth) * 100}%`,
+                  top: `${(faceBox.y / faceBox.videoHeight) * 100}%`,
+                  width: `${(faceBox.width / faceBox.videoWidth) * 100}%`,
+                  height: `${(faceBox.height / faceBox.videoHeight) * 100}%`,
+                }}
+              >
+                <span
+                  className={cn(
+                    'absolute -top-7 left-0 px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider whitespace-nowrap shadow-lg flex items-center gap-1.5',
+                    isHighConfidence
+                      ? 'bg-emerald-500 text-slate-950'
+                      : isRecognized
+                      ? 'bg-emerald-500 text-slate-950'
+                      : isDetecting
+                      ? 'bg-sky-400 text-slate-950'
+                      : 'bg-rose-500 text-white'
+                  )}
+                >
+                  {isRecognized ? (
+                    `✓ ${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}%`
+                  ) : isDetecting ? (
+                    <>
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
+                      Detecting Face…
+                    </>
+                  ) : (
+                    'Unregistered Face'
+                  )}
+                </span>
+              </div>
+            );
+          })()}
+
+
 
           {/* Center Standby Viewfinder Placeholder */}
           {!hasVideoSource && <div className="relative z-10 my-auto text-center space-y-3 py-6">
@@ -268,18 +322,28 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               <span>LATENCY: <strong className="text-emerald-400">&lt;50ms</strong></span>
             </div>
             <div className="flex items-center gap-1.5 text-slate-300">
-              <ShieldCheck className="w-3 h-3 text-emerald-400" />
+              <ShieldCheck className={cn('w-3 h-3', isLive ? 'text-emerald-400' : 'text-amber-400')} />
               <span>
-                {matchedStudent
-                  ? `Match: ${matchedStudent.name} (${Math.round(matchedStudent.confidence * 100)}%)`
-                  : isRecognitionLoading
-                    ? 'Recognition: Loading'
-                    : isRecognitionReady && isFaceDetected
-                      ? 'Face detected: Unknown'
-                      : isFaceDetected
-                        ? 'Face Detection: Active'
-                        : 'Face Detection: Waiting'}
+                {detectorError
+                  ? `Face Detection Error: ${detectorError}`
+                  : getRecognitionStatusText({
+                  matchedStudent,
+                  isLoading: isRecognitionLoading,
+                  isReady: isRecognitionReady,
+                  isFaceDetected,
+                  isAnalyzing,
+                })}
               </span>
+              {isFaceDetected && (
+                <span className={cn(
+                  'ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase',
+                  isLive
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                )}>
+                  {isLive ? 'LIVE' : 'CHECKING…'}
+                </span>
+              )}
             </div>
           </div>
         </div>

@@ -85,7 +85,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
               <div
                 className="absolute border-2 border-emerald-400 rounded-lg pointer-events-none transition-all duration-150"
                 style={{
-                  left: `${((faceBox.videoWidth - faceBox.x - faceBox.width) / faceBox.videoWidth) * 100}%`,
+                  left: `${(faceBox.x / faceBox.videoWidth) * 100}%`,
                   top: `${(faceBox.y / faceBox.videoHeight) * 100}%`,
                   width: `${(faceBox.width / faceBox.videoWidth) * 100}%`,
                   height: `${(faceBox.height / faceBox.videoHeight) * 100}%`,

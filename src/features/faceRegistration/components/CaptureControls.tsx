@@ -19,14 +19,14 @@ export const CaptureControls: React.FC<CaptureControlsProps> = ({
   currentStep,
   consentConfirmed,
   isFaceDetected,
-  isCentered,
+  isCentered: _isCentered,
   isAllCaptured,
   isSubmitting,
   onCapture,
   onSubmit,
   onCancel,
 }) => {
-  const isCaptureDisabled = !consentConfirmed || !isFaceDetected || !isCentered;
+  const isCaptureDisabled = !consentConfirmed || !isFaceDetected;
 
   return (
     <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">

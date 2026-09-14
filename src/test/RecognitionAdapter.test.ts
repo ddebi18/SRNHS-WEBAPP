@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mockRecognitionAdapter } from '@/features/attendance/services/MockRecognitionAdapter';
+import { getRecognitionStatusText } from '@/features/attendance/lib/recognitionStatus';
 
 describe('MockRecognitionAdapter', () => {
   it('fetches initial mock recognition events', async () => {
@@ -42,5 +43,40 @@ describe('MockRecognitionAdapter', () => {
     expect(event.gate_id).toBe('gate-02');
     expect(event.confidence_score).toBe(0.82);
     expect(event.source).toBe('camera');
+  });
+
+  it('shows unknown when a detected face is not registered and analysis completed', () => {
+    expect(
+      getRecognitionStatusText({
+        matchedStudent: null,
+        isLoading: false,
+        isReady: true,
+        isFaceDetected: true,
+        isAnalyzing: false,
+      })
+    ).toBe('Face detected: Unknown');
+  });
+
+  it('shows detecting while a detected face is still being analyzed', () => {
+    expect(
+      getRecognitionStatusText({
+        matchedStudent: null,
+        isLoading: false,
+        isReady: true,
+        isFaceDetected: true,
+        isAnalyzing: true,
+      })
+    ).toBe('Face detected: Detecting...');
+  });
+
+  it('keeps waiting state until a face is detected', () => {
+    expect(
+      getRecognitionStatusText({
+        matchedStudent: null,
+        isLoading: false,
+        isReady: true,
+        isFaceDetected: false,
+      })
+    ).toBe('Face Detection: Waiting');
   });
 });

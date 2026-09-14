@@ -1,5 +1,7 @@
 import { RecognitionAdapter } from './RecognitionAdapter';
 import { RecognitionEvent, EventType } from '@/types/domain.types';
+import { getStoredStudents } from '@/features/faceRegistration/api';
+import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
 
 export const INITIAL_MOCK_EVENTS: RecognitionEvent[] = [
   {
@@ -108,24 +110,57 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
   }
 
   async simulateScan(eventData: Partial<RecognitionEvent>): Promise<RecognitionEvent> {
+    // Look up student from unified student database
+    const allStudents = getStoredStudents();
+    const student = allStudents.find(
+      s => s.id === eventData.student_id || s.studentNumber === eventData.student_id
+    );
+
+    const studentName = eventData.student_name || student?.name || 'Juan Carlos Garcia';
+    const studentLrn = eventData.student_lrn || student?.studentNumber || '109823456701';
+    const studentPhoto = eventData.student_photo || student?.registeredPhotos?.front || student?.photoUrl || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80';
+    const sectionName = eventData.section_name || student?.sectionName || 'Grade 10 – Sampaguita';
+    const guardianPhone = student?.guardianPhone || '+639171234567';
+    const locationName = eventData.room_name || 'Main Gate Turnstile 01';
+    const eventType = eventData.event_type || 'entry';
+
     const newEvt: RecognitionEvent = {
       id: `evt-sim-${Date.now()}`,
-      student_id: eventData.student_id || 'std-101',
-      student_name: eventData.student_name || 'Juan Carlos Garcia',
-      student_lrn: eventData.student_lrn || '109823456701',
-      student_photo: eventData.student_photo || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80',
-      section_name: eventData.section_name || 'Grade 10 – Sampaguita',
+      student_id: eventData.student_id || student?.id || 'std-101',
+      student_name: studentName,
+      student_lrn: studentLrn,
+      student_photo: studentPhoto,
+      section_name: sectionName,
       camera_id: eventData.camera_id,
       gate_id: eventData.gate_id,
-      event_type: eventData.event_type || 'entry',
-      room_name: eventData.room_name || 'Main Gate Turnstile 01',
+      event_type: eventType,
+      room_name: locationName,
       subject_title: eventData.subject_title,
       confidence_score: eventData.confidence_score ?? Number((0.95 + Math.random() * 0.048).toFixed(4)),
-      source: 'camera',
+      source: eventData.source || 'camera',
       captured_at: new Date().toISOString(),
     };
+
     this.events.unshift(newEvt);
     this.notifyListeners(newEvt);
+
+    // Automatically send real-time SMS notification to the student's guardian
+    try {
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const actionText = eventType === 'exit' ? 'exited campus via' : 'entered campus via';
+      const smsType = eventType === 'exit' ? 'gate_exit' : 'gate_entry';
+
+      mockNotificationAdapter.sendAlert({
+        student_id: newEvt.student_id,
+        student_name: studentName,
+        guardian_phone: guardianPhone,
+        message: `[SRNHS Alert] ${studentName} (LRN: ${studentLrn}) ${actionText} ${locationName} at ${timeStr}.`,
+        event_type: smsType,
+      }).catch(err => console.warn('SMS dispatch notice:', err));
+    } catch (smsErr) {
+      console.warn('SMS dispatch error:', smsErr);
+    }
+
     return newEvt;
   }
 

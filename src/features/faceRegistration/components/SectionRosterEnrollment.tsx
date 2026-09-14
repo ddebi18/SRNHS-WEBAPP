@@ -8,12 +8,14 @@ import {
   AlertCircle,
   ShieldCheck,
   BookOpen,
+  UserPlus,
 } from 'lucide-react';
 import { Student, Section, FaceRegistrationStatus } from '../types';
-import { fetchSections, fetchSectionRoster } from '../api';
+import { fetchSections, fetchSectionRoster, addNewStudent } from '../api';
 import { StudentRosterRow } from './StudentRosterRow';
 import { FaceCaptureModal } from './FaceCaptureModal';
 import { ViewRegisteredFaceModal } from './ViewRegisteredFaceModal';
+import { Modal } from '@/components/ui/Modal';
 import { cn } from '@/lib/utils';
 
 export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = ({
@@ -32,6 +34,17 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
   const [selectedStudentForViewing, setSelectedStudentForViewing] = useState<Student | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Enroll New Student Modal State
+  const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
+  const [enrollLrn, setEnrollLrn] = useState('');
+  const [enrollFirstName, setEnrollFirstName] = useState('');
+  const [enrollLastName, setEnrollLastName] = useState('');
+  const [enrollGuardianName, setEnrollGuardianName] = useState('');
+  const [enrollGuardianPhone, setEnrollGuardianPhone] = useState('');
+  const [enrollSectionId, setEnrollSectionId] = useState(selectedSectionId);
+  const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [isSubmittingEnroll, setIsSubmittingEnroll] = useState(false);
 
   // Load sections on mount
   useEffect(() => {
@@ -74,6 +87,70 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
     setToastMessage(`Biometric face registration for ${name} was verified and saved.`);
     setTimeout(() => setToastMessage(null), 4500);
     reloadRoster();
+  };
+
+  const handleEnrollStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEnrollError(null);
+
+    const cleanLrn = enrollLrn.trim();
+    const cleanFirst = enrollFirstName.trim();
+    const cleanLast = enrollLastName.trim();
+
+    if (!/^\d{12}$/.test(cleanLrn)) {
+      setEnrollError('Learner Reference Number (LRN) must be exactly 12 numeric digits.');
+      return;
+    }
+
+    if (!cleanFirst || !cleanLast) {
+      setEnrollError('First name and last name are required.');
+      return;
+    }
+
+    let cleanPhone = '+639170000000';
+    if (enrollGuardianPhone.trim()) {
+      const rawPhone = enrollGuardianPhone.trim().replace(/[\s-]/g, '');
+      if (!/^(\+639\d{9}|09\d{9}|9\d{9})$/.test(rawPhone)) {
+        setEnrollError('Guardian phone must be a valid Philippine mobile number (e.g. +639171234567 or 09171234567).');
+        return;
+      }
+      cleanPhone = rawPhone.startsWith('09') ? `+63${rawPhone.slice(1)}` : rawPhone.startsWith('9') ? `+63${rawPhone}` : rawPhone;
+    }
+
+    setIsSubmittingEnroll(true);
+    try {
+      const targetSec = sections.find(s => s.id === enrollSectionId) || sections.find(s => s.id === selectedSectionId) || sections[0]!;
+      const newStudent = await addNewStudent({
+        name: `${cleanFirst} ${cleanLast}`,
+        studentNumber: cleanLrn,
+        sectionId: targetSec.id,
+        sectionName: targetSec.name,
+        guardianName: enrollGuardianName.trim() || 'Parent / Guardian',
+        guardianPhone: cleanPhone,
+      });
+
+      if (selectedSectionId !== targetSec.id) {
+        setSelectedSectionId(targetSec.id);
+      } else {
+        reloadRoster();
+      }
+
+      fetchSections().then(setSections);
+
+      setToastMessage(`${newStudent.name} enrolled in ${targetSec.name}. You can now register their face.`);
+      setTimeout(() => setToastMessage(null), 5000);
+
+      setEnrollLrn('');
+      setEnrollFirstName('');
+      setEnrollLastName('');
+      setEnrollGuardianName('');
+      setEnrollGuardianPhone('');
+      setIsEnrollModalOpen(false);
+    } catch (err: any) {
+      setEnrollError(err?.message || 'Failed to enroll student.');
+    } finally {
+      setIsSubmittingEnroll(false);
+    }
   };
 
   // Filtered Students
@@ -130,8 +207,8 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
           </p>
         </div>
 
-        {/* Section Selector Dropdown */}
-        <div className="flex items-center gap-3">
+        {/* Section Selector Dropdown & Enroll Student Button */}
+        <div className="flex flex-wrap items-center gap-3">
           <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-[#2D6A4F]" />
             <select
@@ -146,6 +223,18 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
               ))}
             </select>
           </div>
+
+          <button
+            onClick={() => {
+              setEnrollSectionId(selectedSectionId);
+              setEnrollError(null);
+              setIsEnrollModalOpen(true);
+            }}
+            className="px-4 py-3 rounded-2xl bg-[#1B4332] hover:bg-[#2D6A4F] text-white text-xs font-bold flex items-center gap-2 shadow-card-sm transition-all"
+          >
+            <UserPlus className="w-4 h-4 text-emerald-300" />
+            <span>Enroll Student</span>
+          </button>
         </div>
       </div>
 
@@ -276,6 +365,114 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
           handleOpenCaptureModal(student);
         }}
       />
+
+      {/* Enroll New Student Modal */}
+      <Modal
+        isOpen={isEnrollModalOpen}
+        onClose={() => setIsEnrollModalOpen(false)}
+        title="Enroll New Student to Section"
+        subtitle="Add student to roster for biometric facial registration"
+      >
+        <form onSubmit={handleEnrollStudent} className="space-y-4">
+          {enrollError && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-700 dark:text-rose-300">
+              {enrollError}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+              LRN (Learner Reference Number - 12 Digits)
+            </label>
+            <input
+              required
+              maxLength={12}
+              type="text"
+              value={enrollLrn}
+              onChange={e => setEnrollLrn(e.target.value)}
+              placeholder="e.g. 109823456799"
+              className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">First Name</label>
+              <input
+                required
+                type="text"
+                value={enrollFirstName}
+                onChange={e => setEnrollFirstName(e.target.value)}
+                placeholder="First Name"
+                className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Last Name</label>
+              <input
+                required
+                type="text"
+                value={enrollLastName}
+                onChange={e => setEnrollLastName(e.target.value)}
+                placeholder="Last Name"
+                className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Target Section</label>
+            <select
+              value={enrollSectionId}
+              onChange={e => setEnrollSectionId(e.target.value)}
+              className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-medium"
+            >
+              {sections.map(sec => (
+                <option key={sec.id} value={sec.id}>
+                  {sec.name} ({sec.gradeLevel})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+            <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">Primary Guardian Contact</h5>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="text"
+                placeholder="Guardian Full Name"
+                value={enrollGuardianName}
+                onChange={e => setEnrollGuardianName(e.target.value)}
+                className="px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              />
+              <input
+                type="text"
+                placeholder="+639171234567"
+                value={enrollGuardianPhone}
+                onChange={e => setEnrollGuardianPhone(e.target.value)}
+                className="px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-700">
+            <button
+              type="button"
+              onClick={() => setIsEnrollModalOpen(false)}
+              className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmittingEnroll}
+              className="px-4 py-2 text-xs font-bold rounded-xl bg-[#1B4332] hover:bg-[#2D6A4F] text-white transition-colors"
+            >
+              {isSubmittingEnroll ? 'Enrolling…' : 'Enroll Student'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 };
