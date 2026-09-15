@@ -76,10 +76,6 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, isLive, isAnalyzing } = useFaceRecognition(videoRef, hasVideoSource);
 
   useEffect(() => {
-    setIsVideoReady(false);
-  }, [selectedCamera, streamUrl, whepUrl, useWebcam]);
-
-  useEffect(() => {
     if (!useWebcam) {
       stopWebcam();
       return;
@@ -90,11 +86,26 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     return () => stopWebcam();
   }, [useWebcam, startWebcam, stopWebcam]);
 
+  // Synchronize video stream and readiness across camera selections (Gate 01, Gate 02, Gate 03)
   useEffect(() => {
-    if (videoRef.current && webcamStream) {
-      videoRef.current.srcObject = webcamStream;
+    if (useWebcam) {
+      if (videoRef.current && webcamStream) {
+        if (videoRef.current.srcObject !== webcamStream) {
+          videoRef.current.srcObject = webcamStream;
+        }
+        if (videoRef.current.paused) {
+          videoRef.current.play().catch(() => {});
+        }
+        if (videoRef.current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          setIsVideoReady(true);
+          setStreamState('live');
+        }
+      }
+    } else {
+      setIsVideoReady(false);
+      setStreamState(streamUrl || whepUrl ? 'connecting' : 'standby');
     }
-  }, [webcamStream]);
+  }, [selectedCamera, streamUrl, whepUrl, useWebcam, webcamStream]);
 
   // Sync daily completed Time-In and Time-Out events (enforcing once per day per student)
   useEffect(() => {
@@ -175,7 +186,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     webRtcConnectionRef.current = null;
 
     if (useWebcam || !whepUrl || !videoRef.current) {
-      setStreamState(streamUrl || useWebcam ? 'connecting' : 'standby');
+      if (!useWebcam) {
+        setStreamState(streamUrl ? 'connecting' : 'standby');
+      }
       return () => controller.abort();
     }
 
@@ -371,7 +384,10 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 muted
                 playsInline
                 onLoadStart={() => setStreamState('connecting')}
-                onLoadedData={() => setIsVideoReady(true)}
+                onLoadedData={() => {
+                  setIsVideoReady(true);
+                  setStreamState('live');
+                }}
                 onPlaying={() => {
                   setIsVideoReady(true);
                   setStreamState('live');
