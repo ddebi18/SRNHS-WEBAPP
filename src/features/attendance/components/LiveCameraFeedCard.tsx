@@ -9,6 +9,7 @@ import {
   Radio,
   Eye,
   CheckCircle2,
+  Info,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcStream';
@@ -26,7 +27,13 @@ interface LiveCameraFeedCardProps {
 export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ className }) => {
   const [selectedCamera, setSelectedCamera] = useState('cam-01');
   const [scanMode, setScanMode] = useState<EventType>('entry');
-  const [lastScanNotice, setLastScanNotice] = useState<{ studentName: string; type: EventType; time: string } | null>(null);
+  const [lastScanNotice, setLastScanNotice] = useState<{
+    studentName: string;
+    type: EventType;
+    time: string;
+    alreadyLogged?: boolean;
+  } | null>(null);
+  const [dailyCompletedMap, setDailyCompletedMap] = useState<Map<string, string>>(new Map());
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [streamState, setStreamState] = useState<'standby' | 'connecting' | 'live' | 'error'>('standby');
@@ -89,14 +96,55 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     }
   }, [webcamStream]);
 
+  // Sync daily completed Time-In and Time-Out events (enforcing once per day per student)
   useEffect(() => {
-    if (!matchedStudent || matchedStudent.confidence < 0.45 || !isLive) return;
+    const syncDailyLogs = (events: any[]) => {
+      const todayStr = new Date().toDateString();
+      const map = new Map<string, string>();
+      events.forEach(e => {
+        if (new Date(e.captured_at).toDateString() === todayStr) {
+          const time = new Date(e.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          if (e.student_id) map.set(`${e.student_id}_${e.event_type}`, time);
+          if (e.student_lrn) map.set(`${e.student_lrn}_${e.event_type}`, time);
+        }
+      });
+      setDailyCompletedMap(map);
+    };
 
-    const lastLoggedAt = loggedMatchesRef.current.get(matchedStudent.id) || 0;
-    // 15 seconds cooldown per student to allow convenient testing and avoid duplicate spam
+    supabaseRecognitionAdapter.getEvents().then(syncDailyLogs);
+    const unsub = supabaseRecognitionAdapter.subscribeToEvents(() => {
+      supabaseRecognitionAdapter.getEvents().then(syncDailyLogs);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (!matchedStudent || matchedStudent.confidence < 0.48 || !isLive) return;
+
+    const logKey = `${matchedStudent.id}_${scanMode}`;
+    const alreadyLoggedTime = dailyCompletedMap.get(logKey);
+
+    if (alreadyLoggedTime) {
+      // Student already completed this event today: enforce 1 Time-In and 1 Time-Out per day
+      const lastNoticeCooldown = loggedMatchesRef.current.get(`${matchedStudent.id}_already_${scanMode}`) || 0;
+      if (Date.now() - lastNoticeCooldown > 15_000) {
+        loggedMatchesRef.current.set(`${matchedStudent.id}_already_${scanMode}`, Date.now());
+        setLastScanNotice({
+          studentName: matchedStudent.name,
+          type: scanMode,
+          time: alreadyLoggedTime,
+          alreadyLogged: true,
+        });
+        setTimeout(() => setLastScanNotice(null), 4000);
+      }
+      return;
+    }
+
+    const lastLoggedAt = loggedMatchesRef.current.get(logKey) || 0;
+    // 15 seconds cooldown to prevent rapid trigger during transition
     if (Date.now() - lastLoggedAt < 15_000) return;
 
-    loggedMatchesRef.current.set(matchedStudent.id, Date.now());
+    loggedMatchesRef.current.set(logKey, Date.now());
     supabaseRecognitionAdapter.logRecognitionEvent({
       student_id: matchedStudent.id,
       student_name: matchedStudent.name,
@@ -106,18 +154,20 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
       gate_id: currentCam.id,
       room_name: currentCam.name,
       confidence_score: matchedStudent.confidence,
-    }).then(() => {
+    }).then(evt => {
+      const timeStr = new Date(evt?.captured_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       setLastScanNotice({
         studentName: matchedStudent.name,
         type: scanMode,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        time: timeStr,
+        alreadyLogged: false,
       });
       setTimeout(() => setLastScanNotice(null), 4000);
     }).catch(error => {
-      loggedMatchesRef.current.delete(matchedStudent.id);
+      loggedMatchesRef.current.delete(logKey);
       console.warn('Could not log recognized turnstile entry:', error);
     });
-  }, [matchedStudent, isLive, scanMode, currentCam.id, currentCam.name]);
+  }, [matchedStudent, isLive, scanMode, currentCam.id, currentCam.name, dailyCompletedMap]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -287,15 +337,28 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                   exit={{ opacity: 0, y: -8, scale: 0.96 }}
                   className={cn(
                     'relative z-20 mx-auto max-w-md w-full px-4 py-2 rounded-xl text-center shadow-lg border backdrop-blur-md flex items-center justify-center gap-2 text-xs font-black',
-                    lastScanNotice.type === 'entry'
+                    lastScanNotice.alreadyLogged
+                      ? 'bg-amber-500/90 text-slate-950 border-amber-400/60 shadow-amber-500/20'
+                      : lastScanNotice.type === 'entry'
                       ? 'bg-emerald-500/90 text-white border-emerald-400/50'
                       : 'bg-amber-500/90 text-slate-950 border-amber-400/50'
                   )}
                 >
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>
-                    ✓ {lastScanNotice.type === 'entry' ? 'Time-In Logged' : 'Time-Out Logged'}: {lastScanNotice.studentName} at {lastScanNotice.time}
-                  </span>
+                  {lastScanNotice.alreadyLogged ? (
+                    <>
+                      <Info className="w-4 h-4 shrink-0" />
+                      <span>
+                        Already {lastScanNotice.type === 'entry' ? 'Timed-In' : 'Timed-Out'} Today: {lastScanNotice.studentName} ({lastScanNotice.time})
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>
+                        ✓ {lastScanNotice.type === 'entry' ? 'Time-In Logged' : 'Time-Out Logged'}: {lastScanNotice.studentName} at {lastScanNotice.time}
+                      </span>
+                    </>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -371,7 +434,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                         ⚠ Verifying Liveness…
                       </>
                     ) : isRecognized ? (
-                      `✓ ${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}%`
+                      dailyCompletedMap.has(`${matchedStudent!.id}_${scanMode}`)
+                        ? `✓ ${matchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
+                        : `✓ ${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}%`
                     ) : isDetecting ? (
                       <>
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />

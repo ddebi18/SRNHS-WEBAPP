@@ -6,14 +6,18 @@ export type { RecognitionStatusInput } from '../lib/recognitionStatus';
 
 const MODEL_URL = 'https://vladmandic.github.io/face-api/model';
 
-// FaceMatcher distance threshold: 0.72 accommodates natural head tilts, angles, and lighting differences between registration and gate camera
-const MATCH_THRESHOLD = 0.72;
+// FaceMatcher distance threshold: 0.55 provides accurate biometric identification
+// and prevents false positive matches for unregistered individuals or classmates
+const MATCH_THRESHOLD = 0.55;
 
-// Minimum confidence to accept a match: 45% ensures reliable matching across illumination variations
-const MIN_CONFIDENCE = 0.45;
+// Minimum confidence (1 - distance) to accept a match: 0.48 requires distance <= 0.52
+const MIN_CONFIDENCE = 0.48;
 
-// Number of frames to stay in 'Detecting Face...' mode before marking as Unknown (~5-6 seconds at 220ms)
-const DETECTING_GRACE_FRAMES = 24;
+// Consecutive matching frames required to verify and lock identity (eliminates 1-frame glitches)
+const STABILITY_FRAMES_REQUIRED = 2;
+
+// Number of frames to stay in 'Detecting Face...' mode before marking as Unknown (~1.3s at 220ms)
+const DETECTING_GRACE_FRAMES = 6;
 
 // Detection score threshold for SSD MobileNet: 0.38 allows detection in dim or backlit conditions
 const DETECTION_SCORE_THRESHOLD = 0.38;
@@ -86,14 +90,9 @@ function computeVariance(values: number[]): number {
 }
 
 // ── Match confidence mapping ──────────────────────────────────────────────────
-// Maps distance [0, MATCH_THRESHOLD] to confidence [1.0, 0.45]
-function computeMatchConfidence(distance: number, threshold = MATCH_THRESHOLD): number {
-  if (distance >= threshold) {
-    return Math.max(0, Math.round((1 - distance) * 100) / 100);
-  }
-  const ratio = distance / threshold;
-  const confidence = 1.0 - ratio * 0.55;
-  return Math.round(confidence * 100) / 100;
+// Maps distance to true biometric confidence [0.0 to 1.0] based on 128D Euclidean distance
+function computeMatchConfidence(distance: number): number {
+  return Math.max(0, Math.min(1, Math.round((1 - distance) * 100) / 100));
 }
 
 /**
@@ -183,20 +182,21 @@ export function useFaceRecognition(
         console.log(`[FaceRecognition] Building descriptors for ${students.length} registered students...`);
 
         const labeledDescriptors = (await Promise.all(students.map(async student => {
-          // Collect ALL registered photo URLs (front, left, right) for multi-angle matching
-          const photoUrls: string[] = [];
-          if (student.registeredPhotos?.front) photoUrls.push(student.registeredPhotos.front);
-          if (student.registeredPhotos?.left) photoUrls.push(student.registeredPhotos.left);
-          if (student.registeredPhotos?.right) photoUrls.push(student.registeredPhotos.right);
-          // Fallback to single photoUrl if no structured photos exist
-          if (photoUrls.length === 0 && student.photoUrl) photoUrls.push(student.photoUrl);
+          // Collect distinct registered photo URLs (front, left, right)
+          const photoUrlSet = new Set<string>();
+          if (student.registeredPhotos?.front) photoUrlSet.add(student.registeredPhotos.front);
+          if (student.registeredPhotos?.left) photoUrlSet.add(student.registeredPhotos.left);
+          if (student.registeredPhotos?.right) photoUrlSet.add(student.registeredPhotos.right);
+          if (photoUrlSet.size === 0 && student.photoUrl) photoUrlSet.add(student.photoUrl);
+
+          const photoUrls = Array.from(photoUrlSet);
 
           if (photoUrls.length === 0) {
             console.warn(`[FaceRecognition] No photo URLs for ${student.name} (${student.id})`);
             return null;
           }
 
-          // Build a descriptor from each angle photo
+          // Build a descriptor from each distinct angle photo
           const descriptors: Float32Array[] = [];
           for (const url of photoUrls) {
             try {
@@ -221,7 +221,7 @@ export function useFaceRecognition(
             return null;
           }
 
-          console.log(`[FaceRecognition] ✓ ${descriptors.length} descriptor(s) created for ${student.name} (front/left/right)`);
+          console.log(`[FaceRecognition] ✓ ${descriptors.length} descriptor(s) created for ${student.name}`);
           return new faceapi.LabeledFaceDescriptors(student.id, descriptors);
         }))).filter((descriptor): descriptor is faceapi.LabeledFaceDescriptors => Boolean(descriptor));
 
@@ -361,35 +361,53 @@ export function useFaceRecognition(
 
             // ── Face matching ─────────────────────────────────────────────────
             const bestMatch = matcher.findBestMatch(detection.descriptor);
-            const confidence = computeMatchConfidence(bestMatch.distance, MATCH_THRESHOLD);
-            const isMatchValid = bestMatch.label !== 'unknown' && confidence >= MIN_CONFIDENCE;
+            const rawConfidence = computeMatchConfidence(bestMatch.distance);
+            const isMatchValid = (
+              bestMatch.label !== 'unknown' &&
+              bestMatch.distance <= MATCH_THRESHOLD &&
+              rawConfidence >= MIN_CONFIDENCE
+            );
 
             if (isMatchValid) {
-              // Valid candidate match found!
-              unmatchedCountRef.current = 0;
-              setIsAnalyzing(false);
+              const candidateId = bestMatch.label;
+              if (stabilityRef.current.studentId === candidateId) {
+                stabilityRef.current.count += 1;
+              } else {
+                stabilityRef.current = { studentId: candidateId, count: 1 };
+              }
 
-              const student = studentsRef.current.find((c: any) => c.id === bestMatch.label);
-              if (student) {
-                const matchObj: RecognizedStudent = {
-                  id: student.id,
-                  name: student.name,
-                  studentNumber: student.studentNumber,
-                  confidence,
-                };
-                lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
-                setMatchedStudent(matchObj);
+              // Multi-frame stability check: must match the same student for at least STABILITY_FRAMES_REQUIRED consecutive frames
+              if (stabilityRef.current.count >= STABILITY_FRAMES_REQUIRED) {
+                unmatchedCountRef.current = 0;
+                setIsAnalyzing(false);
+
+                const student = studentsRef.current.find((c: any) => c.id === candidateId);
+                if (student) {
+                  const matchObj: RecognizedStudent = {
+                    id: student.id,
+                    name: student.name,
+                    studentNumber: student.studentNumber,
+                    confidence: rawConfidence,
+                  };
+                  lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
+                  setMatchedStudent(matchObj);
+                }
+              } else {
+                // Stabilizing match across frames
+                setIsAnalyzing(true);
               }
             } else {
               // Frame was not directly matched
+              stabilityRef.current = { studentId: '', count: 0 };
               unmatchedCountRef.current += 1;
 
-              // If we recently confirmed a match within the last 2.2 seconds, retain the match during movement/tilt
+              // If we recently confirmed a match within the last 600ms (~2 frames), retain briefly to absorb quick blinks
               const recentMatch = lastConfirmedMatchRef.current;
-              if (recentMatch && (Date.now() - recentMatch.timestamp < 2200)) {
+              if (recentMatch && (Date.now() - recentMatch.timestamp < 600) && unmatchedCountRef.current <= 2) {
                 setMatchedStudent(recentMatch.student);
                 setIsAnalyzing(false);
               } else {
+                lastConfirmedMatchRef.current = null;
                 setMatchedStudent(null);
                 // While tracking face without match, show 'Detecting...' for the grace period before displaying Unknown
                 if (unmatchedCountRef.current <= DETECTING_GRACE_FRAMES) {

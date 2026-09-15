@@ -61,20 +61,35 @@ export const INITIAL_MOCK_EVENTS: RecognitionEvent[] = [
 
 const STORAGE_KEY_EVENTS = 'srnhs_recognition_events_v2';
 
+function deduplicateEvents(events: RecognitionEvent[]): RecognitionEvent[] {
+  const seen = new Set<string>();
+  return events.filter(e => {
+    // Enforce at most 1 entry and 1 exit per student per calendar date
+    if (e.event_type === 'entry' || e.event_type === 'exit') {
+      const dateStr = new Date(e.captured_at).toDateString();
+      const id = e.student_id || e.student_lrn || e.student_name;
+      const key = `${id}_${e.event_type}_${dateStr}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+    }
+    return true;
+  });
+}
+
 function loadStoredEvents(): RecognitionEvent[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_EVENTS);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) return deduplicateEvents(parsed);
     }
   } catch (e) {}
-  return [...INITIAL_MOCK_EVENTS];
+  return deduplicateEvents([...INITIAL_MOCK_EVENTS]);
 }
 
 function saveStoredEvents(events: RecognitionEvent[]) {
   try {
-    localStorage.setItem(STORAGE_KEY_EVENTS, JSON.stringify(events.slice(0, 150)));
+    localStorage.setItem(STORAGE_KEY_EVENTS, JSON.stringify(deduplicateEvents(events).slice(0, 150)));
   } catch (e) {}
 }
 
@@ -90,7 +105,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
   }
 
   async getEvents(filters?: { studentId?: string; type?: EventType; limit?: number }): Promise<RecognitionEvent[]> {
-    let result = [...this.events];
+    let result = deduplicateEvents([...this.events]);
     if (filters?.studentId) {
       result = result.filter(e => e.student_id === filters.studentId);
     }
@@ -124,6 +139,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
       captured_at: new Date().toISOString(),
     };
     this.events.unshift(newEvt);
+    this.events = deduplicateEvents(this.events);
     saveStoredEvents(this.events);
     this.notifyListeners(newEvt);
     return newEvt;
@@ -136,6 +152,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
       s => s.id === eventData.student_id || s.studentNumber === eventData.student_id || s.name.toLowerCase() === (eventData.student_name || '').toLowerCase()
     );
 
+    const studentId = eventData.student_id || student?.id || `std-${Date.now()}`;
     const studentName = eventData.student_name || student?.name || 'Student';
     const studentLrn = eventData.student_lrn || student?.studentNumber || '109823456701';
     const studentPhoto = eventData.student_photo || student?.registeredPhotos?.front || student?.photoUrl;
@@ -143,10 +160,28 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     const guardianPhone = student?.guardianPhone || '+639171234567';
     const locationName = eventData.room_name || 'Main Gate Turnstile 01';
     const eventType = eventData.event_type || 'entry';
+    const todayDateStr = new Date().toDateString();
+
+    // ── Enforce 1 Time-In and 1 Time-Out per student per day ───────────
+    // If student already has an entry or exit logged today, skip creating duplicate records and skip duplicate SMS
+    if (eventType === 'entry' || eventType === 'exit') {
+      const existingToday = this.events.find(e => {
+        const isSameStudent = e.student_id === studentId ||
+          (e.student_lrn && studentLrn && e.student_lrn === studentLrn) ||
+          (e.student_name && studentName && e.student_name.toLowerCase() === studentName.toLowerCase());
+        const isSameType = e.event_type === eventType;
+        const isToday = new Date(e.captured_at).toDateString() === todayDateStr;
+        return isSameStudent && isSameType && isToday;
+      });
+
+      if (existingToday) {
+        return existingToday;
+      }
+    }
 
     const newEvt: RecognitionEvent = {
       id: `evt-sim-${Date.now()}`,
-      student_id: eventData.student_id || student?.id || `std-${Date.now()}`,
+      student_id: studentId,
       student_name: studentName,
       student_lrn: studentLrn,
       student_photo: studentPhoto,
@@ -162,6 +197,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     };
 
     this.events.unshift(newEvt);
+    this.events = deduplicateEvents(this.events);
     saveStoredEvents(this.events);
     this.notifyListeners(newEvt);
 

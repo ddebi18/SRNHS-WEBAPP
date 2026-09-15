@@ -125,6 +125,25 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
     if (!supabase) return mockRecognitionAdapter.logRecognitionEvent(eventData);
 
     try {
+      // ── Enforce 1 Time-In and 1 Time-Out per student per day ───────────
+      if (eventData.event_type === 'entry' || eventData.event_type === 'exit') {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const { data: existingToday } = await supabase
+          .from('recognition_events')
+          .select('id, student_id, event_type, captured_at')
+          .eq('student_id', eventData.student_id)
+          .eq('event_type', eventData.event_type)
+          .gte('captured_at', startOfDay.toISOString())
+          .limit(1);
+
+        if (existingToday && existingToday.length > 0) {
+          console.log(`[SupabaseRecognitionAdapter] Student ${eventData.student_id} already completed ${eventData.event_type} today.`);
+          return mockRecognitionAdapter.logRecognitionEvent(eventData);
+        }
+      }
+
       const { data, error } = await supabase
         .from('recognition_events')
         .insert({

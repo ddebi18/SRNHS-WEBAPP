@@ -90,4 +90,78 @@ describe('MockRecognitionAdapter', () => {
       })
     ).toBe('Face Detection: Waiting');
   });
+
+  it('formats verified status text with student name and match percentage', () => {
+    expect(
+      getRecognitionStatusText({
+        matchedStudent: { name: 'Sophia Nicole Reyes', confidence: 0.62 },
+        isLoading: false,
+        isReady: true,
+        isFaceDetected: true,
+      })
+    ).toBe('Verified: Sophia Nicole Reyes (62% match)');
+  });
+
+  it('enforces 1 Time-In and 1 Time-Out per student per day without duplicate records', async () => {
+    const testStudentId = 'std-daily-test-999';
+
+    // 1st Time-In (Entry) scan
+    const entry1 = await mockRecognitionAdapter.logRecognitionEvent({
+      student_id: testStudentId,
+      student_name: 'Daily Test Student',
+      student_lrn: '109899999999',
+      event_type: 'entry',
+      camera_id: 'cam-01',
+      gate_id: 'cam-01',
+      confidence_score: 0.88,
+    });
+
+    // 2nd Time-In (Entry) scan on the same day (should NOT create a duplicate record)
+    const entry2 = await mockRecognitionAdapter.logRecognitionEvent({
+      student_id: testStudentId,
+      student_name: 'Daily Test Student',
+      student_lrn: '109899999999',
+      event_type: 'entry',
+      camera_id: 'cam-01',
+      gate_id: 'cam-01',
+      confidence_score: 0.89,
+    });
+
+    expect(entry2.id).toBe(entry1.id);
+
+    // 1st Time-Out (Exit) scan on the same day (allowed: 1 time-out)
+    const exit1 = await mockRecognitionAdapter.logRecognitionEvent({
+      student_id: testStudentId,
+      student_name: 'Daily Test Student',
+      student_lrn: '109899999999',
+      event_type: 'exit',
+      camera_id: 'cam-01',
+      gate_id: 'cam-01',
+      confidence_score: 0.85,
+    });
+
+    expect(exit1.event_type).toBe('exit');
+    expect(exit1.id).not.toBe(entry1.id);
+
+    // 2nd Time-Out (Exit) scan on the same day (should NOT create duplicate exit record)
+    const exit2 = await mockRecognitionAdapter.logRecognitionEvent({
+      student_id: testStudentId,
+      student_name: 'Daily Test Student',
+      student_lrn: '109899999999',
+      event_type: 'exit',
+      camera_id: 'cam-01',
+      gate_id: 'cam-01',
+      confidence_score: 0.86,
+    });
+
+    expect(exit2.id).toBe(exit1.id);
+
+    // Check all events for this student: exactly 1 entry and 1 exit for today
+    const studentEvents = await mockRecognitionAdapter.getEvents({ studentId: testStudentId });
+    const studentEntries = studentEvents.filter(e => e.event_type === 'entry');
+    const studentExits = studentEvents.filter(e => e.event_type === 'exit');
+
+    expect(studentEntries.length).toBe(1);
+    expect(studentExits.length).toBe(1);
+  });
 });

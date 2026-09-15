@@ -23,8 +23,8 @@ const INITIAL_STUDENTS: Student[] = [
     photoUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
       front: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Carlos Garcia',
     guardianPhone: '+639171234567',
@@ -40,8 +40,8 @@ const INITIAL_STUDENTS: Student[] = [
     photoUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
       front: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Nicole Reyes',
     guardianPhone: '+639189876543',
@@ -69,8 +69,8 @@ const INITIAL_STUDENTS: Student[] = [
     photoUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
       front: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Claire Santos',
     guardianPhone: '+639178889900',
@@ -86,8 +86,8 @@ const INITIAL_STUDENTS: Student[] = [
     photoUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
       front: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Anthony Ramos',
     guardianPhone: '+639195551212',
@@ -115,8 +115,8 @@ const INITIAL_STUDENTS: Student[] = [
     photoUrl: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
       front: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Luis Bautista',
     guardianPhone: '+639187776655',
@@ -132,8 +132,8 @@ const INITIAL_STUDENTS: Student[] = [
     photoUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
       front: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Beatrice Lopez',
     guardianPhone: '+639192221100',
@@ -151,8 +151,8 @@ const INITIAL_STUDENTS: Student[] = [
     photoUrl: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
       front: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Dave Aquino',
     guardianPhone: '+639170001122',
@@ -180,8 +180,8 @@ const INITIAL_STUDENTS: Student[] = [
     photoUrl: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
       front: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Ryan Castillo',
     guardianPhone: '+639193334455',
@@ -194,11 +194,11 @@ const INITIAL_STUDENTS: Student[] = [
     sectionName: 'Grade 11 – STEM A',
     faceRegistrationStatus: 'registered',
     lastRegisteredAt: '2026-08-22T14:15:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=350&auto=format&fit=crop&q=80',
+    photoUrl: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
+      front: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Sofia Villanueva',
     guardianPhone: '+639174445566',
@@ -214,8 +214,8 @@ const INITIAL_STUDENTS: Student[] = [
     photoUrl: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
       front: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'James Diaz',
     guardianPhone: '+639185556677',
@@ -228,11 +228,11 @@ const INITIAL_STUDENTS: Student[] = [
     sectionName: 'Grade 11 – STEM A',
     faceRegistrationStatus: 'registered',
     lastRegisteredAt: '2026-08-25T08:45:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=350&auto=format&fit=crop&q=80',
+    photoUrl: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
+      front: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Isabel Mercado',
     guardianPhone: '+639196667788',
@@ -247,11 +247,11 @@ const INITIAL_STUDENTS: Student[] = [
     sectionName: 'Grade 12 – ABM A',
     faceRegistrationStatus: 'registered',
     lastRegisteredAt: '2026-08-17T10:20:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=350&auto=format&fit=crop&q=80',
+    photoUrl: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
+      front: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Paul Fernandez',
     guardianPhone: '+639177778899',
@@ -264,7 +264,7 @@ const INITIAL_STUDENTS: Student[] = [
     sectionName: 'Grade 12 – ABM A',
     faceRegistrationStatus: 'unregistered',
     lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=350&auto=format&fit=crop&q=80',
+    photoUrl: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=350&auto=format&fit=crop&q=80',
     guardianName: 'Anne Navarro',
     guardianPhone: '+639188889900',
   },
@@ -276,7 +276,7 @@ const INITIAL_STUDENTS: Student[] = [
     sectionName: 'Grade 12 – ABM A',
     faceRegistrationStatus: 'unregistered',
     lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=350&auto=format&fit=crop&q=80',
+    photoUrl: 'https://images.unsplash.com/photo-1528892952291-009c663ce843?w=350&auto=format&fit=crop&q=80',
     guardianName: 'Joel Santos',
     guardianPhone: '+639199990011',
   },
@@ -288,11 +288,11 @@ const INITIAL_STUDENTS: Student[] = [
     sectionName: 'Grade 12 – ABM A',
     faceRegistrationStatus: 'registered',
     lastRegisteredAt: '2026-08-24T14:50:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=350&auto=format&fit=crop&q=80',
+    photoUrl: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
+      front: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Jane Tan',
     guardianPhone: '+639171110022',
@@ -305,11 +305,11 @@ const INITIAL_STUDENTS: Student[] = [
     sectionName: 'Grade 12 – ABM A',
     faceRegistrationStatus: 'needs_review',
     lastRegisteredAt: '2026-08-16T15:30:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=350&auto=format&fit=crop&q=80',
+    photoUrl: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=350&auto=format&fit=crop&q=80',
     registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=450&auto=format&fit=crop&q=80',
+      front: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=450&auto=format&fit=crop&q=80',
+      left: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=450&auto=format&fit=crop&q=80',
+      right: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=450&auto=format&fit=crop&q=80',
     },
     guardianName: 'Eric Del Rosario',
     guardianPhone: '+639182223344',
@@ -412,7 +412,42 @@ async function resizeBlobToDataUrl(blob: Blob, maxDim = 720): Promise<string> {
 export function getStoredStudents(): Student[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY_STUDENTS);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed: Student[] = JSON.parse(raw);
+      // Clean up any legacy cached mock photos where left/right pointed to other students
+      let hasCleaned = false;
+      const sanitized = parsed.map(s => {
+        const front = s.registeredPhotos?.front || s.photoUrl;
+        const left = s.registeredPhotos?.left;
+        const right = s.registeredPhotos?.right;
+
+        // If left/right is not a real user webcam data URL and differs from front, reset to match front
+        const leftIsDataUrl = left?.startsWith('data:');
+        const rightIsDataUrl = right?.startsWith('data:');
+        const needsLeftReset = left && !leftIsDataUrl && left !== front;
+        const needsRightReset = right && !rightIsDataUrl && right !== front;
+
+        if (needsLeftReset || needsRightReset) {
+          hasCleaned = true;
+          return {
+            ...s,
+            registeredPhotos: {
+              front: front,
+              left: needsLeftReset ? front : left,
+              right: needsRightReset ? front : right,
+            },
+          };
+        }
+        return s;
+      });
+
+      if (hasCleaned) {
+        try {
+          localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(sanitized));
+        } catch {}
+      }
+      return sanitized;
+    }
   } catch (e) {}
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(INITIAL_STUDENTS));
@@ -425,20 +460,32 @@ export async function fetchRegisteredStudents(): Promise<Student[]> {
   // Hydrate all registered students with high-res photos from IndexedDB
   const hydrated = await Promise.all(
     students.map(async s => {
-      if (s.faceRegistrationStatus === 'registered' || s.registeredPhotos?.front || s.photoUrl) {
+      const primaryPhoto = s.registeredPhotos?.front || s.photoUrl;
+      if (s.faceRegistrationStatus === 'registered' || primaryPhoto) {
         const dbPhotos = await getPhotosFromDb(s.id);
-        if (dbPhotos) {
+        if (dbPhotos && dbPhotos.front) {
           return {
             ...s,
             faceRegistrationStatus: 'registered' as const,
-            photoUrl: dbPhotos.front || s.photoUrl,
+            photoUrl: dbPhotos.front,
             registeredPhotos: {
-              front: dbPhotos.front || s.registeredPhotos?.front || s.photoUrl,
-              left: dbPhotos.left || s.registeredPhotos?.left,
-              right: dbPhotos.right || s.registeredPhotos?.right,
+              front: dbPhotos.front,
+              left: dbPhotos.left || dbPhotos.front,
+              right: dbPhotos.right || dbPhotos.front,
             },
           };
         }
+
+        // For mock/seed students, ensure left/right are strictly that student's own photo
+        return {
+          ...s,
+          photoUrl: primaryPhoto,
+          registeredPhotos: primaryPhoto ? {
+            front: primaryPhoto,
+            left: s.registeredPhotos?.left?.startsWith('data:') ? s.registeredPhotos.left : primaryPhoto,
+            right: s.registeredPhotos?.right?.startsWith('data:') ? s.registeredPhotos.right : primaryPhoto,
+          } : undefined,
+        };
       }
       return s;
     })
