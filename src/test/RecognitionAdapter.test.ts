@@ -32,6 +32,8 @@ describe('MockRecognitionAdapter', () => {
   it('preserves camera direction, identity, and confidence for recognition events', async () => {
     const event = await mockRecognitionAdapter.logRecognitionEvent({
       student_id: 'std-test',
+      student_name: 'Mark Student',
+      student_lrn: '109823456789',
       event_type: 'exit',
       camera_id: 'cam-02',
       gate_id: 'gate-02',
@@ -39,10 +41,19 @@ describe('MockRecognitionAdapter', () => {
     });
 
     expect(event.event_type).toBe('exit');
+    expect(event.student_name).toBe('Mark Student');
+    expect(event.student_lrn).toBe('109823456789');
     expect(event.camera_id).toBe('cam-02');
     expect(event.gate_id).toBe('gate-02');
     expect(event.confidence_score).toBe(0.82);
     expect(event.source).toBe('camera');
+
+    // Verify it appears in getEvents()
+    const allEvents = await mockRecognitionAdapter.getEvents();
+    const found = allEvents.find(e => e.id === event.id);
+    expect(found).toBeDefined();
+    expect(found?.student_name).toBe('Mark Student');
+    expect(found?.event_type).toBe('exit');
   });
 
   it('shows unknown when a detected face is not registered and analysis completed', () => {

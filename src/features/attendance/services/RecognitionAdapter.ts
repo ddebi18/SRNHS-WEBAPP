@@ -17,6 +17,10 @@ export interface RecognitionAdapter {
   }): Promise<RecognitionEvent>;
   logRecognitionEvent(eventData: {
     student_id: string;
+    student_name?: string;
+    student_lrn?: string;
+    student_photo?: string;
+    section_name?: string;
     event_type: EventType;
     camera_id: string;
     gate_id: string;

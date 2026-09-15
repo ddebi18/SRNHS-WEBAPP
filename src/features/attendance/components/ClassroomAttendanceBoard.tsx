@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { AttendanceStatus } from '@/types/domain.types';
+import { AttendanceStatus, RecognitionEvent } from '@/types/domain.types';
 import { AttendanceBadge } from '@/components/ui/StatusBadge';
 import { useRole } from '@/hooks/useRole';
-import { Check, Clock, X, AlertCircle, BookOpen, Users } from 'lucide-react';
+import { Check, Clock, X, AlertCircle, BookOpen, Users, RefreshCw, Camera } from 'lucide-react';
 import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
+import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
+import { fetchSections, fetchSectionRoster } from '@/features/faceRegistration/api';
+import { Section, Student } from '@/features/faceRegistration/types';
 import { cn } from '@/lib/utils';
 
 interface StudentAttendanceRow {
@@ -14,21 +17,26 @@ interface StudentAttendanceRow {
   photo?: string;
   status: AttendanceStatus;
   lastScanTime?: string;
+  lastScanEvent?: RecognitionEvent;
   markedBy?: string;
   guardianPhone: string;
 }
 
-const SAMPLE_SECTION_STUDENTS: Record<string, StudentAttendanceRow[]> = {
-  'sec-101': [
-    { student_id: 'std-101', name: 'Juan Carlos Garcia', lrn: '109823456701', photo: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80', status: 'present', lastScanTime: '07:15 AM', guardianPhone: '+639171234567' },
-    { student_id: 'std-102', name: 'Sophia Nicole Reyes', lrn: '109823456702', photo: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80', status: 'present', lastScanTime: '07:00 AM', guardianPhone: '+639189876543' },
-    { student_id: 'std-105', name: 'Mark Anthony Ramos', lrn: '109823456705', photo: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80', status: 'absent', guardianPhone: '+639195551212' },
-  ],
-  'sec-102': [
-    { student_id: 'std-103', name: 'Angelo Gabriel Mendoza', lrn: '109823456703', photo: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80', status: 'present', lastScanTime: '07:45 AM', guardianPhone: '+639194443322' },
-    { student_id: 'std-104', name: 'Samantha Claire Santos', lrn: '109823456704', photo: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80', status: 'late', lastScanTime: '08:15 AM', guardianPhone: '+639178889900' },
-  ],
-};
+const OVERRIDES_STORAGE_KEY = 'srnhs_attendance_teacher_overrides_v1';
+
+function loadStoredOverrides(): Record<string, { status: AttendanceStatus; markedBy?: string }> {
+  try {
+    const raw = localStorage.getItem(OVERRIDES_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return {};
+}
+
+function saveStoredOverrides(overrides: Record<string, { status: AttendanceStatus; markedBy?: string }>) {
+  try {
+    localStorage.setItem(OVERRIDES_STORAGE_KEY, JSON.stringify(overrides));
+  } catch (e) {}
+}
 
 const STATUS_ACTIONS: { status: AttendanceStatus; label: string; icon: React.ReactNode; active: string; inactive: string }[] = [
   { status: 'present', label: 'Present', icon: <Check className="w-3.5 h-3.5" />, active: 'bg-emerald-500 text-white shadow-sm', inactive: 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/70 dark:hover:bg-slate-700' },
@@ -39,33 +47,123 @@ const STATUS_ACTIONS: { status: AttendanceStatus; label: string; icon: React.Rea
 
 export const ClassroomAttendanceBoard: React.FC = () => {
   const { user } = useRole();
+  const [sections, setSections] = useState<Section[]>([]);
   const [selectedSection, setSelectedSection] = useState('sec-101');
   const [selectedSubject, setSelectedSubject] = useState('General Mathematics');
-  const [rows, setRows] = useState<Record<string, StudentAttendanceRow[]>>(SAMPLE_SECTION_STUDENTS);
+  const [roster, setRoster] = useState<Student[]>([]);
+  const [scanEvents, setScanEvents] = useState<RecognitionEvent[]>([]);
+  const [manualOverrides, setManualOverrides] = useState<Record<string, { status: AttendanceStatus; markedBy?: string }>>(loadStoredOverrides());
+  const [isLoading, setIsLoading] = useState(true);
 
-  const currentStudents = rows[selectedSection] || [];
+  // Load sections on mount
+  useEffect(() => {
+    fetchSections().then(data => {
+      if (data && data.length > 0) {
+        setSections(data);
+        if (!selectedSection) {
+          setSelectedSection(data[0]!.id);
+        }
+      }
+    });
+  }, []);
+
+  // Fetch roster when selected section changes
+  const loadRoster = useCallback(async (secId: string) => {
+    setIsLoading(true);
+    try {
+      const students = await fetchSectionRoster(secId);
+      setRoster(students);
+    } catch (err) {
+      console.warn('Could not load section roster:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedSection) {
+      loadRoster(selectedSection);
+    }
+  }, [selectedSection, loadRoster]);
+
+  // Load scan events and subscribe to real-time events
+  useEffect(() => {
+    supabaseRecognitionAdapter.getEvents().then(setScanEvents);
+
+    const unsubscribe = supabaseRecognitionAdapter.subscribeToEvents(newEvent => {
+      setScanEvents(prev => [newEvent, ...prev.filter(e => e.id !== newEvent.id)]);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Sync / refresh both roster and events
+  const handleRefresh = async () => {
+    setIsLoading(true);
+    if (selectedSection) {
+      await loadRoster(selectedSection);
+    }
+    const events = await supabaseRecognitionAdapter.getEvents();
+    setScanEvents(events);
+    setIsLoading(false);
+  };
+
+  // Build rows combining roster, camera scan events, and manual teacher overrides
+  const rows: StudentAttendanceRow[] = roster.map(student => {
+    // Find latest scan event for this student today
+    const studentEvent = scanEvents.find(
+      e => e.student_id === student.id ||
+           (e.student_lrn && e.student_lrn === student.studentNumber) ||
+           (e.student_name && student.name && e.student_name.toLowerCase() === student.name.toLowerCase())
+    );
+
+    const override = manualOverrides[student.id];
+
+    let status: AttendanceStatus = 'absent';
+    let lastScanTime: string | undefined = undefined;
+
+    if (override) {
+      status = override.status;
+    } else if (studentEvent) {
+      const scanDate = new Date(studentEvent.captured_at);
+      lastScanTime = scanDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      // If scanned after 8:00 AM, mark as late, otherwise present
+      const scanHour = scanDate.getHours();
+      const scanMin = scanDate.getMinutes();
+      const isLate = scanHour > 8 || (scanHour === 8 && scanMin > 0);
+      status = isLate ? 'late' : 'present';
+    }
+
+    return {
+      student_id: student.id,
+      name: student.name,
+      lrn: student.studentNumber,
+      photo: student.registeredPhotos?.front || student.photoUrl,
+      status,
+      lastScanTime: lastScanTime || (studentEvent ? new Date(studentEvent.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : undefined),
+      lastScanEvent: studentEvent,
+      markedBy: override?.markedBy,
+      guardianPhone: student.guardianPhone || '+639171234567',
+    };
+  });
+
   const summary = {
-    present: currentStudents.filter(s => s.status === 'present').length,
-    late:    currentStudents.filter(s => s.status === 'late').length,
-    absent:  currentStudents.filter(s => s.status === 'absent').length,
-    excused: currentStudents.filter(s => s.status === 'excused').length,
+    present: rows.filter(s => s.status === 'present').length,
+    late:    rows.filter(s => s.status === 'late').length,
+    absent:  rows.filter(s => s.status === 'absent').length,
+    excused: rows.filter(s => s.status === 'excused').length,
   };
 
   const handleStatusChange = async (studentId: string, newStatus: AttendanceStatus) => {
-    setRows(prev => {
-      const sectionRows = prev[selectedSection] || [];
-      return {
-        ...prev,
-        [selectedSection]: sectionRows.map(r =>
-          r.student_id === studentId
-            ? { ...r, status: newStatus, markedBy: user?.full_name }
-            : r
-        ),
-      };
-    });
+    const updated = {
+      ...manualOverrides,
+      [studentId]: { status: newStatus, markedBy: user?.full_name || 'Teacher' },
+    };
+    setManualOverrides(updated);
+    saveStoredOverrides(updated);
 
     if (newStatus === 'absent') {
-      const student = currentStudents.find(s => s.student_id === studentId);
+      const student = rows.find(s => s.student_id === studentId);
       if (student) {
         await mockNotificationAdapter.sendAlert({
           student_id: student.student_id,
@@ -78,18 +176,26 @@ export const ClassroomAttendanceBoard: React.FC = () => {
     }
   };
 
+  const selectedSectionObj = sections.find(s => s.id === selectedSection);
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-black text-slate-900 dark:text-slate-100">Classroom Attendance Board</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-black text-slate-900 dark:text-slate-100">Classroom Attendance Board</h2>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/50 dark:border-emerald-800/50 text-[11px] font-black">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Connected to Turnstiles
+            </span>
+          </div>
           <p className="text-sm text-slate-500 dark:text-slate-400 font-medium mt-1">
-            Pre-filled from facial recognition. Your manual mark is always the source of truth.
+            Pre-filled automatically from gate facial recognition time-ins. Your manual mark is always the source of truth.
           </p>
         </div>
 
-        {/* Section + Subject selectors */}
+        {/* Section + Subject selectors & Sync button */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-3 py-2 shadow-card-sm transition-colors">
             <Users className="w-4 h-4 text-slate-400 dark:text-slate-500" />
@@ -98,10 +204,22 @@ export const ClassroomAttendanceBoard: React.FC = () => {
               onChange={e => setSelectedSection(e.target.value)}
               className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
             >
-              <option value="sec-101" className="dark:bg-slate-900">Grade 10 – Sampaguita</option>
-              <option value="sec-102" className="dark:bg-slate-900">Grade 11 – STEM A</option>
+              {sections.length > 0 ? (
+                sections.map(sec => (
+                  <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
+                    {sec.name}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="sec-101" className="dark:bg-slate-900">Grade 10 – Sampaguita</option>
+                  <option value="sec-102" className="dark:bg-slate-900">Grade 11 – STEM A</option>
+                  <option value="sec-103" className="dark:bg-slate-900">Grade 12 – ABM A</option>
+                </>
+              )}
             </select>
           </div>
+
           <div className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-3 py-2 shadow-card-sm transition-colors">
             <BookOpen className="w-4 h-4 text-slate-400 dark:text-slate-500" />
             <select
@@ -112,8 +230,17 @@ export const ClassroomAttendanceBoard: React.FC = () => {
               <option value="General Mathematics" className="dark:bg-slate-900">General Mathematics</option>
               <option value="Research 1" className="dark:bg-slate-900">Research 1</option>
               <option value="Panitikang Pilipino" className="dark:bg-slate-900">Panitikang Pilipino</option>
+              <option value="Physical Science" className="dark:bg-slate-900">Physical Science</option>
             </select>
           </div>
+
+          <button
+            onClick={handleRefresh}
+            className="p-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-card-sm"
+            title="Refresh attendance from camera scans"
+          >
+            <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
+          </button>
         </div>
       </div>
 
@@ -146,13 +273,19 @@ export const ClassroomAttendanceBoard: React.FC = () => {
 
       {/* Attendance Roster Table */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
-        <div className="px-6 py-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
-          <h3 className="text-base font-black text-slate-900 dark:text-slate-100">
-            {selectedSection === 'sec-101' ? 'Grade 10 – Sampaguita' : 'Grade 11 – STEM A'} · {selectedSubject}
-          </h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
-            {new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </p>
+        <div className="px-6 py-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-black text-slate-900 dark:text-slate-100">
+              {selectedSectionObj ? selectedSectionObj.name : 'Section'} · {selectedSubject}
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
+              {new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} · {rows.length} Enrolled Students
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+            <Camera className="w-4 h-4 text-emerald-500" />
+            <span>Turnstile Auto-Sync Active</span>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -165,56 +298,75 @@ export const ClassroomAttendanceBoard: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200/60 dark:divide-slate-800/80 bg-white dark:bg-slate-900">
-              {currentStudents.map((student, i) => (
-                <motion.tr
-                  key={student.student_id}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.03 }}
-                  className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-                >
-                  <td className="px-5 py-4">
-                    <div className="flex items-center gap-3">
-                      {student.photo && (
-                        <img src={student.photo} alt={student.name} className="w-9 h-9 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700" />
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-5 py-10 text-center text-slate-400 dark:text-slate-500 text-sm font-medium">
+                    No students enrolled in this section yet.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((student, i) => (
+                  <motion.tr
+                    key={student.student_id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.02 }}
+                    className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                  >
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-3">
+                        {student.photo ? (
+                          <img src={student.photo} alt={student.name} className="w-9 h-9 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700" />
+                        ) : (
+                          <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-xs text-slate-700 dark:text-slate-300 shrink-0">
+                            {student.name.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <span className="font-bold text-sm text-slate-900 dark:text-slate-100">{student.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 font-mono text-[11px] text-slate-500 dark:text-slate-400">{student.lrn}</td>
+                    <td className="px-5 py-4 text-xs font-medium text-slate-600 dark:text-slate-300">
+                      {student.lastScanTime ? (
+                        <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-bold">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          {student.lastScanTime} — {student.lastScanEvent?.room_name || 'Camera Turnstile'}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 dark:text-slate-500">No scan detected</span>
                       )}
-                      <span className="font-bold text-sm text-slate-900 dark:text-slate-100">{student.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 font-mono text-[11px] text-slate-500 dark:text-slate-400">{student.lrn}</td>
-                  <td className="px-5 py-4 text-xs font-medium text-slate-600 dark:text-slate-300">
-                    {student.lastScanTime ? (
-                      <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        {student.lastScanTime} — Camera
-                      </span>
-                    ) : (
-                      <span className="text-slate-400 dark:text-slate-600">No scan detected</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-4">
-                    <AttendanceBadge status={student.status} />
-                  </td>
-                  <td className="px-5 py-4">
-                    <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800/80 rounded-2xl p-1 gap-0.5 border border-slate-200/50 dark:border-slate-700/50">
-                      {STATUS_ACTIONS.map(action => (
-                        <button
-                          key={action.status}
-                          onClick={() => handleStatusChange(student.student_id, action.status)}
-                          title={action.label}
-                          className={cn(
-                            'flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition-all',
-                            student.status === action.status ? action.active : action.inactive
-                          )}
-                        >
-                          {action.icon}
-                          <span className="hidden sm:inline">{action.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </td>
-                </motion.tr>
-              ))}
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="flex flex-col gap-0.5">
+                        <AttendanceBadge status={student.status} />
+                        {student.markedBy && (
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
+                            Manual: {student.markedBy}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800/80 rounded-2xl p-1 gap-0.5 border border-slate-200/50 dark:border-slate-700/50">
+                        {STATUS_ACTIONS.map(action => (
+                          <button
+                            key={action.status}
+                            onClick={() => handleStatusChange(student.student_id, action.status)}
+                            title={action.label}
+                            className={cn(
+                              'flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer',
+                              student.status === action.status ? action.active : action.inactive
+                            )}
+                          >
+                            {action.icon}
+                            <span className="hidden sm:inline">{action.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                  </motion.tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

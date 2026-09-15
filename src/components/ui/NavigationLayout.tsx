@@ -172,20 +172,16 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
         <header className="sticky top-0 z-30 px-4 sm:px-8 py-3.5 flex items-center justify-between gap-3
           bg-cream/85 dark:bg-[#0F1714]/85 backdrop-blur-md border-b border-black/5 dark:border-slate-800 transition-colors duration-200">
           
-          {/* Mobile Header Brand & Drawer Trigger */}
+          {/* Mobile Header Brand */}
           <div className="flex items-center gap-2.5">
-            <button
-              onClick={() => setMobileMenuOpen(true)}
-              className="lg:hidden p-2 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-card-sm active:scale-95 transition-transform"
-              title="Open Navigation Menu"
-            >
-              <Menu className="w-4 h-4" />
-            </button>
-            <div className="flex items-center gap-2 lg:hidden">
-              <div className="w-7 h-7 rounded-xl bg-sidebar flex items-center justify-center text-white font-black text-xs">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-sidebar flex items-center justify-center text-white font-black text-xs shadow-sm">
                 SR
               </div>
-              <span className="font-black text-sm text-slate-900 dark:text-slate-100 tracking-tight">SRNHS</span>
+              <div>
+                <span className="font-black text-sm text-slate-900 dark:text-slate-100 tracking-tight">SRNHS</span>
+                <span className="hidden sm:inline-block text-[10px] text-slate-500 dark:text-slate-400 font-semibold ml-2">Attendance Dashboard</span>
+              </div>
             </div>
             <div className="hidden lg:block text-xs font-semibold text-slate-500 dark:text-slate-400">
               {SITE_CONFIG.department}

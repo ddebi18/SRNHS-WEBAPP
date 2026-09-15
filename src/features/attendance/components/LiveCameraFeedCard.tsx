@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Camera,
   Maximize2,
@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Radio,
   Eye,
+  CheckCircle2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcStream';
@@ -24,11 +25,14 @@ interface LiveCameraFeedCardProps {
 
 export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ className }) => {
   const [selectedCamera, setSelectedCamera] = useState('cam-01');
+  const [scanMode, setScanMode] = useState<EventType>('entry');
+  const [lastScanNotice, setLastScanNotice] = useState<{ studentName: string; type: EventType; time: string } | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [streamState, setStreamState] = useState<'standby' | 'connecting' | 'live' | 'error'>('standby');
   const [isVideoReady, setIsVideoReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const viewfinderRef = useRef<HTMLDivElement>(null);
   const webRtcConnectionRef = useRef<WebRtcStreamConnection | null>(null);
   const loggedMatchesRef = useRef<Map<string, number>>(new Map());
 
@@ -86,24 +90,34 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   }, [webcamStream]);
 
   useEffect(() => {
-    if (!matchedStudent || matchedStudent.confidence < 0.48) return;
+    if (!matchedStudent || matchedStudent.confidence < 0.45 || !isLive) return;
 
     const lastLoggedAt = loggedMatchesRef.current.get(matchedStudent.id) || 0;
-    if (Date.now() - lastLoggedAt < 30_000) return;
+    // 15 seconds cooldown per student to allow convenient testing and avoid duplicate spam
+    if (Date.now() - lastLoggedAt < 15_000) return;
 
     loggedMatchesRef.current.set(matchedStudent.id, Date.now());
     supabaseRecognitionAdapter.logRecognitionEvent({
       student_id: matchedStudent.id,
-      event_type: currentCam.eventType,
+      student_name: matchedStudent.name,
+      student_lrn: matchedStudent.studentNumber,
+      event_type: scanMode,
       camera_id: currentCam.id,
       gate_id: currentCam.id,
       room_name: currentCam.name,
       confidence_score: matchedStudent.confidence,
+    }).then(() => {
+      setLastScanNotice({
+        studentName: matchedStudent.name,
+        type: scanMode,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      });
+      setTimeout(() => setLastScanNotice(null), 4000);
     }).catch(error => {
       loggedMatchesRef.current.delete(matchedStudent.id);
       console.warn('Could not log recognized turnstile entry:', error);
     });
-  }, [matchedStudent, currentCam.name]);
+  }, [matchedStudent, isLive, scanMode, currentCam.id, currentCam.name]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -139,241 +153,327 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   }, [streamUrl, whepUrl, useWebcam]);
 
   return (
-    <div
-      className={cn(
-        'bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-card overflow-hidden transition-colors flex flex-col',
-        className
-      )}
-    >
-      {/* ── Card Header ─────────────────────────────────────────────────── */}
-      <div className="px-6 py-5 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-900/50">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-2xl bg-slate-900 text-white dark:bg-slate-800 shadow-card-sm border border-slate-700/50">
-            <Video className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-black text-slate-900 dark:text-slate-100">Live Turnstile Camera Feed</h3>
-              <span className={cn(
-                'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border',
-                streamState === 'live'
-                  ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-800/60'
-                  : streamState === 'error'
-                    ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-200/60 dark:border-rose-800/60'
-                    : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200/60 dark:border-amber-800/60'
-              )}>
+    <>
+      <div
+        className={cn(
+          'bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-card overflow-hidden transition-colors flex flex-col',
+          className
+        )}
+      >
+        {/* ── Card Header ─────────────────────────────────────────────────── */}
+        <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-900/50">
+          <div className="flex items-center gap-3">
+            <div className="p-2 sm:p-2.5 rounded-2xl bg-slate-900 text-white dark:bg-slate-800 shadow-card-sm border border-slate-700/50 shrink-0">
+              <Video className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100">Live Turnstile Camera Feed</h3>
                 <span className={cn(
-                  'w-1.5 h-1.5 rounded-full',
-                  streamState === 'live' ? 'bg-emerald-500 animate-pulse' : streamState === 'error' ? 'bg-rose-500' : 'bg-amber-500'
-                )} />
-                {streamState === 'live' ? 'Live' : streamState === 'connecting' ? 'Connecting' : streamState === 'error' ? 'Stream Error' : 'Standby Ready'}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
-              Real-time video ingestion for facial recognition edge turnstiles
-            </p>
-          </div>
-        </div>
-
-        {/* Camera Selector Dropdown */}
-        <div className="flex items-center gap-2">
-          <select
-            value={selectedCamera}
-            onChange={e => setSelectedCamera(e.target.value)}
-            className="px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-card-sm focus:outline-none cursor-pointer"
-          >
-            {cameras.map(cam => (
-              <option key={cam.id} value={cam.id} className="dark:bg-slate-900">
-                {cam.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* ── Viewfinder Video Canvas Area (Empty / Standby) ──────────────── */}
-      <div className="p-6 flex-1 flex flex-col">
-        <div className="relative w-full aspect-video sm:min-h-[280px] rounded-2xl bg-slate-950 overflow-hidden border border-slate-800 flex flex-col justify-between p-4 shadow-inner group">
-          
-          {/* Subtle Grid / Scanline Background */}
-          <div className="absolute inset-0 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:20px_20px] opacity-20 pointer-events-none" />
-
-          {/* Viewfinder Target Framing Reticles */}
-          <div className="absolute top-3 left-3 w-5 h-5 border-t-2 border-l-2 border-emerald-500/80 rounded-tl-sm pointer-events-none" />
-          <div className="absolute top-3 right-3 w-5 h-5 border-t-2 border-r-2 border-emerald-500/80 rounded-tr-sm pointer-events-none" />
-          <div className="absolute bottom-3 left-3 w-5 h-5 border-b-2 border-l-2 border-emerald-500/80 rounded-bl-sm pointer-events-none" />
-          <div className="absolute bottom-3 right-3 w-5 h-5 border-b-2 border-r-2 border-emerald-500/80 rounded-br-sm pointer-events-none" />
-
-          {/* Top HUD Overlay */}
-          <div className="relative z-10 flex items-center justify-between text-[11px] font-mono text-emerald-400/90 drop-shadow">
-            <div className="flex items-center gap-2 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-emerald-500/30">
-              <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
-              <span>{currentCam.id.toUpperCase()} · {currentCam.node}</span>
-            </div>
-            <div className="bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-slate-700/50 text-slate-300">
-              {currentTime}
-            </div>
-          </div>
-
-          {((useWebcam && webcamStream) || (!useWebcam && (streamUrl || whepUrl))) && (
-            <video
-              ref={videoRef}
-              {...(!useWebcam && streamUrl ? { src: streamUrl } : {})}
-              autoPlay
-              muted
-              playsInline
-              onLoadStart={() => setStreamState('connecting')}
-              onLoadedData={() => setIsVideoReady(true)}
-              onPlaying={() => {
-                setIsVideoReady(true);
-                setStreamState('live');
-              }}
-              onError={() => {
-                // Don't set error state for webcam mode (no src attribute to fail)
-                if (!useWebcam) setStreamState('error');
-              }}
-              className="absolute inset-0 z-0 w-full h-full object-cover"
-            />
-          )}
-
-          {faceBox && (() => {
-            const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.70);
-            const isRecognized = Boolean(matchedStudent);
-            const isDetecting = !isRecognized && (isAnalyzing || !isRecognitionReady);
-
-            return (
-              <div
-                className={cn(
-                  'absolute z-10 border-2 rounded-lg pointer-events-none transition-all duration-150',
-                  isHighConfidence
-                    ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
-                    : isRecognized
-                    ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
-                    : isDetecting
-                    ? 'border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.3)]'
-                    : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)]'
-                )}
-                style={{
-                  left: `${(faceBox.x / faceBox.videoWidth) * 100}%`,
-                  top: `${(faceBox.y / faceBox.videoHeight) * 100}%`,
-                  width: `${(faceBox.width / faceBox.videoWidth) * 100}%`,
-                  height: `${(faceBox.height / faceBox.videoHeight) * 100}%`,
-                }}
-              >
-                <span
-                  className={cn(
-                    'absolute -top-7 left-0 px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider whitespace-nowrap shadow-lg flex items-center gap-1.5',
-                    isHighConfidence
-                      ? 'bg-emerald-500 text-slate-950'
-                      : isRecognized
-                      ? 'bg-emerald-500 text-slate-950'
-                      : isDetecting
-                      ? 'bg-sky-400 text-slate-950'
-                      : 'bg-rose-500 text-white'
-                  )}
-                >
-                  {isRecognized ? (
-                    `✓ ${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}%`
-                  ) : isDetecting ? (
-                    <>
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
-                      Detecting Face…
-                    </>
-                  ) : (
-                    'Unregistered Face'
-                  )}
+                  'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border',
+                  streamState === 'live'
+                    ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-800/60'
+                    : streamState === 'error'
+                      ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-200/60 dark:border-rose-800/60'
+                      : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200/60 dark:border-amber-800/60'
+                )}>
+                  <span className={cn(
+                    'w-1.5 h-1.5 rounded-full',
+                    streamState === 'live' ? 'bg-emerald-500 animate-pulse' : streamState === 'error' ? 'bg-rose-500' : 'bg-amber-500'
+                  )} />
+                  {streamState === 'live' ? 'Live' : streamState === 'connecting' ? 'Connecting' : streamState === 'error' ? 'Stream Error' : 'Standby Ready'}
                 </span>
               </div>
-            );
-          })()}
-
-
-
-          {/* Center Standby Viewfinder Placeholder */}
-          {!hasVideoSource && <div className="relative z-10 my-auto text-center space-y-3 py-6">
-            <motion.div
-              animate={{ scale: [1, 1.05, 1] }}
-              transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
-              className="w-14 h-14 rounded-2xl bg-slate-900/90 border border-slate-700/80 flex items-center justify-center mx-auto shadow-card text-emerald-400"
-            >
-              <Camera className="w-6 h-6" />
-            </motion.div>
-
-            <div className="space-y-1 max-w-sm mx-auto">
-              <div className="text-sm font-black text-slate-100 tracking-wide">
-                Camera Stream Ingestion Standby
-              </div>
-              <p className="text-xs text-slate-400 font-medium leading-relaxed">
-                Connect RTSP / WebRTC / IP Camera endpoint to start live turnstile stream and bounding-box overlay.
+              <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
+                Real-time video ingestion for facial recognition edge turnstiles
               </p>
             </div>
+          </div>
 
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 text-[11px] font-mono text-slate-400">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              <span>rtsp://camera01.srnhs.local:554/live/ch0</span>
+          {/* Mode Switcher: Time-In vs Time-Out & Camera Selector */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 rounded-xl p-1 border border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => setScanMode('entry')}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer',
+                  scanMode === 'entry'
+                    ? 'bg-emerald-500 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                )}
+              >
+                <span className={cn('w-2 h-2 rounded-full', scanMode === 'entry' ? 'bg-white' : 'bg-emerald-500')} />
+                Time-In (Entry)
+              </button>
+              <button
+                type="button"
+                onClick={() => setScanMode('exit')}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer',
+                  scanMode === 'exit'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                )}
+              >
+                <span className={cn('w-2 h-2 rounded-full', scanMode === 'exit' ? 'bg-slate-950' : 'bg-amber-500')} />
+                Time-Out (Exit)
+              </button>
             </div>
-          </div>}
 
-          {/* Bottom HUD Overlay */}
-          <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-slate-400 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-slate-800">
-            <div className="flex items-center gap-3">
-              <span>RES: <strong className="text-slate-200">1080p @ 30 FPS</strong></span>
-              <span className="hidden sm:inline">BITRATE: <strong className="text-slate-200">-- kbps</strong></span>
-              <span>LATENCY: <strong className="text-emerald-400">&lt;50ms</strong></span>
-            </div>
-            <div className="flex items-center gap-1.5 text-slate-300">
-              <ShieldCheck className={cn('w-3 h-3', isLive ? 'text-emerald-400' : 'text-amber-400')} />
-              <span>
-                {detectorError
-                  ? `Face Detection Error: ${detectorError}`
-                  : getRecognitionStatusText({
-                  matchedStudent,
-                  isLoading: isRecognitionLoading,
-                  isReady: isRecognitionReady,
-                  isFaceDetected,
-                  isAnalyzing,
-                })}
-              </span>
-              {isFaceDetected && (
-                <span className={cn(
-                  'ml-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase',
-                  isLive
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                )}>
-                  {isLive ? 'LIVE' : 'CHECKING…'}
-                </span>
-              )}
-            </div>
+            <select
+              value={selectedCamera}
+              onChange={e => setSelectedCamera(e.target.value)}
+              className="w-full sm:w-auto px-3 py-1.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-card-sm focus:outline-none cursor-pointer"
+            >
+              {cameras.map(cam => (
+                <option key={cam.id} value={cam.id} className="dark:bg-slate-900">
+                  {cam.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
-        {/* ── Stream Status & Action Bar ───────────────────────────────── */}
-        <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-medium">
-            <Eye className="w-3.5 h-3.5 text-slate-400" />
-            <span>Face detection bounding boxes and LRN matches will render on stream live.</span>
+        {/* ── Viewfinder Video Canvas Area ──────────────── */}
+        <div className="p-3 sm:p-5 lg:p-6 flex-1 flex flex-col">
+          <div
+            ref={viewfinderRef}
+            className={cn(
+              'bg-slate-950 overflow-hidden flex flex-col justify-between transition-all duration-200',
+              isFullscreen
+                ? 'fixed inset-0 z-50 p-4 sm:p-6 bg-black/95 backdrop-blur-md rounded-none border-0'
+                : 'relative w-full aspect-[4/3] sm:aspect-video min-h-[250px] sm:min-h-[300px] rounded-2xl border border-slate-800 p-2.5 sm:p-4 shadow-inner group'
+            )}
+          >
+            {/* Subtle Grid / Scanline Background */}
+            <div className="absolute inset-0 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:20px_20px] opacity-20 pointer-events-none" />
+
+            {/* Viewfinder Target Framing Reticles */}
+            <div className="absolute top-2.5 left-2.5 sm:top-3 sm:left-3 w-4 h-4 sm:w-5 sm:h-5 border-t-2 border-l-2 border-emerald-500/80 rounded-tl-sm pointer-events-none" />
+            <div className="absolute top-2.5 right-2.5 sm:top-3 sm:right-3 w-4 h-4 sm:w-5 sm:h-5 border-t-2 border-r-2 border-emerald-500/80 rounded-tr-sm pointer-events-none" />
+            <div className="absolute bottom-2.5 left-2.5 sm:bottom-3 sm:left-3 w-4 h-4 sm:w-5 sm:h-5 border-b-2 border-l-2 border-emerald-500/80 rounded-bl-sm pointer-events-none" />
+            <div className="absolute bottom-2.5 right-2.5 sm:bottom-3 sm:right-3 w-4 h-4 sm:w-5 sm:h-5 border-b-2 border-r-2 border-emerald-500/80 rounded-br-sm pointer-events-none" />
+
+            {/* Top HUD Overlay */}
+            <div className="relative z-10 flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-emerald-400/90 drop-shadow">
+              <div className="flex items-center gap-1.5 sm:gap-2 bg-black/70 backdrop-blur-md px-2 sm:px-2.5 py-1 rounded-lg border border-emerald-500/30">
+                <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
+                <span>{currentCam.id.toUpperCase()} · {currentCam.node} ({scanMode === 'entry' ? 'TIME-IN' : 'TIME-OUT'})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="bg-black/70 backdrop-blur-md px-2 sm:px-2.5 py-1 rounded-lg border border-slate-700/50 text-slate-300">
+                  {currentTime}
+                </div>
+                {isFullscreen && (
+                  <button
+                    onClick={() => setIsFullscreen(false)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 font-bold transition-colors cursor-pointer"
+                    title="Exit Fullscreen"
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                    <span>Close</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Real-time Scan Confirmation Banner */}
+            <AnimatePresence>
+              {lastScanNotice && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.96 }}
+                  className={cn(
+                    'relative z-20 mx-auto max-w-md w-full px-4 py-2 rounded-xl text-center shadow-lg border backdrop-blur-md flex items-center justify-center gap-2 text-xs font-black',
+                    lastScanNotice.type === 'entry'
+                      ? 'bg-emerald-500/90 text-white border-emerald-400/50'
+                      : 'bg-amber-500/90 text-slate-950 border-amber-400/50'
+                  )}
+                >
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>
+                    ✓ {lastScanNotice.type === 'entry' ? 'Time-In Logged' : 'Time-Out Logged'}: {lastScanNotice.studentName} at {lastScanNotice.time}
+                  </span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {((useWebcam && webcamStream) || (!useWebcam && (streamUrl || whepUrl))) && (
+              <video
+                ref={videoRef}
+                {...(!useWebcam && streamUrl ? { src: streamUrl } : {})}
+                autoPlay
+                muted
+                playsInline
+                onLoadStart={() => setStreamState('connecting')}
+                onLoadedData={() => setIsVideoReady(true)}
+                onPlaying={() => {
+                  setIsVideoReady(true);
+                  setStreamState('live');
+                }}
+                onError={() => {
+                  if (!useWebcam) setStreamState('error');
+                }}
+                className={cn(
+                  'absolute inset-0 z-0 w-full h-full',
+                  isFullscreen ? 'object-contain' : 'object-cover'
+                )}
+              />
+            )}
+
+            {faceBox && (() => {
+              const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.70);
+              const isRecognized = Boolean(matchedStudent);
+              const isDetecting = !isRecognized && (isAnalyzing || !isRecognitionReady);
+              // Spoof: face is recognized but liveness check failed (photo/screen attack)
+              const isSpoofWarning = isRecognized && !isLive;
+
+              return (
+                <div
+                  className={cn(
+                    'absolute z-10 border-2 rounded-lg pointer-events-none transition-all duration-150',
+                    isSpoofWarning
+                      ? 'border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.4)]'
+                      : isHighConfidence
+                      ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
+                      : isRecognized
+                      ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
+                      : isDetecting
+                      ? 'border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.3)]'
+                      : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)]'
+                  )}
+                  style={{
+                    left: `${(faceBox.x / faceBox.videoWidth) * 100}%`,
+                    top: `${(faceBox.y / faceBox.videoHeight) * 100}%`,
+                    width: `${(faceBox.width / faceBox.videoWidth) * 100}%`,
+                    height: `${(faceBox.height / faceBox.videoHeight) * 100}%`,
+                  }}
+                >
+                  <span
+                    className={cn(
+                      'absolute -top-6 sm:-top-7 left-0 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider whitespace-nowrap shadow-lg flex items-center gap-1 sm:gap-1.5',
+                      isSpoofWarning
+                        ? 'bg-amber-500 text-slate-950'
+                        : isHighConfidence
+                        ? 'bg-emerald-500 text-slate-950'
+                        : isRecognized
+                        ? 'bg-emerald-500 text-slate-950'
+                        : isDetecting
+                        ? 'bg-sky-400 text-slate-950'
+                        : 'bg-rose-500 text-white'
+                    )}
+                  >
+                    {isSpoofWarning ? (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
+                        ⚠ Verifying Liveness…
+                      </>
+                    ) : isRecognized ? (
+                      `✓ ${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}%`
+                    ) : isDetecting ? (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
+                        Detecting Face…
+                      </>
+                    ) : (
+                      'Unregistered Face'
+                    )}
+                  </span>
+                </div>
+              );
+            })()}
+
+            {/* Center Standby Viewfinder Placeholder */}
+            {!hasVideoSource && (
+              <div className="relative z-10 my-auto text-center space-y-2 sm:space-y-3 py-4 sm:py-6">
+                <motion.div
+                  animate={{ scale: [1, 1.05, 1] }}
+                  transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
+                  className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-slate-900/90 border border-slate-700/80 flex items-center justify-center mx-auto shadow-card text-emerald-400"
+                >
+                  <Camera className="w-5 h-5 sm:w-6 sm:h-6" />
+                </motion.div>
+
+                <div className="space-y-1 max-w-sm mx-auto px-2">
+                  <div className="text-xs sm:text-sm font-black text-slate-100 tracking-wide">
+                    Camera Stream Ingestion Standby
+                  </div>
+                  <p className="text-[11px] sm:text-xs text-slate-400 font-medium leading-relaxed">
+                    Connect RTSP / WebRTC / IP Camera endpoint to start live turnstile stream and bounding-box overlay.
+                  </p>
+                </div>
+
+                <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-900/80 border border-slate-800 text-[10px] sm:text-[11px] font-mono text-slate-400 max-w-full truncate">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                  <span className="truncate">rtsp://camera01.srnhs.local:554/live/ch0</span>
+                </div>
+              </div>
+            )}
+
+            {/* Bottom HUD Overlay */}
+            <div className="relative z-10 flex flex-col xs:flex-row items-start xs:items-center justify-between gap-1 sm:gap-2 text-[9px] sm:text-[10px] font-mono text-slate-400 bg-black/75 backdrop-blur-md px-2.5 py-1.5 rounded-lg border border-slate-800">
+              <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                <span>RES: <strong className="text-slate-200">1080p</strong></span>
+                <span className="hidden sm:inline">FPS: <strong className="text-slate-200">30</strong></span>
+                <span>LATENCY: <strong className="text-emerald-400">&lt;50ms</strong></span>
+              </div>
+              <div className="flex items-center gap-1.5 text-slate-300 max-w-full truncate">
+                <ShieldCheck className={cn('w-3 h-3 shrink-0', isLive ? 'text-emerald-400' : 'text-amber-400')} />
+                <span className="truncate">
+                  {detectorError
+                    ? `Error: ${detectorError}`
+                    : getRecognitionStatusText({
+                    matchedStudent,
+                    isLoading: isRecognitionLoading,
+                    isReady: isRecognitionReady,
+                    isFaceDetected,
+                    isAnalyzing,
+                  })}
+                </span>
+                {isFaceDetected && (
+                  <span className={cn(
+                    'ml-1 px-1 py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase shrink-0',
+                    isLive
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  )}>
+                    {isLive ? 'LIVE' : 'WAIT'}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              disabled
-              title="Stream configuration"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 text-xs font-bold opacity-60 cursor-not-allowed"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span>Configure Stream</span>
-            </button>
-            <button
-              onClick={() => setIsFullscreen(!isFullscreen)}
-              className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-card-sm"
-              title="Toggle view"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-            </button>
+          {/* ── Stream Status & Action Bar ───────────────────────────────── */}
+          <div className="mt-3 sm:mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs">
+            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-medium text-[11px] sm:text-xs">
+              <Eye className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span>Face detection bounding boxes and LRN matches render on stream live.</span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+              <button
+                disabled
+                title="Stream configuration"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 text-xs font-bold opacity-60 cursor-not-allowed"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Configure</span>
+              </button>
+              <button
+                onClick={() => setIsFullscreen(!isFullscreen)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-card-sm text-xs font-bold"
+                title="Toggle Expanded View"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Expand</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 };

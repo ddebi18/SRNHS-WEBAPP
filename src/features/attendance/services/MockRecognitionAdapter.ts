@@ -59,8 +59,27 @@ export const INITIAL_MOCK_EVENTS: RecognitionEvent[] = [
   },
 ];
 
+const STORAGE_KEY_EVENTS = 'srnhs_recognition_events_v2';
+
+function loadStoredEvents(): RecognitionEvent[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_EVENTS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {}
+  return [...INITIAL_MOCK_EVENTS];
+}
+
+function saveStoredEvents(events: RecognitionEvent[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY_EVENTS, JSON.stringify(events.slice(0, 150)));
+  } catch (e) {}
+}
+
 class MockRecognitionAdapterImpl implements RecognitionAdapter {
-  private events: RecognitionEvent[] = [...INITIAL_MOCK_EVENTS];
+  private events: RecognitionEvent[] = loadStoredEvents();
   private listeners: Set<(event: RecognitionEvent) => void> = new Set();
 
   subscribeToEvents(callback: (event: RecognitionEvent) => void): () => void {
@@ -105,6 +124,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
       captured_at: new Date().toISOString(),
     };
     this.events.unshift(newEvt);
+    saveStoredEvents(this.events);
     this.notifyListeners(newEvt);
     return newEvt;
   }
@@ -113,12 +133,12 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     // Look up student from unified student database
     const allStudents = getStoredStudents();
     const student = allStudents.find(
-      s => s.id === eventData.student_id || s.studentNumber === eventData.student_id
+      s => s.id === eventData.student_id || s.studentNumber === eventData.student_id || s.name.toLowerCase() === (eventData.student_name || '').toLowerCase()
     );
 
-    const studentName = eventData.student_name || student?.name || 'Juan Carlos Garcia';
+    const studentName = eventData.student_name || student?.name || 'Student';
     const studentLrn = eventData.student_lrn || student?.studentNumber || '109823456701';
-    const studentPhoto = eventData.student_photo || student?.registeredPhotos?.front || student?.photoUrl || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80';
+    const studentPhoto = eventData.student_photo || student?.registeredPhotos?.front || student?.photoUrl;
     const sectionName = eventData.section_name || student?.sectionName || 'Grade 10 – Sampaguita';
     const guardianPhone = student?.guardianPhone || '+639171234567';
     const locationName = eventData.room_name || 'Main Gate Turnstile 01';
@@ -126,7 +146,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
 
     const newEvt: RecognitionEvent = {
       id: `evt-sim-${Date.now()}`,
-      student_id: eventData.student_id || student?.id || 'std-101',
+      student_id: eventData.student_id || student?.id || `std-${Date.now()}`,
       student_name: studentName,
       student_lrn: studentLrn,
       student_photo: studentPhoto,
@@ -142,6 +162,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     };
 
     this.events.unshift(newEvt);
+    saveStoredEvents(this.events);
     this.notifyListeners(newEvt);
 
     // Automatically send real-time SMS notification to the student's guardian
@@ -166,6 +187,10 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
 
   async logRecognitionEvent(eventData: {
     student_id: string;
+    student_name?: string;
+    student_lrn?: string;
+    student_photo?: string;
+    section_name?: string;
     event_type: EventType;
     camera_id: string;
     gate_id: string;
@@ -175,6 +200,10 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
   }): Promise<RecognitionEvent> {
     return this.simulateScan({
       student_id: eventData.student_id,
+      student_name: eventData.student_name,
+      student_lrn: eventData.student_lrn,
+      student_photo: eventData.student_photo,
+      section_name: eventData.section_name,
       event_type: eventData.event_type,
       camera_id: eventData.camera_id,
       gate_id: eventData.gate_id,
@@ -184,7 +213,13 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
   }
 
   private notifyListeners(event: RecognitionEvent) {
-    this.listeners.forEach(cb => cb(event));
+    this.listeners.forEach(cb => {
+      try {
+        cb(event);
+      } catch (err) {
+        console.error('Error notifying event listener:', err);
+      }
+    });
   }
 }
 

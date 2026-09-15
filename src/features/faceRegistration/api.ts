@@ -368,8 +368,8 @@ export async function getPhotosFromDb(studentId: string): Promise<{ front?: stri
   }
 }
 
-// Convert and optimize image blob to compact JPEG data URL for fast local rendering
-async function resizeBlobToDataUrl(blob: Blob, maxDim = 420): Promise<string> {
+// Convert and optimize image blob to high-fidelity JPEG data URL for robust face descriptor extraction
+async function resizeBlobToDataUrl(blob: Blob, maxDim = 720): Promise<string> {
   return new Promise(resolve => {
     try {
       const img = new Image();
@@ -377,8 +377,8 @@ async function resizeBlobToDataUrl(blob: Blob, maxDim = 420): Promise<string> {
       img.onload = () => {
         URL.revokeObjectURL(url);
         const canvas = document.createElement('canvas');
-        let w = img.width || 420;
-        let h = img.height || 420;
+        let w = img.width || 720;
+        let h = img.height || 720;
         if (w > maxDim || h > maxDim) {
           if (w > h) {
             h = Math.round((h * maxDim) / w);
@@ -393,7 +393,7 @@ async function resizeBlobToDataUrl(blob: Blob, maxDim = 420): Promise<string> {
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/jpeg', 0.84));
+          resolve(canvas.toDataURL('image/jpeg', 0.88));
         } else {
           resolve('');
         }

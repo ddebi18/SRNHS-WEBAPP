@@ -116,7 +116,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-6 overflow-y-auto">
         {/* Backdrop */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -135,7 +135,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
           role="dialog"
           aria-modal="true"
           aria-labelledby="modal-student-title"
-          className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-5 z-10 my-auto"
+          className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-3.5 sm:p-6 space-y-3.5 sm:space-y-5 z-10 my-auto max-h-[94vh] overflow-y-auto"
         >
           {/* Header */}
           <div className="flex items-start justify-between gap-4 pb-3 border-b border-slate-200 dark:border-slate-800">
@@ -168,14 +168,6 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               <span>{submitError}</span>
             </div>
           )}
-
-          {/* Consent Checkbox Gate */}
-          <ConsentConfirmCheckbox
-            student={student}
-            checked={consentConfirmed}
-            onChange={setConsentConfirmed}
-            disabled={isSubmitting}
-          />
 
           {/* Step Progress Dots */}
           <CaptureProgressDots
@@ -223,6 +215,14 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             onCapture={handleCaptureFrame}
             onSubmit={handleSubmit}
             onCancel={handleClose}
+          />
+
+          {/* Consent Checkbox Gate (Positioned below capture/cancel buttons with clear requirement highlighting) */}
+          <ConsentConfirmCheckbox
+            student={student}
+            checked={consentConfirmed}
+            onChange={setConsentConfirmed}
+            disabled={isSubmitting}
           />
         </motion.div>
       </div>
