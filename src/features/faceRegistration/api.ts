@@ -4,12 +4,6 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
 const LOCAL_STORAGE_KEY_SECTIONS = 'srnhs_face_registration_sections_v1';
 
-const INITIAL_SECTIONS: Section[] = [
-  { id: 'sec-101', name: 'Grade 10 – Sampaguita', gradeLevel: 'Grade 10', teacherId: '', teacherName: 'Unassigned', totalStudents: 0, registeredStudents: 0 },
-  { id: 'sec-102', name: 'Grade 11 – STEM A',     gradeLevel: 'Grade 11', teacherId: '', teacherName: 'Unassigned', totalStudents: 0, registeredStudents: 0 },
-  { id: 'sec-103', name: 'Grade 12 – ABM A',      gradeLevel: 'Grade 12', teacherId: '', teacherName: 'Unassigned', totalStudents: 0, registeredStudents: 0 },
-];
-
 
 
 // IndexedDB & LocalStorage Hybrid Persistence for Biometric Face Photos
@@ -266,20 +260,31 @@ export function getStoredSections(): Section[] {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY_SECTIONS);
     if (raw) {
       const parsed: Section[] = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
+        // Strip out legacy dummy teacher names from old sessions
         return parsed.map(s => ({
           ...s,
-          teacherName: s.teacherName === 'Maria Santos' || s.teacherName === 'Juan Dela Cruz' || s.teacherName === 'Elena Reyes' ? 'Unassigned' : s.teacherName,
+          teacherName:
+            s.teacherName === 'Maria Santos' ||
+            s.teacherName === 'Juan Dela Cruz' ||
+            s.teacherName === 'Elena Reyes'
+              ? 'Unassigned'
+              : s.teacherName,
           totalStudents: 0,
           registeredStudents: 0,
         }));
       }
     }
   } catch (e) {}
+  return []; // No sections yet — admin must create them
+}
+
+export function saveStoredSections(sections: Section[]): void {
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(INITIAL_SECTIONS));
-  } catch {}
-  return INITIAL_SECTIONS;
+    localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(sections));
+  } catch (err) {
+    console.warn('LocalStorage quota warning (sections):', err);
+  }
 }
 
 export async function fetchSections(): Promise<Section[]> {
