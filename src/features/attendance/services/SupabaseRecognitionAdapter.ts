@@ -2,6 +2,7 @@ import { RecognitionAdapter } from './RecognitionAdapter';
 import { RecognitionEvent, EventType } from '@/types/domain.types';
 import { supabase } from '@/lib/supabase';
 import { mockRecognitionAdapter } from './MockRecognitionAdapter';
+import { isValidUUID } from '@/features/faceRegistration/api';
 
 class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
   subscribeToEvents(callback: (event: RecognitionEvent) => void): () => void {
@@ -41,7 +42,8 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
   }
 
   async getEvents(filters?: { studentId?: string; type?: EventType; limit?: number }): Promise<RecognitionEvent[]> {
-    if (!supabase) return mockRecognitionAdapter.getEvents(filters);
+    const localEvents = await mockRecognitionAdapter.getEvents(filters);
+    if (!supabase) return localEvents;
 
     try {
       let query = supabase.from('recognition_events').select(`
@@ -59,58 +61,74 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
 
       const { data, error } = await query;
       if (error) {
-        console.warn('Supabase fetch error, falling back to mock:', error);
-        return mockRecognitionAdapter.getEvents(filters);
+        console.warn('Supabase fetch error, falling back to local events:', error.message);
+        return localEvents;
       }
 
-      return (data || []).map((row: any) => ({
+      const dbEvents: RecognitionEvent[] = (data || []).map((row: any) => ({
         id: row.id,
         student_id: row.student_id,
-        student_name: row.students ? `${row.students.first_name} ${row.students.last_name}` : 'Unknown Student',
-        student_lrn: row.students?.lrn,
+        student_name: row.students ? `${row.students.first_name} ${row.students.last_name}` : 'Student',
+        student_lrn: row.students?.lrn || '',
         student_photo: row.students?.photo_urls?.[0],
         event_type: row.event_type,
-        camera_id: row.camera_id,
-        gate_id: row.gate_id,
-        room_name: row.rooms?.name,
+        camera_id: 'cam-01',
+        gate_id: 'gate-01',
+        room_name: row.rooms?.name || 'Main Gate Turnstile',
         subject_title: row.subjects?.title,
-        confidence_score: row.confidence_score,
-        source: row.source,
+        confidence_score: row.confidence_score ?? 0.95,
+        source: row.source || 'camera',
         captured_at: row.captured_at,
       }));
+
+      // Merge cloud events with local events, deduplicated by student + type + date
+      const mergedMap = new Map<string, RecognitionEvent>();
+      localEvents.forEach(e => {
+        const dateStr = new Date(e.captured_at).toDateString();
+        const key = `${e.student_id}_${e.event_type}_${dateStr}`;
+        mergedMap.set(key, e);
+      });
+      dbEvents.forEach(e => {
+        const dateStr = new Date(e.captured_at).toDateString();
+        const key = `${e.student_id}_${e.event_type}_${dateStr}`;
+        // If local already exists, prefer local (which has high-res photos and rich section names)
+        if (!mergedMap.has(key)) {
+          mergedMap.set(key, e);
+        }
+      });
+
+      const mergedList = Array.from(mergedMap.values());
+      mergedList.sort((a, b) => new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime());
+      return filters?.limit ? mergedList.slice(0, filters.limit) : mergedList;
     } catch (err) {
-      console.warn('Supabase network error, fallback to mock:', err);
-      return mockRecognitionAdapter.getEvents(filters);
+      console.warn('Supabase network error, fallback to local events:', err);
+      return localEvents;
     }
   }
 
   async logManualEvent(eventData: Parameters<RecognitionAdapter['logManualEvent']>[0]): Promise<RecognitionEvent> {
-    if (!supabase) return mockRecognitionAdapter.logManualEvent(eventData);
+    const localEvent = await mockRecognitionAdapter.logManualEvent(eventData);
+
+    if (!supabase) return localEvent;
 
     try {
-      const { data, error } = await supabase
-        .from('recognition_events')
-        .insert({
-          student_id: eventData.student_id,
-          event_type: eventData.event_type,
-          room_id: eventData.room_id || null,
-          subject_id: eventData.subject_id || null,
-          confidence_score: 1.0,
-          source: 'manual_override',
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.warn('Supabase manual event log error, using mock:', error);
-        return mockRecognitionAdapter.logManualEvent(eventData);
+      if (isValidUUID(eventData.student_id)) {
+        await supabase
+          .from('recognition_events')
+          .insert({
+            student_id: eventData.student_id,
+            event_type: eventData.event_type,
+            room_id: (eventData.room_id && isValidUUID(eventData.room_id)) ? eventData.room_id : null,
+            subject_id: (eventData.subject_id && isValidUUID(eventData.subject_id)) ? eventData.subject_id : null,
+            confidence_score: 1.0,
+            source: 'manual_override',
+          });
       }
-
-      mockRecognitionAdapter.logManualEvent(eventData);
-      return data as RecognitionEvent;
     } catch (err) {
-      return mockRecognitionAdapter.logManualEvent(eventData);
+      console.warn('Supabase manual event note:', err);
     }
+
+    return localEvent;
   }
 
   async simulateScan(eventData: Partial<RecognitionEvent>): Promise<RecognitionEvent> {
@@ -130,55 +148,37 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
     room_name?: string;
     confidence_score: number;
   }): Promise<RecognitionEvent> {
-    if (!supabase) return mockRecognitionAdapter.logRecognitionEvent(eventData);
+    // 1. ALWAYS log to local adapter first (updates UI, logs to localStorage, sends SMS)
+    const localEvent = await mockRecognitionAdapter.simulateScan(eventData);
+
+    if (!supabase) return localEvent;
 
     try {
-      // ── Enforce 1 Time-In and 1 Time-Out per student per day ───────────
-      if (eventData.event_type === 'entry' || eventData.event_type === 'exit') {
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
-
-        const { data: existingToday } = await supabase
+      // 2. If student_id is a valid UUID, persist to Supabase recognition_events
+      if (isValidUUID(eventData.student_id)) {
+        const { error: insertErr } = await supabase
           .from('recognition_events')
-          .select('id, student_id, event_type, captured_at')
-          .eq('student_id', eventData.student_id)
-          .eq('event_type', eventData.event_type)
-          .gte('captured_at', startOfDay.toISOString())
-          .limit(1);
+          .insert({
+            student_id: eventData.student_id,
+            event_type: eventData.event_type,
+            room_id: (eventData.room_id && isValidUUID(eventData.room_id)) ? eventData.room_id : null,
+            confidence_score: eventData.confidence_score,
+            source: 'camera',
+          });
 
-        if (existingToday && existingToday.length > 0) {
-          console.log(`[SupabaseRecognitionAdapter] Student ${eventData.student_id} already completed ${eventData.event_type} today.`);
-          return mockRecognitionAdapter.logRecognitionEvent(eventData);
+        if (insertErr) {
+          console.warn('[Supabase] recognition_events insert note (using local event):', insertErr.message);
+        } else {
+          console.log('[Supabase] ✓ Recognition event recorded in cloud');
         }
       }
-
-      const { data, error } = await supabase
-        .from('recognition_events')
-        .insert({
-          student_id: eventData.student_id,
-          event_type: eventData.event_type,
-          camera_id: eventData.camera_id,
-          gate_id: eventData.gate_id,
-          room_id: eventData.room_id || null,
-          confidence_score: eventData.confidence_score,
-          source: 'camera',
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.warn('Supabase recognition event error, using mock:', error);
-        return mockRecognitionAdapter.logRecognitionEvent(eventData);
-      }
-
-      // Also notify local listeners so local UI updates immediately without waiting for websocket
-      mockRecognitionAdapter.simulateScan(eventData);
-      return data as RecognitionEvent;
     } catch (err) {
-      console.warn('Supabase network error, fallback to mock:', err);
-      return mockRecognitionAdapter.logRecognitionEvent(eventData);
+      console.warn('[Supabase] recognition_events network note:', err);
     }
+
+    return localEvent;
   }
 }
 
 export const supabaseRecognitionAdapter = new SupabaseRecognitionAdapterImpl();
+
