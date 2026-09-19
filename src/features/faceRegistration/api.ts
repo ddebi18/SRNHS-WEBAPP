@@ -256,23 +256,30 @@ export async function addNewStudent(studentData: {
 }
 
 export function getStoredSections(): Section[] {
+  const LEGACY_IDS = new Set(['sec-101', 'sec-102', 'sec-103']);
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY_SECTIONS);
     if (raw) {
       const parsed: Section[] = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        // Strip out legacy dummy teacher names from old sessions
-        return parsed.map(s => ({
-          ...s,
-          teacherName:
-            s.teacherName === 'Maria Santos' ||
-            s.teacherName === 'Juan Dela Cruz' ||
-            s.teacherName === 'Elena Reyes'
-              ? 'Unassigned'
-              : s.teacherName,
-          totalStudents: 0,
-          registeredStudents: 0,
-        }));
+        const cleaned = parsed
+          .filter(s => !LEGACY_IDS.has(s.id)) // purge old dummy sections
+          .map(s => ({
+            ...s,
+            teacherName:
+              s.teacherName === 'Maria Santos' ||
+              s.teacherName === 'Juan Dela Cruz' ||
+              s.teacherName === 'Elena Reyes'
+                ? 'Unassigned'
+                : s.teacherName,
+            totalStudents: 0,
+            registeredStudents: 0,
+          }));
+        // If we removed legacy entries, persist the cleaned list
+        if (cleaned.length !== parsed.length) {
+          try { localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(cleaned)); } catch {}
+        }
+        return cleaned;
       }
     }
   } catch (e) {}

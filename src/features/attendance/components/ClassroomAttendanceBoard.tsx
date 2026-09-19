@@ -3,12 +3,22 @@ import { motion } from 'framer-motion';
 import { AttendanceStatus, RecognitionEvent } from '@/types/domain.types';
 import { AttendanceBadge } from '@/components/ui/StatusBadge';
 import { useRole } from '@/hooks/useRole';
-import { Check, Clock, X, AlertCircle, BookOpen, Users, RefreshCw, Camera } from 'lucide-react';
+import { Check, Clock, X, AlertCircle, BookOpen, Users, RefreshCw, Layers } from 'lucide-react';
 import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { fetchSections, fetchSectionRoster } from '@/features/faceRegistration/api';
 import { Section, Student } from '@/features/faceRegistration/types';
+import { Subject } from '@/types/domain.types';
 import { cn } from '@/lib/utils';
+
+const LS_SUBJECTS = 'srnhs_academics_subjects_v1';
+function getStoredSubjects(): Subject[] {
+  try {
+    const raw = localStorage.getItem(LS_SUBJECTS);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [];
+}
 
 interface StudentAttendanceRow {
   student_id: string;
@@ -48,23 +58,27 @@ const STATUS_ACTIONS: { status: AttendanceStatus; label: string; icon: React.Rea
 export const ClassroomAttendanceBoard: React.FC = () => {
   const { user } = useRole();
   const [sections, setSections] = useState<Section[]>([]);
-  const [selectedSection, setSelectedSection] = useState('sec-101');
-  const [selectedSubject, setSelectedSubject] = useState('General Mathematics');
+  const [selectedSection, setSelectedSection] = useState('');
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [selectedSubject, setSelectedSubject] = useState('');
   const [roster, setRoster] = useState<Student[]>([]);
   const [scanEvents, setScanEvents] = useState<RecognitionEvent[]>([]);
   const [manualOverrides, setManualOverrides] = useState<Record<string, { status: AttendanceStatus; markedBy?: string }>>(loadStoredOverrides());
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load sections on mount
+  // Load sections and subjects on mount
   useEffect(() => {
     fetchSections().then(data => {
-      if (data && data.length > 0) {
-        setSections(data);
-        if (!selectedSection) {
-          setSelectedSection(data[0]!.id);
-        }
+      setSections(data);
+      if (data.length > 0 && !selectedSection) {
+        setSelectedSection(data[0]!.id);
       }
     });
+    const stored = getStoredSubjects();
+    setSubjects(stored);
+    if (stored.length > 0) {
+      setSelectedSubject(stored[0]!.title);
+    }
   }, []);
 
   // Fetch roster when selected section changes
@@ -199,39 +213,46 @@ export const ClassroomAttendanceBoard: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-3 py-2 shadow-card-sm transition-colors">
             <Users className="w-4 h-4 text-slate-400 dark:text-slate-500" />
-            <select
-              value={selectedSection}
-              onChange={e => setSelectedSection(e.target.value)}
-              className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
-            >
-              {sections.length > 0 ? (
-                sections.map(sec => (
+            {sections.length > 0 ? (
+              <select
+                value={selectedSection}
+                onChange={e => setSelectedSection(e.target.value)}
+                className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
+              >
+                {sections.map(sec => (
                   <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
                     {sec.name}
                   </option>
-                ))
-              ) : (
-                <>
-                  <option value="sec-101" className="dark:bg-slate-900">Grade 10 – Sampaguita</option>
-                  <option value="sec-102" className="dark:bg-slate-900">Grade 11 – STEM A</option>
-                  <option value="sec-103" className="dark:bg-slate-900">Grade 12 – ABM A</option>
-                </>
-              )}
-            </select>
+                ))}
+              </select>
+            ) : (
+              <span className="flex items-center gap-1.5 text-sm font-bold text-slate-400 dark:text-slate-500">
+                <Layers className="w-4 h-4" />
+                No sections — add in Academics
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-3 py-2 shadow-card-sm transition-colors">
             <BookOpen className="w-4 h-4 text-slate-400 dark:text-slate-500" />
-            <select
-              value={selectedSubject}
-              onChange={e => setSelectedSubject(e.target.value)}
-              className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
-            >
-              <option value="General Mathematics" className="dark:bg-slate-900">General Mathematics</option>
-              <option value="Research 1" className="dark:bg-slate-900">Research 1</option>
-              <option value="Panitikang Pilipino" className="dark:bg-slate-900">Panitikang Pilipino</option>
-              <option value="Physical Science" className="dark:bg-slate-900">Physical Science</option>
-            </select>
+            {subjects.length > 0 ? (
+              <select
+                value={selectedSubject}
+                onChange={e => setSelectedSubject(e.target.value)}
+                className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
+              >
+                {subjects.map(sub => (
+                  <option key={sub.id} value={sub.title} className="dark:bg-slate-900">
+                    {sub.title}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="flex items-center gap-1.5 text-sm font-bold text-slate-400 dark:text-slate-500">
+                <BookOpen className="w-4 h-4" />
+                No subjects — add in Academics
+              </span>
+            )}
           </div>
 
           <button
@@ -283,7 +304,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400">
-            <Camera className="w-4 h-4 text-emerald-500" />
+            <RefreshCw className="w-4 h-4 text-emerald-500" />
             <span>Turnstile Auto-Sync Active</span>
           </div>
         </div>
