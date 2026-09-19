@@ -4,26 +4,23 @@ import { Student, StudentViolation } from '@/types/domain.types';
 import { DataTable, Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
 import { ViolationSeverityBadge } from '@/components/ui/StatusBadge';
-import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Image as ImageIcon, Eye, CheckCircle2, AlertCircle, Trash2, ArrowRight } from 'lucide-react';
+import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Images, Eye, CheckCircle2, AlertCircle, Trash2, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { addNewStudent, getStoredStudents, getPhotosFromDb, deleteStudent } from '@/features/faceRegistration/api';
+import { addNewStudent, getStoredStudents, getStoredSections, getPhotosFromDb, deleteStudent } from '@/features/faceRegistration/api';
+import { Section as FRSection } from '@/features/faceRegistration/types';
 
 const INITIAL_VIOLATIONS: StudentViolation[] = [];
 
-const SECTIONS_CONFIG = [
-  { id: 'sec-101', name: 'Grade 10 – Sampaguita', gradeLevel: 10 },
-  { id: 'sec-102', name: 'Grade 11 – STEM A', gradeLevel: 11 },
-  { id: 'sec-103', name: 'Grade 12 – ABM A', gradeLevel: 12 },
-];
 
-async function loadUnifiedStudents(): Promise<Student[]> {
+async function loadUnifiedStudents(sections: FRSection[]): Promise<Student[]> {
   const rawList = getStoredStudents();
   return Promise.all(
     rawList.map(async fs => {
       const nameParts = fs.name.split(' ');
       const first = nameParts.slice(0, -1).join(' ') || nameParts[0] || 'Student';
       const last = nameParts.length > 1 ? nameParts[nameParts.length - 1]! : '';
-      const sec = SECTIONS_CONFIG.find(sc => sc.id === fs.sectionId) || SECTIONS_CONFIG[0]!;
+      const sec = sections.find(sc => sc.id === fs.sectionId);
+      const gradeLevel = sec ? parseInt(sec.gradeLevel.replace('Grade ', ''), 10) : 0;
 
       // Hydrate high-res photos from IndexedDB
       const dbPhotos = await getPhotosFromDb(fs.id);
@@ -44,9 +41,9 @@ async function loadUnifiedStudents(): Promise<Student[]> {
         first_name: first,
         last_name: last,
         gender: 'Not Specified',
-        grade_level: sec.gradeLevel,
+        grade_level: gradeLevel,
         section_id: fs.sectionId,
-        section_name: fs.sectionName || sec.name,
+        section_name: fs.sectionName || sec?.name || 'Unknown Section',
         parent_consent: true,
         consent_date: fs.lastRegisteredAt ? fs.lastRegisteredAt.split('T')[0] : '2026-06-01',
         photo_urls: photoUrls,
@@ -70,6 +67,7 @@ export const StudentManager: React.FC = () => {
   const { isAdmin, user } = useRole();
   const [students, setStudents] = useState<Student[]>([]);
   const [violations, setViolations] = useState<StudentViolation[]>(INITIAL_VIOLATIONS);
+  const [storedSections, setStoredSections] = useState<FRSection[]>([]);
 
   // Detail Modal
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -79,7 +77,7 @@ export const StudentManager: React.FC = () => {
   const [lrn, setLrn] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [sectionId, setSectionId] = useState('sec-101');
+  const [sectionId, setSectionId] = useState('');
   const [guardianName, setGuardianName] = useState('');
   const [guardianPhone, setGuardianPhone] = useState('');
   const [guardianRel, setGuardianRel] = useState('Mother');
@@ -94,8 +92,9 @@ export const StudentManager: React.FC = () => {
   const [enrollError, setEnrollError] = useState<string | null>(null);
 
   // Reload unified students list
-  const refreshStudents = async () => {
-    const list = await loadUnifiedStudents();
+  const refreshStudents = async (secs?: FRSection[]) => {
+    const sections = secs ?? storedSections;
+    const list = await loadUnifiedStudents(sections);
     setStudents(list);
     if (list.length > 0 && !violationStudentId) {
       setViolationStudentId(list[0]!.id);
@@ -103,7 +102,10 @@ export const StudentManager: React.FC = () => {
   };
 
   useEffect(() => {
-    refreshStudents();
+    const secs = getStoredSections();
+    setStoredSections(secs);
+    if (secs.length > 0) setSectionId(secs[0]!.id);
+    refreshStudents(secs);
   }, []);
 
   const handleCreateStudent = async (e: React.FormEvent) => {
@@ -136,15 +138,15 @@ export const StudentManager: React.FC = () => {
       cleanPhone = rawPhone.startsWith('09') ? `+63${rawPhone.slice(1)}` : rawPhone.startsWith('9') ? `+63${rawPhone}` : rawPhone;
     }
 
-    const sec = SECTIONS_CONFIG.find(s => s.id === sectionId) || SECTIONS_CONFIG[0]!;
+    const sec = storedSections.find(s => s.id === sectionId) || storedSections[0];
 
     // Register with unified store
     await addNewStudent({
       id: `std-${Date.now()}`,
       name: `${cleanFirst} ${cleanLast}`,
       studentNumber: cleanLrn,
-      sectionId: sec.id,
-      sectionName: sec.name,
+      sectionId: sec?.id || sectionId,
+      sectionName: sec?.name || '',
       guardianName: guardianName.trim() || 'Parent / Guardian',
       guardianPhone: cleanPhone,
     });
@@ -235,11 +237,11 @@ export const StudentManager: React.FC = () => {
           </span>
         ) : (
           <Link
-            to="/face-registration"
+            to={`/face-registration?studentId=${s.id}`}
             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
           >
             <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-            Capture Face <ArrowRight className="w-3 h-3" />
+            Register Face <ArrowRight className="w-3 h-3" />
           </Link>
         )
       ),
@@ -354,7 +356,7 @@ export const StudentManager: React.FC = () => {
             {/* Reference Photos */}
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1">
-                <ImageIcon className="w-4 h-4" /> Facial Recognition Reference Training Photos ({selectedStudent.photo_urls.length})
+                <Images className="w-4 h-4" /> Facial Recognition Reference Training Photos ({selectedStudent.photo_urls.length})
               </h4>
               {selectedStudent.photo_urls.length > 0 ? (
                 <div className="grid grid-cols-3 gap-3">
@@ -442,18 +444,24 @@ export const StudentManager: React.FC = () => {
             </div>
           </div>
           <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Section & Grade Level</label>
-            <select
-              value={sectionId}
-              onChange={e => setSectionId(e.target.value)}
-              className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
-            >
-              {SECTIONS_CONFIG.map(sec => (
-                <option key={sec.id} value={sec.id}>
-                  {sec.name} (Grade {sec.gradeLevel})
-                </option>
-              ))}
-            </select>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Section &amp; Grade Level</label>
+            {storedSections.length > 0 ? (
+              <select
+                value={sectionId}
+                onChange={e => setSectionId(e.target.value)}
+                className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+              >
+                {storedSections.map(sec => (
+                  <option key={sec.id} value={sec.id}>
+                    {sec.name} ({sec.gradeLevel})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="w-full px-3 py-2.5 text-xs rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-medium">
+                No sections yet. Go to <strong>Academics</strong> to create sections first.
+              </div>
+            )}
           </div>
           <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
             <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">Primary Guardian Contact</h5>

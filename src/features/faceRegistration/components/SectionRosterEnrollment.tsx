@@ -18,11 +18,12 @@ import { ViewRegisteredFaceModal } from './ViewRegisteredFaceModal';
 import { Modal } from '@/components/ui/Modal';
 import { cn } from '@/lib/utils';
 
-export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = ({
-  initialSectionId = 'sec-101',
+export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; initialStudentId?: string }> = ({
+  initialSectionId,
+  initialStudentId,
 }) => {
   const [sections, setSections] = useState<Section[]>([]);
-  const [selectedSectionId, setSelectedSectionId] = useState<string>(initialSectionId);
+  const [selectedSectionId, setSelectedSectionId] = useState<string>(initialSectionId || '');
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -50,8 +51,12 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
   useEffect(() => {
     fetchSections().then(data => {
       setSections(data);
-      if (data.length > 0 && !selectedSectionId) {
-        setSelectedSectionId(data[0]!.id);
+      if (data.length > 0) {
+        // If a specific student was requested, switch to their section
+        // otherwise fall back to initialSectionId or first available
+        if (!selectedSectionId || selectedSectionId === '') {
+          setSelectedSectionId(data[0]!.id);
+        }
       }
     });
   }, []);
@@ -63,6 +68,14 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
     fetchSectionRoster(selectedSectionId).then(data => {
       setStudents(data);
       setLoading(false);
+      // Auto-open capture modal if a specific student was requested
+      if (initialStudentId) {
+        const target = data.find(s => s.id === initialStudentId);
+        if (target) {
+          setSelectedStudentForCapture(target);
+          setIsModalOpen(true);
+        }
+      }
     });
   }, [selectedSectionId]);
 

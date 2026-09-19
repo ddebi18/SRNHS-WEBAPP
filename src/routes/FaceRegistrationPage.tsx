@@ -1,11 +1,18 @@
 import React from 'react';
-import { useParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { SectionRosterEnrollment } from '@/features/faceRegistration/components/SectionRosterEnrollment';
 
 export const FaceRegistrationPage: React.FC = () => {
-  const { sectionId } = useParams<{ sectionId?: string }>();
+  const [searchParams] = useSearchParams();
+  const studentId = searchParams.get('studentId') || undefined;
+  const sectionId = searchParams.get('sectionId') || undefined;
 
-  return <SectionRosterEnrollment initialSectionId={sectionId || 'sec-101'} />;
+  return (
+    <SectionRosterEnrollment
+      initialSectionId={sectionId}
+      initialStudentId={studentId}
+    />
+  );
 };
 
 export default FaceRegistrationPage;
