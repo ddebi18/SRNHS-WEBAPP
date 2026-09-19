@@ -99,21 +99,41 @@ async function resizeBlobToDataUrl(blob: Blob, maxDim = 720): Promise<string> {
   });
 }
 
+const CANDIDATE_STUDENT_KEYS = [
+  'srnhs_face_registration_students_v1',
+  'srnhs_face_registration_students',
+  'srnhs_students',
+  'srnhs_students_v1',
+  'students',
+];
+
 export function getStoredStudents(): Student[] {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY_STUDENTS);
-    if (raw) {
-      const parsed: Student[] = JSON.parse(raw);
-      // Only filter out the specific legacy dummy IDs (std-10x, std-20x, std-30x)
-      const realStudents = parsed.filter(s =>
-        !s.id.startsWith('std-10') &&
-        !s.id.startsWith('std-20') &&
-        !s.id.startsWith('std-30')
-      );
-      if (realStudents.length !== parsed.length) {
-        localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(realStudents));
+    for (const key of CANDIDATE_STUDENT_KEYS) {
+      const raw =
+        localStorage.getItem(key) ||
+        (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(key) : null);
+      if (raw) {
+        const parsed: Student[] = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Only filter out the specific legacy dummy IDs (std-10x, std-20x, std-30x)
+          const realStudents = parsed.filter(
+            s =>
+              s &&
+              s.name &&
+              !s.id?.startsWith('std-10') &&
+              !s.id?.startsWith('std-20') &&
+              !s.id?.startsWith('std-30')
+          );
+          if (realStudents.length > 0) {
+            // Restore/persist into canonical key
+            if (key !== LOCAL_STORAGE_KEY_STUDENTS) {
+              localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(realStudents));
+            }
+            return realStudents;
+          }
+        }
       }
-      return realStudents;
     }
   } catch (e) {}
   return [];
