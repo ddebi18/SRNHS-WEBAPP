@@ -188,9 +188,136 @@ export function saveStoredStudents(students: Student[]): void {
   }
 }
 
+// ── Helpers: map between Supabase DB schema and app Student/Section types ────
+
+function dbRowToStudent(row: any, sections: Section[]): Student {
+  const sec = sections.find(s => s.id === row.section_id);
+  const firstName = row.first_name || '';
+  const lastName = row.last_name || '';
+  const fullName = [firstName, lastName].filter(Boolean).join(' ') || 'Unknown Student';
+  return {
+    id: row.id,
+    name: fullName,
+    studentNumber: row.lrn || '',
+    sectionId: row.section_id || '',
+    sectionName: sec?.name || '',
+    faceRegistrationStatus: row.photo_urls ? 'registered' : 'unregistered',
+    photoUrl: row.photo_urls || undefined,
+    guardianName: undefined,
+    guardianPhone: undefined,
+    faceDescriptors: undefined,
+  };
+}
+
+function dbRowToSection(row: any): Section {
+  const gradeLevel = row.grade_level ? `Grade ${row.grade_level}` : 'Grade 10';
+  return {
+    id: row.id,
+    name: row.name || '',
+    gradeLevel,
+    teacherId: row.adviser_id || '',
+    teacherName: 'Unassigned',
+    totalStudents: 0,
+    registeredStudents: 0,
+  };
+}
+
+/**
+ * Pull students and sections from Supabase and populate localStorage.
+ * Call this on app startup — any device will then see up-to-date data.
+ * Returns how many records were synced, or null if Supabase is not reachable.
+ */
+export async function syncFromSupabase(): Promise<{ students: number; sections: number } | null> {
+  if (!isSupabaseConfigured || !supabase) return null;
+  try {
+    // 1. Fetch sections first (needed to resolve section names for students)
+    const { data: sectionRows, error: secErr } = await supabase
+      .from('sections')
+      .select('id, name, grade_level, adviser_id')
+      .order('grade_level');
+
+    if (secErr) throw secErr;
+
+    const dbSections: Section[] = (sectionRows || []).map(dbRowToSection);
+
+    if (dbSections.length > 0) {
+      // Merge with any locally-created sections not yet in Supabase
+      const localSections = getStoredSections();
+      const sectionMap = new Map<string, Section>();
+      localSections.forEach(s => sectionMap.set(s.id, s));
+      dbSections.forEach(s => {
+        const existing = sectionMap.get(s.id);
+        // Preserve local totalStudents/registeredStudents counts
+        sectionMap.set(s.id, { ...s, totalStudents: existing?.totalStudents ?? 0, registeredStudents: existing?.registeredStudents ?? 0 });
+      });
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(Array.from(sectionMap.values())));
+      } catch {}
+    }
+
+    const resolvedSections = getStoredSections();
+
+    // 2. Fetch students
+    const { data: studentRows, error: stuErr } = await supabase
+      .from('students')
+      .select('id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at')
+      .order('last_name');
+
+    if (stuErr) throw stuErr;
+
+    if ((studentRows || []).length > 0) {
+      const dbStudents: Student[] = (studentRows || []).map(r => dbRowToStudent(r, resolvedSections));
+
+      // Merge: DB is authoritative for identity fields; preserve local biometric descriptors
+      const localStudents = getStoredStudents();
+      const studentMap = new Map<string, Student>();
+      localStudents.forEach(s => studentMap.set(s.id, s));
+      dbStudents.forEach(dbStu => {
+        const local = studentMap.get(dbStu.id);
+        studentMap.set(dbStu.id, {
+          ...dbStu,
+          // Preserve locally-captured biometric descriptors and photos
+          faceDescriptors: local?.faceDescriptors ?? dbStu.faceDescriptors,
+          photoUrl: dbStu.photoUrl || local?.photoUrl,
+          registeredPhotos: local?.registeredPhotos ?? dbStu.registeredPhotos,
+          faceRegistrationStatus: (local?.faceDescriptors?.length ?? 0) > 0
+            ? 'registered'
+            : dbStu.faceRegistrationStatus || local?.faceRegistrationStatus || 'unregistered',
+          guardianName: local?.guardianName,
+          guardianPhone: local?.guardianPhone,
+        });
+      });
+
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(Array.from(studentMap.values())));
+      } catch {}
+    }
+
+    // Notify all components to re-render with fresh data
+    window.dispatchEvent(new Event('storage'));
+    window.dispatchEvent(new CustomEvent('srnhs_storage_sync'));
+
+    return {
+      students: (studentRows || []).length,
+      sections: (sectionRows || []).length,
+    };
+  } catch (err) {
+    console.warn('[Supabase] Sync failed, using local data:', err);
+    return null;
+  }
+}
+
 export async function deleteStudent(studentId: string): Promise<void> {
   const students = getStoredStudents().filter(s => s.id !== studentId);
   saveStoredStudents(students);
+  // Also delete from Supabase
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('students').delete().eq('id', studentId);
+    } catch (e) {
+      console.warn('Supabase delete student note:', e);
+    }
+  }
   try {
     const db = await openFaceDb();
     if (db) {
@@ -239,35 +366,45 @@ export async function addNewStudent(studentData: {
 
   saveStoredStudents(students);
 
-  // If Supabase is configured, also attempt to insert into Supabase
+  // If Supabase is configured, upsert (insert or update) the student record
   if (isSupabaseConfigured && supabase) {
     try {
-      const nameParts = student.name.split(' ');
+      const nameParts = student.name.trim().split(/\s+/);
       const firstName = nameParts.slice(0, -1).join(' ') || nameParts[0] || 'Student';
       const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
+      const section = sections.find(s => s.id === student.sectionId);
+      const gradeLevelNum = section?.gradeLevel === 'Grade 12' ? 12
+        : section?.gradeLevel === 'Grade 11' ? 11
+        : section?.gradeLevel === 'Grade 10' ? 10
+        : 10;
 
-      const { data: inserted } = await supabase.from('students').insert({
+      const { data: inserted, error: insertErr } = await supabase.from('students').upsert({
+        id: student.id,
         lrn: student.studentNumber,
         first_name: firstName,
         last_name: lastName,
         gender: 'Not Specified',
-        grade_level: section?.gradeLevel === 'Grade 12' ? 12 : section?.gradeLevel === 'Grade 11' ? 11 : 10,
+        grade_level: gradeLevelNum,
         section_id: student.sectionId,
         parent_consent: true,
         consent_date: new Date().toISOString().split('T')[0],
-      }).select().single();
+      }, { onConflict: 'id' }).select().single();
+
+      if (insertErr) {
+        console.warn('Supabase student upsert warning:', insertErr.message);
+      }
 
       if (inserted && (student.guardianName || student.guardianPhone)) {
-        await supabase.from('student_guardians').insert({
+        await supabase.from('student_guardians').upsert({
           student_id: inserted.id,
-          name: student.guardianName,
+          name: student.guardianName || 'Guardian',
           relationship: 'Guardian',
           phone_number: student.guardianPhone,
           is_primary: true,
-        });
+        }, { onConflict: 'student_id' });
       }
     } catch (e) {
-      console.warn('Supabase student save fallback:', e);
+      console.warn('Supabase student save note (data saved locally):', e);
     }
   }
 
@@ -320,6 +457,24 @@ export function saveStoredSections(sections: Section[]): void {
     localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(sections));
   } catch (err) {
     console.warn('LocalStorage quota warning (sections):', err);
+  }
+  // Also upsert to Supabase so other devices see the new section immediately
+  if (isSupabaseConfigured && supabase) {
+    const rows = sections.map(s => ({
+      id: s.id,
+      name: s.name,
+      grade_level: s.gradeLevel === 'Grade 12' ? 12
+        : s.gradeLevel === 'Grade 11' ? 11
+        : s.gradeLevel === 'Grade 10' ? 10
+        : 10,
+      adviser_id: s.teacherId || null,
+    }));
+    supabase
+      .from('sections')
+      .upsert(rows, { onConflict: 'id' })
+      .then(({ error }) => {
+        if (error) console.warn('Supabase sections upsert note:', error.message);
+      });
   }
 }
 
