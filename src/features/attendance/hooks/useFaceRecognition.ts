@@ -6,9 +6,9 @@ export type { RecognitionStatusInput } from '../lib/recognitionStatus';
 
 const MODEL_URL = 'https://vladmandic.github.io/face-api/model';
 
-// Standard FaceMatcher distance threshold: 0.62 provides fast, accurate biometric identification
+// Standard FaceMatcher distance threshold: 0.68 ensures fast, reliable identification
 // matching webcam captures under varied indoor lighting without false rejections
-const MATCH_THRESHOLD = 0.62;
+const MATCH_THRESHOLD = 0.68;
 
 // Instant 1-frame stability verification for fast (<2 seconds) matching
 const STABILITY_FRAMES_REQUIRED = 1;
@@ -17,7 +17,7 @@ const STABILITY_FRAMES_REQUIRED = 1;
 const DETECTING_GRACE_FRAMES = 3;
 
 // Detection score threshold for fast face detection
-const DETECTION_SCORE_THRESHOLD = 0.28;
+const DETECTION_SCORE_THRESHOLD = 0.22;
 
 // ── Liveness detection constants ──────────────────────────────────────────────
 const EAR_BLINK_THRESHOLD = 0.21;
@@ -77,7 +77,9 @@ function computeMatchConfidence(distance: number): number {
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      img.crossOrigin = 'anonymous';
+    }
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error(`Image load failed: ${url.substring(0, 60)}...`));
     img.src = url;
@@ -152,15 +154,27 @@ export function useFaceRecognition(
     setIsAnalyzing(true);
     try {
       const snapCanvas = downscaleToCanvas(video, 480);
-      const detection = await faceapi
-        .detectSingleFace(snapCanvas, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.22 }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
+      let detection: any = null;
+      if (faceapi.nets.tinyFaceDetector.isLoaded) {
+        try {
+          detection = await faceapi
+            .detectSingleFace(snapCanvas, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.15 }))
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+        } catch {}
+      }
+      if (!detection) {
+        detection = await faceapi
+          .detectSingleFace(snapCanvas, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.18 }))
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+      }
 
       if (detection) {
         const bestMatch = matcher.findBestMatch(detection.descriptor);
         const rawConfidence = computeMatchConfidence(bestMatch.distance);
-        if (bestMatch.label !== 'unknown' && bestMatch.distance <= (MATCH_THRESHOLD + 0.05)) {
+        const maxThreshold = studentsRef.current.length <= 3 ? 0.73 : (MATCH_THRESHOLD + 0.04);
+        if (bestMatch.label !== 'unknown' && bestMatch.distance <= maxThreshold) {
           const student = studentsRef.current.find((s: any) => s.id === bestMatch.label);
           if (student) {
             const matchObj: RecognizedStudent = {
@@ -222,6 +236,7 @@ export function useFaceRecognition(
 
       try {
         await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL).catch(() => {}),
           faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
           faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
@@ -246,19 +261,34 @@ export function useFaceRecognition(
             try {
               const image = await loadImage(url);
               const scaledCanvas = downscaleToCanvas(image, 380);
-              const detection = await faceapi
-                .detectSingleFace(scaledCanvas, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.25 }))
-                .withFaceLandmarks()
-                .withFaceDescriptor();
+
+              let detection: any = null;
+              if (faceapi.nets.tinyFaceDetector.isLoaded) {
+                try {
+                  detection = await faceapi
+                    .detectSingleFace(scaledCanvas, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.15 }))
+                    .withFaceLandmarks()
+                    .withFaceDescriptor();
+                } catch {}
+              }
+
+              if (!detection) {
+                detection = await faceapi
+                  .detectSingleFace(scaledCanvas, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.20 }))
+                  .withFaceLandmarks()
+                  .withFaceDescriptor();
+              }
+
+              if (!detection) {
+                const rawImg = await loadImage(url);
+                detection = await faceapi
+                  .detectSingleFace(rawImg, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.15 }))
+                  .withFaceLandmarks()
+                  .withFaceDescriptor();
+              }
 
               if (detection) {
                 descriptors.push(detection.descriptor);
-              } else {
-                const fallback = await faceapi
-                  .detectSingleFace(image, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.20 }))
-                  .withFaceLandmarks()
-                  .withFaceDescriptor();
-                if (fallback) descriptors.push(fallback.descriptor);
               }
             } catch (imageError) {
               console.warn(`[FaceRecognition] Photo descriptor note for ${student.name}:`, imageError);
@@ -273,7 +303,7 @@ export function useFaceRecognition(
 
         if (labeledDescriptors.length === 0) {
           setIsLoading(false);
-          setError('No face descriptors found for registered students. Register student face first.');
+          setError('No face descriptors could be extracted from enrolled student photos. Please ensure photos have clear frontal faces.');
           return;
         }
 
@@ -290,10 +320,21 @@ export function useFaceRecognition(
           processingRef.current = true;
           try {
             const inputCanvas = downscaleToCanvas(video, 480);
-            const detection = await faceapi
-              .detectSingleFace(inputCanvas, new faceapi.SsdMobilenetv1Options({ minConfidence: DETECTION_SCORE_THRESHOLD }))
-              .withFaceLandmarks()
-              .withFaceDescriptor();
+            let detection: any = null;
+            if (faceapi.nets.tinyFaceDetector.isLoaded) {
+              try {
+                detection = await faceapi
+                  .detectSingleFace(inputCanvas, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.18 }))
+                  .withFaceLandmarks()
+                  .withFaceDescriptor();
+              } catch {}
+            }
+            if (!detection) {
+              detection = await faceapi
+                .detectSingleFace(inputCanvas, new faceapi.SsdMobilenetv1Options({ minConfidence: DETECTION_SCORE_THRESHOLD }))
+                .withFaceLandmarks()
+                .withFaceDescriptor();
+            }
 
             if (!detection) {
               consecutiveMissRef.current += 1;
@@ -317,7 +358,7 @@ export function useFaceRecognition(
             const pts = detection.landmarks.positions;
             const cw = inputCanvas.width || 480;
             const ch = inputCanvas.height || 360;
-            const normalizedLandmarks: FaceLandmarkPoint[] = pts.map(p => ({
+            const normalizedLandmarks: FaceLandmarkPoint[] = pts.map((p: faceapi.Point) => ({
               x: p.x / cw,
               y: p.y / ch,
             }));
