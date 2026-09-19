@@ -20,14 +20,8 @@ export const App: React.FC = () => {
       return () => clearTimeout(timer);
     }
 
-    // 2. Pull live data from Supabase database so all devices stay in sync
-    syncFromSupabase().then(res => {
-      if (res && (res.students > 0 || res.sections > 0)) {
-        setSyncToast(`✓ Loaded ${res.students} student(s) and ${res.sections} section(s) from database.`);
-        const timer = setTimeout(() => setSyncToast(null), 3500);
-        return () => clearTimeout(timer);
-      }
-    });
+    // 2. Pull live data from Supabase database silently in the background
+    syncFromSupabase();
   }, []);
 
   return (
