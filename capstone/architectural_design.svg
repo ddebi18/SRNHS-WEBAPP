@@ -1,0 +1,315 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1620 1050" width="1620" height="1050" font-family="Segoe UI, Inter, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16"/>
+      <stop offset="50%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    
+    <!-- Tier Card Gradients -->
+    <linearGradient id="tier1Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="tier2Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0c2340" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="tier3Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#022c22" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="tier4Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2a1215" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95"/>
+    </linearGradient>
+
+    <!-- Component Box Gradients -->
+    <linearGradient id="boxPython" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1c1936"/>
+      <stop offset="100%" stop-color="#111024"/>
+    </linearGradient>
+    <linearGradient id="boxWeb" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0e233d"/>
+      <stop offset="100%" stop-color="#0a1829"/>
+    </linearGradient>
+    <linearGradient id="boxCloud" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#062920"/>
+      <stop offset="100%" stop-color="#041a14"/>
+    </linearGradient>
+    <linearGradient id="boxExternal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#291218"/>
+      <stop offset="100%" stop-color="#190b0e"/>
+    </linearGradient>
+
+    <!-- Filter Shadow -->
+    <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.6"/>
+    </filter>
+
+    <!-- Markers -->
+    <marker id="arrowBlue" markerWidth="9" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 9 3, 0 6" fill="#38bdf8"/>
+    </marker>
+    <marker id="arrowEmerald" markerWidth="9" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 9 3, 0 6" fill="#34d399"/>
+    </marker>
+    <marker id="arrowPurple" markerWidth="9" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 9 3, 0 6" fill="#c084fc"/>
+    </marker>
+    <marker id="arrowRose" markerWidth="9" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 9 3, 0 6" fill="#fb7185"/>
+    </marker>
+  </defs>
+  <!-- Background -->
+  <rect width="1620" height="1050" fill="url(#bgGrad)"/>
+  <!-- Header Title -->
+  <g transform="translate(810, 42)">
+    <text text-anchor="middle" font-size="22" font-weight="800" fill="#f8fafc" letter-spacing="0.5">STUDENT ATTENDANCE MONITORING SYSTEM USING FACIAL RECOGNITION</text>
+    <text y="24" text-anchor="middle" font-size="13" font-weight="500" fill="#94a3b8">San Roque National High School (SRNHS) — System Architecture Design</text>
+  </g>
+  <line x1="50" y1="78" x2="1570" y2="78" stroke="#334155" stroke-width="1.5"/>
+  <!-- TIER 1: HARDWARE & EDGE (PYTHON + WEBCAM) -->
+  <rect x="45" y="95" width="325" height="690" rx="12" fill="url(#tier1Grad)" stroke="#6366f1" stroke-width="1.5" filter="url(#cardShadow)"/>
+  <rect x="61" y="111" width="293" height="38" rx="6" fill="#4338ca"/>
+  <text x="207" y="129" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff" letter-spacing="0.5">TIER 1: HARDWARE &amp; EDGE AI</text>
+  <text x="207" y="142" text-anchor="middle" font-size="10" font-weight="500" fill="#c7d2fe">Webcam &amp; Python Vision Engine</text>
+  <!-- TIER 2: WEB CLIENT & PRESENTATION -->
+  <rect x="440" y="95" width="325" height="690" rx="12" fill="url(#tier2Grad)" stroke="#0284c7" stroke-width="1.5" filter="url(#cardShadow)"/>
+  <rect x="456" y="111" width="293" height="38" rx="6" fill="#0369a1"/>
+  <text x="602" y="129" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff" letter-spacing="0.5">TIER 2: WEB PRESENTATION LAYER</text>
+  <text x="602" y="142" text-anchor="middle" font-size="10" font-weight="500" fill="#bae6fd">React 19 + Vite Administrative SPA</text>
+  <!-- TIER 3: BACKEND-AS-A-SERVICE (SUPABASE) -->
+  <rect x="835" y="95" width="325" height="690" rx="12" fill="url(#tier3Grad)" stroke="#059669" stroke-width="1.5" filter="url(#cardShadow)"/>
+  <rect x="851" y="111" width="293" height="38" rx="6" fill="#047857"/>
+  <text x="997" y="129" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff" letter-spacing="0.5">TIER 3: CLOUD BACKEND (BaaS)</text>
+  <text x="997" y="142" text-anchor="middle" font-size="10" font-weight="500" fill="#a7f3d0">Supabase Cloud &amp; PostgreSQL Engine</text>
+  <!-- TIER 4: NOTIFICATIONS & USERS -->
+  <rect x="1230" y="95" width="325" height="690" rx="12" fill="url(#tier4Grad)" stroke="#e11d48" stroke-width="1.5" filter="url(#cardShadow)"/>
+  <rect x="1246" y="111" width="293" height="38" rx="6" fill="#be123c"/>
+  <text x="1392" y="129" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff" letter-spacing="0.5">TIER 4: NOTIFICATIONS &amp; USERS</text>
+  <text x="1392" y="142" text-anchor="middle" font-size="10" font-weight="500" fill="#fecdd3">SMS Gateway &amp; School Stakeholders</text>
+  <!-- Card 1.1: HD Webcam -->
+  <rect x="65" y="165" width="285" height="95" rx="8" fill="url(#boxPython)" stroke="#818cf8" stroke-width="1.2"/>
+  <circle cx="89" cy="189" r="12" fill="#4338ca"/>
+  <circle cx="89" cy="189" r="5" fill="#a5b4fc"/>
+  <text x="109" y="187" font-size="11.5" font-weight="700" fill="#e0e7ff">HD USB Webcam / Camera</text>
+  <text x="109" y="201" font-size="9.5" fill="#818cf8">Physical Hardware Capture Layer</text>
+  <line x1="77" y1="211" x2="338" y2="211" stroke="#312e81" stroke-width="1"/>
+  <text x="81" y="229" font-size="9.5" fill="#c7d2fe">• 1080p Optical Sensor @ 30 FPS Stream</text>
+  <text x="81" y="245" font-size="9.5" fill="#c7d2fe">• DirectShow / V4L2 Live Frame Driver</text>
+  <!-- Card 1.2: Python Vision Engine -->
+  <rect x="65" y="285" width="285" height="220" rx="8" fill="url(#boxPython)" stroke="#a855f7" stroke-width="1.2"/>
+  <rect x="79" y="299" width="22" height="22" rx="4" fill="#6b21a8"/>
+  <text x="90" y="314" text-anchor="middle" font-size="10" font-weight="800" fill="#f3e8ff">Py</text>
+  <text x="109" y="307" font-size="11.5" font-weight="700" fill="#f3e8ff">Python 3.x CV Engine</text>
+  <text x="109" y="321" font-size="9.5" fill="#c084fc">Local AI Inference &amp; Verification</text>
+  <line x1="77" y1="331" x2="338" y2="331" stroke="#581c87" stroke-width="1"/>
+  <text x="81" y="351" font-size="9.5" font-weight="600" fill="#e9d5ff">1. OpenCV (cv2) Video Pipeline</text>
+  <text x="91" y="365" font-size="9" fill="#c4b5fd">Frame capture, noise filtering, normalization</text>
+  <text x="81" y="383" font-size="9.5" font-weight="600" fill="#e9d5ff">2. Face Detection Subsystem</text>
+  <text x="91" y="397" font-size="9" fill="#c4b5fd">Haar Cascade / MediaPipe Face Mesh</text>
+  <text x="81" y="415" font-size="9.5" font-weight="600" fill="#e9d5ff">3. Biometric Feature Embeddings</text>
+  <text x="91" y="429" font-size="9" fill="#c4b5fd">DeepFace / FaceNet (128D Float Vectors)</text>
+  <text x="81" y="447" font-size="9.5" font-weight="600" fill="#e9d5ff">4. Similarity &amp; Verification</text>
+  <text x="91" y="461" font-size="9" fill="#c4b5fd">Cosine distance matching (Threshold &gt; 0.80)</text>
+  <text x="81" y="479" font-size="9.5" font-weight="600" fill="#e9d5ff">5. Supabase Python Client</text>
+  <text x="91" y="493" font-size="9" fill="#c4b5fd">REST API &amp; Realtime event dispatcher</text>
+  <!-- Card 1.3: Local Feedback & Cache -->
+  <rect x="65" y="530" width="285" height="125" rx="8" fill="url(#boxPython)" stroke="#818cf8" stroke-width="1.2"/>
+  <rect x="79" y="544" width="22" height="22" rx="4" fill="#3730a3"/>
+  <text x="90" y="559" text-anchor="middle" font-size="10" font-weight="800" fill="#c7d2fe">UI</text>
+  <text x="109" y="552" font-size="11.5" font-weight="700" fill="#e0e7ff">Edge Feedback &amp; Cache</text>
+  <text x="109" y="566" font-size="9.5" fill="#818cf8">Terminal Interaction Subsystem</text>
+  <line x1="77" y1="576" x2="338" y2="576" stroke="#312e81" stroke-width="1"/>
+  <text x="81" y="596" font-size="9.5" fill="#c7d2fe">• Real-time Bounding Box &amp; Student Tag</text>
+  <text x="81" y="612" font-size="9.5" fill="#c7d2fe">• Green/Red Visual Verification Alert</text>
+  <text x="81" y="628" font-size="9.5" fill="#c7d2fe">• Audible Confirmation Chime / Buzzer</text>
+  <text x="81" y="644" font-size="9.5" fill="#c7d2fe">• Local SQLite Buffer for Offline Failover</text>
+  <!-- Card 2.1: React Frontend Core -->
+  <rect x="460" y="165" width="285" height="95" rx="8" fill="url(#boxWeb)" stroke="#38bdf8" stroke-width="1.2"/>
+  <rect x="474" y="179" width="22" height="22" rx="4" fill="#075985"/>
+  <text x="485" y="194" text-anchor="middle" font-size="10" font-weight="800" fill="#e0f2fe">Re</text>
+  <text x="504" y="187" font-size="11.5" font-weight="700" fill="#f0f9ff">React 19 + Vite Web App</text>
+  <text x="504" y="201" font-size="9.5" fill="#38bdf8">Single Page Architecture (SPA)</text>
+  <line x1="472" y1="211" x2="733" y2="211" stroke="#0c4a6e" stroke-width="1"/>
+  <text x="476" y="229" font-size="9.5" fill="#bae6fd">• Tailwind CSS Component Design System</text>
+  <text x="476" y="245" font-size="9.5" fill="#bae6fd">• React Router Client-Side Navigation</text>
+  <!-- Card 2.2: Live Monitoring Dashboard -->
+  <rect x="460" y="285" width="285" height="110" rx="8" fill="url(#boxWeb)" stroke="#0ea5e9" stroke-width="1.2"/>
+  <rect x="474" y="299" width="22" height="22" rx="4" fill="#0369a1"/>
+  <text x="485" y="314" text-anchor="middle" font-size="10" font-weight="800" fill="#e0f2fe">DB</text>
+  <text x="504" y="307" font-size="11.5" font-weight="700" fill="#f0f9ff">Live Attendance Dashboard</text>
+  <text x="504" y="321" font-size="9.5" fill="#7dd3fc">Real-time Gate Feed Monitor</text>
+  <line x1="472" y1="331" x2="733" y2="331" stroke="#0c4a6e" stroke-width="1"/>
+  <text x="476" y="349" font-size="9.5" fill="#bae6fd">• Real-time Live Gate Logs (WebSockets)</text>
+  <text x="476" y="365" font-size="9.5" fill="#bae6fd">• Automated Status: Present, Late, Absent</text>
+  <text x="476" y="381" font-size="9.5" fill="#bae6fd">• Grade &amp; Section Analytics &amp; Tallies</text>
+  <!-- Card 2.3: Student & Biometric Management -->
+  <rect x="460" y="420" width="285" height="115" rx="8" fill="url(#boxWeb)" stroke="#0ea5e9" stroke-width="1.2"/>
+  <rect x="474" y="434" width="22" height="22" rx="4" fill="#0369a1"/>
+  <text x="485" y="449" text-anchor="middle" font-size="10" font-weight="800" fill="#e0f2fe">ST</text>
+  <text x="504" y="442" font-size="11.5" font-weight="700" fill="#f0f9ff">Student Biometric Portal</text>
+  <text x="504" y="456" font-size="9.5" fill="#7dd3fc">Face Registration &amp; Records</text>
+  <line x1="472" y1="466" x2="733" y2="466" stroke="#0c4a6e" stroke-width="1"/>
+  <text x="476" y="484" font-size="9.5" fill="#bae6fd">• Student Profile CRUD (LRN, Section, Contact)</text>
+  <text x="476" y="500" font-size="9.5" fill="#bae6fd">• In-browser Webcam Face Enrollment tool</text>
+  <text x="476" y="516" font-size="9.5" fill="#bae6fd">• Photo Storage &amp; Embedding sync to Supabase</text>
+  <!-- Card 2.4: Administrative Controls -->
+  <rect x="460" y="560" width="285" height="105" rx="8" fill="url(#boxWeb)" stroke="#38bdf8" stroke-width="1.2"/>
+  <rect x="474" y="574" width="22" height="22" rx="4" fill="#075985"/>
+  <text x="485" y="589" text-anchor="middle" font-size="10" font-weight="800" fill="#e0f2fe">AD</text>
+  <text x="504" y="582" font-size="11.5" font-weight="700" fill="#f0f9ff">Administration &amp; Reports</text>
+  <text x="504" y="596" font-size="9.5" fill="#38bdf8">Auditing &amp; Attendance Sheets</text>
+  <line x1="472" y1="606" x2="733" y2="606" stroke="#0c4a6e" stroke-width="1"/>
+  <text x="476" y="624" font-size="9.5" fill="#bae6fd">• DepEd School Form 2 (SF2) Export</text>
+  <text x="476" y="640" font-size="9.5" fill="#bae6fd">• Guardian SMS Dispatch Audit Logs</text>
+  <text x="476" y="654" font-size="9.5" fill="#bae6fd">• Teacher Section Assignments &amp; Rosters</text>
+  <!-- Card 3.1: PostgreSQL Database -->
+  <rect x="855" y="165" width="285" height="200" rx="8" fill="url(#boxCloud)" stroke="#10b981" stroke-width="1.2"/>
+  <rect x="869" y="179" width="22" height="22" rx="4" fill="#065f46"/>
+  <text x="880" y="194" text-anchor="middle" font-size="10" font-weight="800" fill="#d1fae5">PG</text>
+  <text x="899" y="187" font-size="11.5" font-weight="700" fill="#ecfdf5">PostgreSQL Database</text>
+  <text x="899" y="201" font-size="9.5" fill="#34d399">Cloud Relational Database</text>
+  <line x1="867" y1="211" x2="1128" y2="211" stroke="#064e3b" stroke-width="1"/>
+  <text x="871" y="231" font-size="9.5" font-weight="600" fill="#a7f3d0">Core Relational Tables:</text>
+  <text x="875" y="247" font-size="9" fill="#6ee7b7">• students (id, lrn, first_name, last_name, section)</text>
+  <text x="875" y="263" font-size="9" fill="#6ee7b7">• student_faces (student_id, embedding, photo_url)</text>
+  <text x="875" y="279" font-size="9" fill="#6ee7b7">• attendance_logs (id, student_id, type, timestamp)</text>
+  <text x="875" y="295" font-size="9" fill="#6ee7b7">• sections &amp; grade_levels (id, name, adviser_id)</text>
+  <text x="875" y="311" font-size="9" fill="#6ee7b7">• sms_logs (id, student_id, recipient, message)</text>
+  <text x="875" y="327" font-size="9" fill="#6ee7b7">• users (id, email, role [admin / teacher])</text>
+  <text x="871" y="349" font-size="9" fill="#34d399">Foreign keys, indexes &amp; cascade integrity</text>
+  <!-- Card 3.2: Auth & RLS -->
+  <rect x="855" y="390" width="285" height="115" rx="8" fill="url(#boxCloud)" stroke="#10b981" stroke-width="1.2"/>
+  <rect x="869" y="404" width="22" height="22" rx="4" fill="#065f46"/>
+  <text x="880" y="419" text-anchor="middle" font-size="10" font-weight="800" fill="#d1fae5">SEC</text>
+  <text x="899" y="412" font-size="11.5" font-weight="700" fill="#ecfdf5">Security &amp; Access Control</text>
+  <text x="899" y="426" font-size="9.5" fill="#34d399">Auth &amp; Privacy Compliance</text>
+  <line x1="867" y1="436" x2="1128" y2="436" stroke="#064e3b" stroke-width="1"/>
+  <text x="871" y="456" font-size="9.5" fill="#a7f3d0">• Supabase Auth (JWT Access Tokens &amp; Bcrypt)</text>
+  <text x="871" y="472" font-size="9.5" fill="#a7f3d0">• Row-Level Security (RLS) Policy Isolation</text>
+  <text x="871" y="488" font-size="9.5" fill="#a7f3d0">• DepEd RA 10173 Data Privacy Compliance</text>
+  <!-- Card 3.3: Realtime & Storage -->
+  <rect x="855" y="530" width="285" height="135" rx="8" fill="url(#boxCloud)" stroke="#10b981" stroke-width="1.2"/>
+  <rect x="869" y="544" width="22" height="22" rx="4" fill="#065f46"/>
+  <text x="880" y="559" text-anchor="middle" font-size="10" font-weight="800" fill="#d1fae5">RT</text>
+  <text x="899" y="552" font-size="11.5" font-weight="700" fill="#ecfdf5">Realtime &amp; Object Storage</text>
+  <text x="899" y="566" font-size="9.5" fill="#34d399">WebSockets &amp; Face Assets</text>
+  <line x1="867" y1="576" x2="1128" y2="576" stroke="#064e3b" stroke-width="1"/>
+  <text x="871" y="596" font-size="9.5" fill="#a7f3d0">• Supabase Realtime (CDC WebSocket Broadcast)</text>
+  <text x="871" y="612" font-size="9.5" fill="#a7f3d0">• Instant event push on attendance_logs INSERT</text>
+  <text x="871" y="628" font-size="9.5" fill="#a7f3d0">• Supabase Storage Bucket ('student-faces/')</text>
+  <text x="871" y="644" font-size="9.5" fill="#a7f3d0">• Encrypted HTTPS URLs with token-based access</text>
+  <!-- Card 4.1: Cloud SMS Gateway -->
+  <rect x="1250" y="165" width="285" height="140" rx="8" fill="url(#boxExternal)" stroke="#f43f5e" stroke-width="1.2"/>
+  <rect x="1264" y="179" width="22" height="22" rx="4" fill="#9f1239"/>
+  <text x="1275" y="194" text-anchor="middle" font-size="10" font-weight="800" fill="#ffe4e6">SMS</text>
+  <text x="1294" y="187" font-size="11.5" font-weight="700" fill="#fff1f2">Cloud SMS Gateway</text>
+  <text x="1294" y="201" font-size="9.5" fill="#fb7185">PhilSMS / Semaphore / Twilio API</text>
+  <line x1="1262" y1="211" x2="1523" y2="211" stroke="#881337" stroke-width="1"/>
+  <text x="1266" y="231" font-size="9.5" fill="#fecdd3">• HTTPS REST Notification Dispatch Endpoint</text>
+  <text x="1266" y="247" font-size="9.5" fill="#fecdd3">• Automated Arrival &amp; Departure SMS Template</text>
+  <text x="1266" y="263" font-size="9.5" fill="#fecdd3">• Carrier Transmission to Smart, Globe, DITO</text>
+  <text x="1266" y="279" font-size="9.5" fill="#fecdd3">• Webhook Return Status &amp; Delivery Tracking</text>
+  <!-- Card 4.2: Guardian Recipient -->
+  <rect x="1250" y="330" width="285" height="140" rx="8" fill="url(#boxExternal)" stroke="#fb7185" stroke-width="1.2"/>
+  <rect x="1264" y="344" width="22" height="22" rx="4" fill="#9f1239"/>
+  <text x="1275" y="359" text-anchor="middle" font-size="10" font-weight="800" fill="#ffe4e6">GSM</text>
+  <text x="1294" y="352" font-size="11.5" font-weight="700" fill="#fff1f2">Guardian Mobile Devices</text>
+  <text x="1294" y="366" font-size="9.5" fill="#fb7185">Parents &amp; Family Guardians</text>
+  <line x1="1262" y1="376" x2="1523" y2="376" stroke="#881337" stroke-width="1"/>
+  <text x="1266" y="396" font-size="9.5" fill="#fecdd3">• Instant Cellular SMS Notification Receipt</text>
+  <text x="1266" y="412" font-size="9" fill="#fda4af">"SRNHS Alert: Student Juan Dela Cruz has</text>
+  <text x="1266" y="426" font-size="9" fill="#fda4af">entered campus gate at 07:15 AM."</text>
+  <text x="1266" y="444" font-size="9.5" fill="#fecdd3">• Zero Data / No Smartphone Dependency</text>
+  <!-- Card 4.3: School Stakeholders -->
+  <rect x="1250" y="495" width="285" height="170" rx="8" fill="url(#boxExternal)" stroke="#f43f5e" stroke-width="1.2"/>
+  <rect x="1264" y="509" width="22" height="22" rx="4" fill="#9f1239"/>
+  <text x="1275" y="524" text-anchor="middle" font-size="10" font-weight="800" fill="#ffe4e6">USR</text>
+  <text x="1294" y="517" font-size="11.5" font-weight="700" fill="#fff1f2">School Staff &amp; Faculty</text>
+  <text x="1294" y="531" font-size="9.5" fill="#fb7185">Web App Authorized End-Users</text>
+  <line x1="1262" y1="541" x2="1523" y2="541" stroke="#881337" stroke-width="1"/>
+  <text x="1266" y="561" font-size="9.5" fill="#fecdd3">• School Principal &amp; Academic Administrators</text>
+  <text x="1266" y="577" font-size="9.5" fill="#fecdd3">• Section Advisers &amp; Subject Teachers</text>
+  <text x="1266" y="593" font-size="9.5" fill="#fecdd3">• Campus Gate Guards / Safety Officers</text>
+  <text x="1266" y="609" font-size="9.5" fill="#fecdd3">• Cross-platform access via modern Web Browsers</text>
+  <text x="1266" y="625" font-size="9.5" fill="#fecdd3">• Role-scoped views &amp; student advisory filters</text>
+  <!-- ================= INTER-TIER DATA CONNECTIONS ================= -->
+  <!-- Internal Tier 1: Webcam to Python Engine -->
+  <line x1="207" y1="260" x2="207" y2="285" stroke="#818cf8" stroke-width="2" marker-end="url(#arrowPurple)"/>
+  <rect x="159" y="265" width="96" height="15" rx="3" fill="#1e1b4b" stroke="#6366f1" stroke-width="0.8"/>
+  <text x="207" y="276" text-anchor="middle" font-size="8.5" font-weight="600" fill="#c7d2fe">Raw Frames (cv2)</text>
+  <!-- Internal Tier 1: Python Engine to Feedback -->
+  <line x1="207" y1="505" x2="207" y2="530" stroke="#818cf8" stroke-width="2" marker-end="url(#arrowPurple)"/>
+  <rect x="153" y="510" width="108" height="15" rx="3" fill="#1e1b4b" stroke="#6366f1" stroke-width="0.8"/>
+  <text x="207" y="521" text-anchor="middle" font-size="8.5" font-weight="600" fill="#c7d2fe">Visual / Buzzer Prompt</text>
+  <!-- Direct Bus 2: React Web App <-> Supabase DB (REST / HTTPS) -->
+  <line x1="765" y1="210" x2="835" y2="210" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrowEmerald)"/>
+  <rect x="772" y="202" width="56" height="16" rx="3" fill="#0c2340" stroke="#0284c7" stroke-width="0.8"/>
+  <text x="800" y="213" text-anchor="middle" font-size="8" font-weight="600" fill="#7dd3fc">HTTPS/RLS</text>
+  <!-- Bus 3: Supabase Realtime -> React Dashboard (WebSockets) -->
+  <line x1="835" y1="350" x2="765" y2="350" stroke="#34d399" stroke-width="2" marker-end="url(#arrowBlue)"/>
+  <rect x="772" y="342" width="56" height="16" rx="3" fill="#022c22" stroke="#059669" stroke-width="0.8"/>
+  <text x="800" y="353" text-anchor="middle" font-size="8" font-weight="600" fill="#6ee7b7">WSS Live</text>
+  <!-- Bus 4: Supabase DB -> Cloud SMS Gateway -->
+  <line x1="1160" y1="210" x2="1230" y2="210" stroke="#10b981" stroke-width="2" marker-end="url(#arrowRose)"/>
+  <rect x="1167" y="202" width="56" height="16" rx="3" fill="#062e24" stroke="#059669" stroke-width="0.8"/>
+  <text x="1195" y="213" text-anchor="middle" font-size="8" font-weight="600" fill="#6ee7b7">SMS Push</text>
+  <!-- Bus 5: SMS Gateway -> Guardian Mobile Phones -->
+  <line x1="1392" y1="305" x2="1392" y2="330" stroke="#f43f5e" stroke-width="2" marker-end="url(#arrowRose)"/>
+  <rect x="1344" y="310" width="96" height="15" rx="3" fill="#2a1215" stroke="#e11d48" stroke-width="0.8"/>
+  <text x="1392" y="321" text-anchor="middle" font-size="8.5" font-weight="600" fill="#fecdd3">GSM SMS Dispatch</text>
+  <!-- Bus Highway: Python Engine to Supabase Cloud (REST POST attendance_logs) -->
+  <path d="M 205 655 L 205 815 L 915 815 L 915 785" fill="none" stroke="#a855f7" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arrowEmerald)"/>
+  <rect x="520" y="806" width="180" height="18" rx="3" fill="#141428" stroke="#a855f7" stroke-width="0.8"/>
+  <text x="610" y="818" text-anchor="middle" font-size="8.5" font-weight="600" fill="#d8b4fe">POST /attendance_logs &amp; Embeddings</text>
+  <!-- Bus Highway: React Web App -> Staff Web Session -->
+  <path d="M 600 665 L 600 840 L 1370 840 L 1370 785" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-dasharray="4 2" marker-end="url(#arrowRose)"/>
+  <rect x="940" y="831" width="170" height="18" rx="3" fill="#0d1b2d" stroke="#0284c7" stroke-width="0.8"/>
+  <text x="1025" y="843" text-anchor="middle" font-size="8.5" font-weight="600" fill="#7dd3fc">HTTPS End-User Web Sessions</text>
+  <!-- ================= FOOTER: SYSTEM PROTOCOLS & SPECS ================= -->
+  <rect x="45" y="870" width="1530" height="165" rx="10" fill="#0b1329" stroke="#334155" stroke-width="1.2" filter="url(#cardShadow)"/>
+  <rect x="65" y="880" width="210" height="22" rx="4" fill="#1e293b"/>
+  <text x="170" y="895" text-anchor="middle" font-size="11" font-weight="700" fill="#f8fafc" letter-spacing="0.5">TECHNICAL SPECIFICATIONS</text>
+
+  <!-- Spec Block 1: Hardware & Camera -->
+  <g transform="translate(65, 910)">
+    <rect width="335" height="105" rx="6" fill="#111c38" stroke="#3730a3" stroke-width="1"/>
+    <text x="14" y="20" font-size="11" font-weight="700" fill="#a5b4fc">Hardware &amp; Computer Vision Engine</text>
+    <text x="14" y="38" font-size="9.5" fill="#94a3b8">• Camera: USB 1080p HD Optical Webcam / RTSP IP Cam</text>
+    <text x="14" y="54" font-size="9.5" fill="#94a3b8">• Vision Framework: Python 3.10+ / OpenCV 4.x / DeepFace</text>
+    <text x="14" y="70" font-size="9.5" fill="#94a3b8">• Feature Model: FaceNet 128D Embeddings / Cosine Match</text>
+    <text x="14" y="86" font-size="9.5" fill="#94a3b8">• Benchmark: &lt; 1.2s inference response time per face</text>
+  </g>
+
+  <!-- Spec Block 2: Frontend & Architecture -->
+  <g transform="translate(435, 910)">
+    <rect width="345" height="105" rx="6" fill="#082338" stroke="#0369a1" stroke-width="1"/>
+    <text x="14" y="20" font-size="11" font-weight="700" fill="#7dd3fc">Web Frontend &amp; Security</text>
+    <text x="14" y="38" font-size="9.5" fill="#94a3b8">• Architecture: Single Page Application (React 19 + Vite)</text>
+    <text x="14" y="54" font-size="9.5" fill="#94a3b8">• Styling &amp; UI: Tailwind CSS, Lucide Icons, Framer Motion</text>
+    <text x="14" y="70" font-size="9.5" fill="#94a3b8">• Data Security: Row-Level Security (RLS) &amp; JWT Bearer</text>
+    <text x="14" y="86" font-size="9.5" fill="#94a3b8">• Legal: Compliant with RA 10173 (Data Privacy Act 2012)</text>
+  </g>
+
+  <!-- Spec Block 3: Cloud & Realtime -->
+  <g transform="translate(815, 910)">
+    <rect width="345" height="105" rx="6" fill="#062e24" stroke="#047857" stroke-width="1"/>
+    <text x="14" y="20" font-size="11" font-weight="700" fill="#6ee7b7">Cloud BaaS &amp; Database</text>
+    <text x="14" y="38" font-size="9.5" fill="#94a3b8">• Database: PostgreSQL Relational DB (Supabase Hosted)</text>
+    <text x="14" y="54" font-size="9.5" fill="#94a3b8">• Real-time Sync: WebSockets (CDC on attendance_logs)</text>
+    <text x="14" y="70" font-size="9.5" fill="#94a3b8">• Storage: Supabase Secure Storage Bucket ('student-faces')</text>
+    <text x="14" y="86" font-size="9.5" fill="#94a3b8">• Reliability: Automatic connection retry &amp; local buffer</text>
+  </g>
+
+  <!-- Spec Block 4: Telecommunications & Gateway -->
+  <g transform="translate(1195, 910)">
+    <rect width="335" height="105" rx="6" fill="#2d1017" stroke="#be123c" stroke-width="1"/>
+    <text x="14" y="20" font-size="11" font-weight="700" fill="#fda4af">SMS Notification Gateway</text>
+    <text x="14" y="38" font-size="9.5" fill="#94a3b8">• Provider: PhilSMS / Semaphore / Twilio Cloud API</text>
+    <text x="14" y="54" font-size="9.5" fill="#94a3b8">• Protocol: REST JSON over TLS 1.3</text>
+    <text x="14" y="70" font-size="9.5" fill="#94a3b8">• Coverage: Nationwide GSM (Smart, TNT, Globe, TM, Dito)</text>
+    <text x="14" y="86" font-size="9.5" fill="#94a3b8">• Latency: Guaranteed &lt; 5 seconds guardian notification</text>
+  </g>
+</svg>
