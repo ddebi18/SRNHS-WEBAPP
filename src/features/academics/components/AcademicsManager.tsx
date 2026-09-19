@@ -6,26 +6,11 @@ import { DataTable, Column } from '@/components/ui/DataTable';
 import { Room, Subject, Section } from '@/types/domain.types';
 import { Building2, BookOpen, Layers, Plus, Edit2, Trash2 } from 'lucide-react';
 
-const INITIAL_ROOMS: Room[] = [
-  { id: 'rm-101', name: 'Building A – Room 101', building: 'Building A', capacity: 45, created_at: new Date().toISOString() },
-  { id: 'rm-102', name: 'Building A – Room 204', building: 'Building A', capacity: 40, created_at: new Date().toISOString() },
-  { id: 'rm-103', name: 'Building B – Room 201 (Science Lab)', building: 'Building B', capacity: 35, created_at: new Date().toISOString() },
-  { id: 'rm-104', name: 'Building C – Computer Lab 1', building: 'Building C', capacity: 40, created_at: new Date().toISOString() },
-];
+const INITIAL_ROOMS: Room[] = [];
 
-const INITIAL_SUBJECTS: Subject[] = [
-  { id: 'sub-101', code: 'MATH-10', title: 'General Mathematics', description: 'Functions, business mathematics, and logic', created_at: new Date().toISOString() },
-  { id: 'sub-102', code: 'SCI-11', title: 'General Biology 1', description: 'Cell biology, bioenergetics, and genetics', created_at: new Date().toISOString() },
-  { id: 'sub-103', code: 'FIL-10', title: 'Panitikang Pilipino', description: 'Maaasahang pag-aaral ng Panitikang Pilipino', created_at: new Date().toISOString() },
-  { id: 'sub-104', code: 'ENG-11', title: 'Academic Reading & Writing', description: 'Critical reading and academic writing skills', created_at: new Date().toISOString() },
-];
+const INITIAL_SUBJECTS: Subject[] = [];
 
-const INITIAL_SECTIONS: Section[] = [
-  { id: 'sec-101', grade_level: 10, name: 'Grade 10 – Sampaguita', adviser_name: 'Mr. Juan Dela Cruz', created_at: new Date().toISOString() },
-  { id: 'sec-102', grade_level: 11, name: 'Grade 11 – STEM A', adviser_name: 'Mrs. Clarissa Soriano', created_at: new Date().toISOString() },
-  { id: 'sec-103', grade_level: 12, name: 'Grade 12 – ABM A', adviser_name: 'Dr. Roberto Navarro', created_at: new Date().toISOString() },
-  { id: 'sec-104', grade_level: 7, name: 'Grade 7 – Gumamela', adviser_name: 'Ms. Elena Torres', created_at: new Date().toISOString() },
-];
+const INITIAL_SECTIONS: Section[] = [];
 
 export const AcademicsManager: React.FC = () => {
   const { isAdmin } = useRole();

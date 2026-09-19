@@ -5,316 +5,12 @@ const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
 const LOCAL_STORAGE_KEY_SECTIONS = 'srnhs_face_registration_sections_v1';
 
 const INITIAL_SECTIONS: Section[] = [
-  { id: 'sec-101', name: 'Grade 10 – Sampaguita', gradeLevel: 'Grade 10', teacherId: 'tch-1', teacherName: 'Maria Santos', totalStudents: 8, registeredStudents: 5 },
-  { id: 'sec-102', name: 'Grade 11 – STEM A',     gradeLevel: 'Grade 11', teacherId: 'tch-2', teacherName: 'Juan Dela Cruz', totalStudents: 6, registeredStudents: 4 },
-  { id: 'sec-103', name: 'Grade 12 – ABM A',      gradeLevel: 'Grade 12', teacherId: 'tch-3', teacherName: 'Elena Reyes',    totalStudents: 5, registeredStudents: 2 },
+  { id: 'sec-101', name: 'Grade 10 – Sampaguita', gradeLevel: 'Grade 10', teacherId: '', teacherName: 'Unassigned', totalStudents: 0, registeredStudents: 0 },
+  { id: 'sec-102', name: 'Grade 11 – STEM A',     gradeLevel: 'Grade 11', teacherId: '', teacherName: 'Unassigned', totalStudents: 0, registeredStudents: 0 },
+  { id: 'sec-103', name: 'Grade 12 – ABM A',      gradeLevel: 'Grade 12', teacherId: '', teacherName: 'Unassigned', totalStudents: 0, registeredStudents: 0 },
 ];
 
-const INITIAL_STUDENTS: Student[] = [
-  // Grade 10 - Sampaguita
-  {
-    id: 'std-101',
-    name: 'Juan Carlos Garcia',
-    studentNumber: '109823456701',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-20T08:30:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Carlos Garcia',
-    guardianPhone: '+639171234567',
-  },
-  {
-    id: 'std-102',
-    name: 'Sophia Nicole Reyes',
-    studentNumber: '109823456702',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-21T09:15:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Nicole Reyes',
-    guardianPhone: '+639189876543',
-  },
-  {
-    id: 'std-103',
-    name: 'Angelo Gabriel Mendoza',
-    studentNumber: '109823456703',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'unregistered',
-    lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=350&auto=format&fit=crop&q=80',
-    guardianName: 'Gabriel Mendoza',
-    guardianPhone: '+639194443322',
-  },
-  {
-    id: 'std-104',
-    name: 'Samantha Claire Santos',
-    studentNumber: '109823456704',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-22T10:45:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Claire Santos',
-    guardianPhone: '+639178889900',
-  },
-  {
-    id: 'std-105',
-    name: 'Mark Anthony Ramos',
-    studentNumber: '109823456705',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'needs_review',
-    lastRegisteredAt: '2026-08-15T14:20:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Anthony Ramos',
-    guardianPhone: '+639195551212',
-  },
-  {
-    id: 'std-106',
-    name: 'Patricia Marie Cruz',
-    studentNumber: '109823456706',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'unregistered',
-    lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=350&auto=format&fit=crop&q=80',
-    guardianName: 'Marie Cruz',
-    guardianPhone: '+639173332211',
-  },
-  {
-    id: 'std-107',
-    name: 'Gabriel Luis Bautista',
-    studentNumber: '109823456707',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-23T11:00:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Luis Bautista',
-    guardianPhone: '+639187776655',
-  },
-  {
-    id: 'std-108',
-    name: 'Andrea Beatrice Lopez',
-    studentNumber: '109823456708',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-24T08:10:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Beatrice Lopez',
-    guardianPhone: '+639192221100',
-  },
 
-  // Grade 11 - STEM A
-  {
-    id: 'std-201',
-    name: 'Christian Dave Aquino',
-    studentNumber: '109823456709',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-19T09:00:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Dave Aquino',
-    guardianPhone: '+639170001122',
-  },
-  {
-    id: 'std-202',
-    name: 'Alyssa Joy Hernandez',
-    studentNumber: '109823456710',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'unregistered',
-    lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=350&auto=format&fit=crop&q=80',
-    guardianName: 'Joy Hernandez',
-    guardianPhone: '+639181112233',
-  },
-  {
-    id: 'std-203',
-    name: 'Joshua Ryan Castillo',
-    studentNumber: '109823456711',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-21T13:30:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Ryan Castillo',
-    guardianPhone: '+639193334455',
-  },
-  {
-    id: 'std-204',
-    name: 'Hannah Sofia Villanueva',
-    studentNumber: '109823456712',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-22T14:15:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Sofia Villanueva',
-    guardianPhone: '+639174445566',
-  },
-  {
-    id: 'std-205',
-    name: 'Kenneth James Diaz',
-    studentNumber: '109823456713',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'needs_review',
-    lastRegisteredAt: '2026-08-18T16:00:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'James Diaz',
-    guardianPhone: '+639185556677',
-  },
-  {
-    id: 'std-206',
-    name: 'Bea Isabel Mercado',
-    studentNumber: '109823456714',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-25T08:45:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Isabel Mercado',
-    guardianPhone: '+639196667788',
-  },
-
-  // Grade 12 - ABM A
-  {
-    id: 'std-301',
-    name: 'John Paul Fernandez',
-    studentNumber: '109823456715',
-    sectionId: 'sec-103',
-    sectionName: 'Grade 12 – ABM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-17T10:20:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Paul Fernandez',
-    guardianPhone: '+639177778899',
-  },
-  {
-    id: 'std-302',
-    name: 'Chloe Anne Navarro',
-    studentNumber: '109823456716',
-    sectionId: 'sec-103',
-    sectionName: 'Grade 12 – ABM A',
-    faceRegistrationStatus: 'unregistered',
-    lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=350&auto=format&fit=crop&q=80',
-    guardianName: 'Anne Navarro',
-    guardianPhone: '+639188889900',
-  },
-  {
-    id: 'std-303',
-    name: 'Dominic Joel Santos',
-    studentNumber: '109823456717',
-    sectionId: 'sec-103',
-    sectionName: 'Grade 12 – ABM A',
-    faceRegistrationStatus: 'unregistered',
-    lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1528892952291-009c663ce843?w=350&auto=format&fit=crop&q=80',
-    guardianName: 'Joel Santos',
-    guardianPhone: '+639199990011',
-  },
-  {
-    id: 'std-304',
-    name: 'Samantha Jane Tan',
-    studentNumber: '109823456718',
-    sectionId: 'sec-103',
-    sectionName: 'Grade 12 – ABM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-24T14:50:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Jane Tan',
-    guardianPhone: '+639171110022',
-  },
-  {
-    id: 'std-305',
-    name: 'Justin Eric Del Rosario',
-    studentNumber: '109823456719',
-    sectionId: 'sec-103',
-    sectionName: 'Grade 12 – ABM A',
-    faceRegistrationStatus: 'needs_review',
-    lastRegisteredAt: '2026-08-16T15:30:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Eric Del Rosario',
-    guardianPhone: '+639182223344',
-  },
-];
 
 // IndexedDB & LocalStorage Hybrid Persistence for Biometric Face Photos
 const DB_NAME = 'srnhs_face_biometrics_db_v1';
@@ -414,45 +110,20 @@ export function getStoredStudents(): Student[] {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY_STUDENTS);
     if (raw) {
       const parsed: Student[] = JSON.parse(raw);
-      // Clean up any legacy cached mock photos where left/right pointed to other students
-      let hasCleaned = false;
-      const sanitized = parsed.map(s => {
-        const front = s.registeredPhotos?.front || s.photoUrl;
-        const left = s.registeredPhotos?.left;
-        const right = s.registeredPhotos?.right;
-
-        // If left/right is not a real user webcam data URL and differs from front, reset to match front
-        const leftIsDataUrl = left?.startsWith('data:');
-        const rightIsDataUrl = right?.startsWith('data:');
-        const needsLeftReset = left && !leftIsDataUrl && left !== front;
-        const needsRightReset = right && !rightIsDataUrl && right !== front;
-
-        if (needsLeftReset || needsRightReset) {
-          hasCleaned = true;
-          return {
-            ...s,
-            registeredPhotos: {
-              front: front,
-              left: needsLeftReset ? front : left,
-              right: needsRightReset ? front : right,
-            },
-          };
-        }
-        return s;
-      });
-
-      if (hasCleaned) {
-        try {
-          localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(sanitized));
-        } catch {}
+      // Filter out any legacy dummy mock students
+      const realStudents = parsed.filter(s =>
+        !s.id.startsWith('std-10') &&
+        !s.id.startsWith('std-20') &&
+        !s.id.startsWith('std-30') &&
+        !s.photoUrl?.includes('unsplash.com')
+      );
+      if (realStudents.length !== parsed.length) {
+        localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(realStudents));
       }
-      return sanitized;
+      return realStudents;
     }
   } catch (e) {}
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(INITIAL_STUDENTS));
-  } catch {}
-  return INITIAL_STUDENTS;
+  return [];
 }
 
 export async function fetchRegisteredStudents(): Promise<Student[]> {
@@ -593,7 +264,17 @@ export async function addNewStudent(studentData: {
 export function getStoredSections(): Section[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY_SECTIONS);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed: Section[] = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map(s => ({
+          ...s,
+          teacherName: s.teacherName === 'Maria Santos' || s.teacherName === 'Juan Dela Cruz' || s.teacherName === 'Elena Reyes' ? 'Unassigned' : s.teacherName,
+          totalStudents: 0,
+          registeredStudents: 0,
+        }));
+      }
+    }
   } catch (e) {}
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(INITIAL_SECTIONS));

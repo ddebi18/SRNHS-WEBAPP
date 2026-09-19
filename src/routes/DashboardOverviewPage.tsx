@@ -7,6 +7,7 @@ import { SITE_CONFIG } from '@/config/siteConfig';
 import { RecognitionEvent } from '@/types/domain.types';
 import { supabaseRecognitionAdapter } from '@/features/attendance/services/SupabaseRecognitionAdapter';
 import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
+import { getStoredStudents } from '@/features/faceRegistration/api';
 import { LiveCameraFeedCard } from '@/features/attendance/components/LiveCameraFeedCard';
 import {
   ArrowRight,
@@ -73,11 +74,22 @@ export const DashboardOverviewPage: React.FC = () => {
   const { user, isAdmin } = useRole();
   const navigate = useNavigate();
   const [recentEvents, setRecentEvents] = useState<RecognitionEvent[]>([]);
-  const [smsCount, setSmsCount] = useState(3);
+  const [smsCount, setSmsCount] = useState(0);
 
   const hour = new Date().getHours();
   const greeting =
     hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  // Derived metrics from real stored data
+  const enrolledCount = getStoredStudents().length;
+  const todayStr = new Date().toDateString();
+  const todayScansCount = recentEvents.filter(
+    e => new Date(e.captured_at).toDateString() === todayStr
+  ).length;
+  const attendanceRate =
+    enrolledCount > 0 && todayScansCount > 0
+      ? `${Math.min(100, Math.round((todayScansCount / enrolledCount) * 100))}%`
+      : '—';
 
   useEffect(() => {
     supabaseRecognitionAdapter.getEvents({ limit: 6 }).then(setRecentEvents);
@@ -121,7 +133,7 @@ export const DashboardOverviewPage: React.FC = () => {
       >
         <MetricCard
           title="Enrolled Students"
-          value="1,248"
+          value={enrolledCount}
           sub="Biometric consent on file"
           lightBg="bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]"
           accentColor="bg-amber-950"
@@ -131,7 +143,7 @@ export const DashboardOverviewPage: React.FC = () => {
         />
         <MetricCard
           title="Today's Gate Scans"
-          value="1,180"
+          value={todayScansCount}
           sub="Via face recognition turnstile"
           lightBg="bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border-[#d1b397]"
           accentColor="bg-amber-900"
@@ -141,7 +153,7 @@ export const DashboardOverviewPage: React.FC = () => {
         />
         <MetricCard
           title="Attendance Rate"
-          value="94.6%"
+          value={attendanceRate}
           sub="Classroom subject records"
           lightBg="bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border-[#c28846]"
           accentColor="bg-amber-900"
@@ -260,28 +272,28 @@ export const DashboardOverviewPage: React.FC = () => {
           {/* Today's snapshot */}
           <div className="rounded-3xl p-5 border border-white/10 shadow-card space-y-4 text-white" style={{background: 'linear-gradient(165deg, #836452 0%, #987655 45%, #C68B59 80%, #D4A373 100%)'}}>
             <div className="text-[11px] font-bold uppercase tracking-widest text-white/80">Today's Snapshot</div>
-            <div className="space-y-3">
-              {[
-                { label: 'Gr. 10 – Sampaguita', present: 28, total: 30, color: 'bg-amber-200 text-amber-950' },
-                { label: 'Gr. 11 – STEM A',     present: 22, total: 24, color: 'bg-amber-300 text-amber-950' },
-                { label: 'Gr. 12 – ABM A',      present: 25, total: 27, color: 'bg-amber-100 text-amber-950' },
-              ].map(row => (
-                <div key={row.label} className="space-y-1.5">
+            {todayScansCount === 0 ? (
+              <div className="py-6 text-center text-xs text-white/50 font-medium">
+                No attendance scans recorded today yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium text-white/70">{row.label}</span>
-                    <span className="font-bold text-white">{row.present}/{row.total}</span>
+                    <span className="font-medium text-white/70">Today's Scans</span>
+                    <span className="font-bold text-white">{todayScansCount}/{enrolledCount}</span>
                   </div>
                   <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
                     <motion.div
                       initial={{ width: 0 }}
-                      animate={{ width: `${Math.round((row.present / row.total) * 100)}%` }}
+                      animate={{ width: enrolledCount > 0 ? `${Math.min(100, Math.round((todayScansCount / enrolledCount) * 100))}%` : '0%' }}
                       transition={{ delay: 0.6, duration: 0.8, ease: 'easeOut' }}
-                      className={cn('h-full rounded-full', row.color)}
+                      className="h-full rounded-full bg-amber-200 text-amber-950"
                     />
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Quick nav buttons */}

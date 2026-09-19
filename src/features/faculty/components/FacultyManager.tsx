@@ -5,73 +5,9 @@ import { DataTable, Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
 import { UserCheck, Calendar, Clock, Plus, CheckCircle, XCircle } from 'lucide-react';
 
-const INITIAL_STAFF: StaffProfile[] = [
-  {
-    id: 'usr-admin-001',
-    email: 'principal.santos@srnhs.edu.ph',
-    full_name: 'Dr. Maria Santos',
-    role: 'admin',
-    department: 'Office of the Principal',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'usr-teacher-101',
-    email: 'j.delacruz@srnhs.edu.ph',
-    full_name: 'Mr. Juan Dela Cruz',
-    role: 'teacher',
-    department: 'Science & Mathematics Faculty',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'usr-teacher-102',
-    email: 'c.soriano@srnhs.edu.ph',
-    full_name: 'Mrs. Clarissa Soriano',
-    role: 'teacher',
-    department: 'Science & Mathematics Faculty',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-];
+const INITIAL_STAFF: StaffProfile[] = [];
 
-const INITIAL_ASSIGNMENTS: TeacherAssignment[] = [
-  {
-    id: 'asg-001',
-    teacher_id: 'usr-teacher-101',
-    teacher_name: 'Mr. Juan Dela Cruz',
-    section_id: 'sec-101',
-    section_name: 'Grade 10 – Sampaguita',
-    subject_id: 'sub-101',
-    subject_code: 'MATH-10',
-    subject_title: 'General Mathematics',
-    room_id: 'rm-102',
-    room_name: 'Building A – Room 204',
-    schedule_day: 'Mon, Wed, Fri',
-    start_time: '08:00 AM',
-    end_time: '09:00 AM',
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: 'asg-002',
-    teacher_id: 'usr-teacher-101',
-    teacher_name: 'Mr. Juan Dela Cruz',
-    section_id: 'sec-102',
-    section_name: 'Grade 11 – STEM A',
-    subject_id: 'sub-101',
-    subject_code: 'MATH-11',
-    subject_title: 'Pre-Calculus',
-    room_id: 'rm-103',
-    room_name: 'Building B – Room 201',
-    schedule_day: 'Tue, Thu',
-    start_time: '10:00 AM',
-    end_time: '11:30 AM',
-    created_at: new Date().toISOString(),
-  },
-];
+const INITIAL_ASSIGNMENTS: TeacherAssignment[] = [];
 
 export const FacultyManager: React.FC = () => {
   const { isAdmin, user } = useRole();
@@ -86,7 +22,7 @@ export const FacultyManager: React.FC = () => {
 
   // Assignment Modal State
   const [assignmentModalOpen, setAssignmentModalOpen] = useState(false);
-  const [targetTeacherId, setTargetTeacherId] = useState('usr-teacher-101');
+  const [targetTeacherId, setTargetTeacherId] = useState('');
   const [sectionName, setSectionName] = useState('Grade 10 – Sampaguita');
   const [subjectTitle, setSubjectTitle] = useState('General Mathematics');
   const [roomName, setRoomName] = useState('Building A – Room 204');

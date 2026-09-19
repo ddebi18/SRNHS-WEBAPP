@@ -3,61 +3,7 @@ import { RecognitionEvent, EventType } from '@/types/domain.types';
 import { getStoredStudents } from '@/features/faceRegistration/api';
 import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
 
-export const INITIAL_MOCK_EVENTS: RecognitionEvent[] = [
-  {
-    id: 'evt-001',
-    student_id: 'std-101',
-    student_name: 'Juan Carlos Garcia',
-    student_lrn: '109823456701',
-    student_photo: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80',
-    section_name: 'Grade 10 – Sampaguita',
-    event_type: 'entry',
-    room_name: 'Main Gate Turnstile 01',
-    confidence_score: 0.9882,
-    source: 'camera',
-    captured_at: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-  },
-  {
-    id: 'evt-002',
-    student_id: 'std-102',
-    student_name: 'Sophia Nicole Reyes',
-    student_lrn: '109823456702',
-    student_photo: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
-    section_name: 'Grade 10 – Sampaguita',
-    event_type: 'entry',
-    room_name: 'Main Gate Turnstile 01',
-    confidence_score: 0.9654,
-    source: 'camera',
-    captured_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-  },
-  {
-    id: 'evt-003',
-    student_id: 'std-103',
-    student_name: 'Angelo Gabriel Mendoza',
-    student_lrn: '109823456703',
-    student_photo: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-    section_name: 'Grade 11 – STEM A',
-    event_type: 'classroom_checkin',
-    room_name: 'Building B – Room 201',
-    subject_title: 'General Mathematics',
-    confidence_score: 0.9912,
-    source: 'camera',
-    captured_at: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-  },
-  {
-    id: 'evt-004',
-    student_id: 'std-104',
-    student_name: 'Samantha Claire Santos',
-    student_lrn: '109823456704',
-    student_photo: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
-    section_name: 'Grade 11 – STEM A',
-    event_type: 'entry',
-    room_name: 'Main Gate Turnstile 02',
-    confidence_score: 0.9740,
-    source: 'manual_override',
-    captured_at: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-  },
-];
+export const INITIAL_MOCK_EVENTS: RecognitionEvent[] = [];
 
 const STORAGE_KEY_EVENTS = 'srnhs_recognition_events_v2';
 
@@ -81,10 +27,20 @@ function loadStoredEvents(): RecognitionEvent[] {
     const raw = localStorage.getItem(STORAGE_KEY_EVENTS);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return deduplicateEvents(parsed);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const realEvents = parsed.filter((e: RecognitionEvent) =>
+          !e.id.startsWith('evt-00') &&
+          !e.student_id?.startsWith('std-10') &&
+          !e.student_photo?.includes('unsplash.com')
+        );
+        if (realEvents.length !== parsed.length) {
+          saveStoredEvents(realEvents);
+        }
+        return deduplicateEvents(realEvents);
+      }
     }
   } catch (e) {}
-  return deduplicateEvents([...INITIAL_MOCK_EVENTS]);
+  return [];
 }
 
 function saveStoredEvents(events: RecognitionEvent[]) {

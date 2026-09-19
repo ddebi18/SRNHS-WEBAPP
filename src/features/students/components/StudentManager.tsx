@@ -8,20 +8,7 @@ import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Image as ImageIcon, Eye
 import { Link } from 'react-router-dom';
 import { addNewStudent, getStoredStudents, getPhotosFromDb, deleteStudent } from '@/features/faceRegistration/api';
 
-const INITIAL_VIOLATIONS: StudentViolation[] = [
-  {
-    id: 'v-001',
-    student_id: 'std-101',
-    student_name: 'Juan Carlos Garcia',
-    reported_by: 'usr-teacher-101',
-    reporter_name: 'Mr. Juan Dela Cruz',
-    title: 'Improper Uniform Conduct',
-    description: 'Student entered campus without prescribing school ID and uniform pin.',
-    severity: 'minor',
-    incident_date: new Date(Date.now() - 86400000 * 2).toISOString(),
-    created_at: new Date().toISOString(),
-  },
-];
+const INITIAL_VIOLATIONS: StudentViolation[] = [];
 
 const SECTIONS_CONFIG = [
   { id: 'sec-101', name: 'Grade 10 – Sampaguita', gradeLevel: 10 },
