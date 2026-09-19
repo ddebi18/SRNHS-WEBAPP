@@ -104,12 +104,11 @@ export function getStoredStudents(): Student[] {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY_STUDENTS);
     if (raw) {
       const parsed: Student[] = JSON.parse(raw);
-      // Filter out any legacy dummy mock students
+      // Only filter out the specific legacy dummy IDs (std-10x, std-20x, std-30x)
       const realStudents = parsed.filter(s =>
         !s.id.startsWith('std-10') &&
         !s.id.startsWith('std-20') &&
-        !s.id.startsWith('std-30') &&
-        !s.photoUrl?.includes('unsplash.com')
+        !s.id.startsWith('std-30')
       );
       if (realStudents.length !== parsed.length) {
         localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(realStudents));
@@ -203,10 +202,10 @@ export async function addNewStudent(studentData: {
     name: studentData.name.trim(),
     studentNumber: cleanLrn,
     sectionId: studentData.sectionId,
-    sectionName: studentData.sectionName || section?.name || 'Grade 10 – Sampaguita',
+    sectionName: studentData.sectionName || section?.name || '',
     faceRegistrationStatus: existingIndex >= 0 ? students[existingIndex]!.faceRegistrationStatus : 'unregistered',
     lastRegisteredAt: existingIndex >= 0 ? students[existingIndex]!.lastRegisteredAt : undefined,
-    photoUrl: studentData.photoUrl || (existingIndex >= 0 ? students[existingIndex]!.photoUrl : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=350&auto=format&fit=crop&q=80'),
+    photoUrl: studentData.photoUrl || (existingIndex >= 0 ? students[existingIndex]!.photoUrl : undefined),
     registeredPhotos: existingIndex >= 0 ? students[existingIndex]!.registeredPhotos : undefined,
     guardianName: studentData.guardianName?.trim() || 'Parent / Guardian',
     guardianPhone: studentData.guardianPhone?.trim() || '+639170000000',
@@ -313,7 +312,10 @@ export async function fetchSections(): Promise<Section[]> {
 export async function fetchSectionRoster(sectionId: string): Promise<Student[]> {
   await new Promise(r => setTimeout(r, 150));
   const students = getStoredStudents();
-  const sectionStudents = students.filter(s => s.sectionId === sectionId);
+  const sectionStudents =
+    sectionId === 'all' || !sectionId
+      ? students
+      : students.filter(s => s.sectionId === sectionId);
 
   // Hydrate high-res photos from IndexedDB if available
   const hydrated = await Promise.all(

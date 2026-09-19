@@ -179,14 +179,16 @@ export const DashboardOverviewPage: React.FC = () => {
         {/* Left 2 Cols: Live Camera Stream Viewfinder + Live Recognition Feed */}
         <div className="lg:col-span-2 space-y-6">
 
-          {/* 1. Live Turnstile Camera Feed Card (Empty/Standby placeholder ready for connection) */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.5 }}
-          >
-            <LiveCameraFeedCard />
-          </motion.div>
+          {/* 1. Live Turnstile Camera Feed Card (Admin only) */}
+          {isAdmin && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, duration: 0.5 }}
+            >
+              <LiveCameraFeedCard />
+            </motion.div>
+          )}
 
           {/* 2. Live Recognition Feed Log */}
           <motion.div

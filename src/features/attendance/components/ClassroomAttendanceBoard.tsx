@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { AttendanceStatus, RecognitionEvent } from '@/types/domain.types';
 import { AttendanceBadge } from '@/components/ui/StatusBadge';
 import { useRole } from '@/hooks/useRole';
-import { Check, Clock, X, AlertCircle, BookOpen, Users, RefreshCw, Layers } from 'lucide-react';
+import { Check, Clock, X, AlertCircle, BookOpen, Users, RefreshCw } from 'lucide-react';
 import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { fetchSections, fetchSectionRoster } from '@/features/faceRegistration/api';
@@ -70,8 +70,8 @@ export const ClassroomAttendanceBoard: React.FC = () => {
   useEffect(() => {
     fetchSections().then(data => {
       setSections(data);
-      if (data.length > 0 && !selectedSection) {
-        setSelectedSection(data[0]!.id);
+      if (!selectedSection) {
+        setSelectedSection('all');
       }
     });
     const stored = getStoredSubjects();
@@ -219,6 +219,9 @@ export const ClassroomAttendanceBoard: React.FC = () => {
                 onChange={e => setSelectedSection(e.target.value)}
                 className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
               >
+                <option value="all" className="dark:bg-slate-900">
+                  All Sections (All Students)
+                </option>
                 {sections.map(sec => (
                   <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
                     {sec.name}
@@ -226,9 +229,9 @@ export const ClassroomAttendanceBoard: React.FC = () => {
                 ))}
               </select>
             ) : (
-              <span className="flex items-center gap-1.5 text-sm font-bold text-slate-400 dark:text-slate-500">
-                <Layers className="w-4 h-4" />
-                No sections — add in Academics
+              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
+                <Users className="w-3.5 h-3.5" />
+                All Enrolled Students
               </span>
             )}
           </div>

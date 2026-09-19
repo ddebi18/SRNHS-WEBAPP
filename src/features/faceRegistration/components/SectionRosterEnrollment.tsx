@@ -11,7 +11,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { Student, Section, FaceRegistrationStatus } from '../types';
-import { fetchSections, fetchSectionRoster, addNewStudent } from '../api';
+import { fetchSections, fetchSectionRoster, addNewStudent, getStoredStudents } from '../api';
 import { StudentRosterRow } from './StudentRosterRow';
 import { FaceCaptureModal } from './FaceCaptureModal';
 import { ViewRegisteredFaceModal } from './ViewRegisteredFaceModal';
@@ -51,15 +51,22 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
   useEffect(() => {
     fetchSections().then(data => {
       setSections(data);
-      if (data.length > 0) {
-        // If a specific student was requested, switch to their section
-        // otherwise fall back to initialSectionId or first available
-        if (!selectedSectionId || selectedSectionId === '') {
-          setSelectedSectionId(data[0]!.id);
+      if (initialStudentId) {
+        const allStudents = getStoredStudents();
+        const target = allStudents.find(s => s.id === initialStudentId);
+        if (target && target.sectionId) {
+          setSelectedSectionId(target.sectionId);
+          return;
         }
       }
+      if (initialSectionId) {
+        setSelectedSectionId(initialSectionId);
+        return;
+      }
+      // Default to 'all' so all enrolled students are visible immediately
+      setSelectedSectionId('all');
     });
-  }, []);
+  }, [initialSectionId, initialStudentId]);
 
   // Fetch roster whenever selected section changes
   useEffect(() => {
@@ -132,17 +139,17 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
 
     setIsSubmittingEnroll(true);
     try {
-      const targetSec = sections.find(s => s.id === enrollSectionId) || sections.find(s => s.id === selectedSectionId) || sections[0]!;
+      const targetSec = sections.find(s => s.id === enrollSectionId) || sections.find(s => s.id === selectedSectionId) || sections[0];
       const newStudent = await addNewStudent({
         name: `${cleanFirst} ${cleanLast}`,
         studentNumber: cleanLrn,
-        sectionId: targetSec.id,
-        sectionName: targetSec.name,
+        sectionId: targetSec ? targetSec.id : (enrollSectionId || ''),
+        sectionName: targetSec ? targetSec.name : 'General',
         guardianName: enrollGuardianName.trim() || 'Parent / Guardian',
         guardianPhone: cleanPhone,
       });
 
-      if (selectedSectionId !== targetSec.id) {
+      if (selectedSectionId !== 'all' && targetSec && selectedSectionId !== targetSec.id) {
         setSelectedSectionId(targetSec.id);
       } else {
         reloadRoster();
@@ -150,7 +157,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
 
       fetchSections().then(setSections);
 
-      setToastMessage(`${newStudent.name} enrolled in ${targetSec.name}. You can now register their face.`);
+      setToastMessage(`${newStudent.name} enrolled${targetSec ? ` in ${targetSec.name}` : ''}. You can now register their face.`);
       setTimeout(() => setToastMessage(null), 5000);
 
       setEnrollLrn('');
@@ -229,6 +236,9 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
               onChange={e => setSelectedSectionId(e.target.value)}
               className="bg-transparent text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
             >
+              <option value="all" className="dark:bg-slate-900">
+                All Sections ({sections.reduce((acc, s) => acc + (s.totalStudents || 0), 0)} Students)
+              </option>
               {sections.map(sec => (
                 <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
                   {sec.name} ({sec.gradeLevel})
@@ -239,7 +249,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
 
           <button
             onClick={() => {
-              setEnrollSectionId(selectedSectionId);
+              setEnrollSectionId(selectedSectionId === 'all' ? (sections[0]?.id || '') : selectedSectionId);
               setEnrollError(null);
               setIsEnrollModalOpen(true);
             }}

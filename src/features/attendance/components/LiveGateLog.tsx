@@ -176,8 +176,8 @@ export const LiveGateLog: React.FC = () => {
         ))}
       </motion.div>
 
-      {/* Live Turnstile Camera Feed Viewfinder Card */}
-      <LiveCameraFeedCard />
+      {/* Live Turnstile Camera Feed Viewfinder Card (Admin only) */}
+      {isAdmin && <LiveCameraFeedCard />}
 
       {/* Table */}
       <DataTable
