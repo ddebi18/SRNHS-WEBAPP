@@ -17,7 +17,6 @@ import {
   Sun,
   Moon,
   ChevronRight,
-  FileCode2,
 } from 'lucide-react';
 import { SITE_CONFIG } from '@/config/siteConfig';
 import { useAuth } from '@/context/AuthContext';
@@ -60,7 +59,6 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
     { label: 'Faculty & Schedules',     path: '/faculty',           icon: UserCheck,       allowed: ['admin', 'teacher'] },
     { label: 'Academics Master',        path: '/academics',         icon: BookOpen,        allowed: ['admin'] },
     { label: 'SMS Audit Log',           path: '/sms-log',           icon: MessageSquare,   allowed: ['admin'] },
-    { label: 'System Design (IT 11)',   path: '/system-design',     icon: FileCode2,       allowed: ['admin', 'teacher'] },
   ];
 
   const allowedNavItems = allNavItems.filter(item => item.allowed.includes(role || 'teacher'));

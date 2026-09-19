@@ -15,7 +15,6 @@ const FacultyPage = lazy(() => import('./FacultyPage').then(m => ({ default: m.F
 const AcademicsPage = lazy(() => import('./AcademicsPage').then(m => ({ default: m.AcademicsPage })));
 const SmsLogPage = lazy(() => import('./SmsLogPage').then(m => ({ default: m.SmsLogPage })));
 const FaceRegistrationPage = lazy(() => import('./FaceRegistrationPage').then(m => ({ default: m.FaceRegistrationPage })));
-const SystemDesignPage = lazy(() => import('./SystemDesignPage').then(m => ({ default: m.SystemDesignPage })));
 const ForbiddenPage = lazy(() => import('./ForbiddenPage').then(m => ({ default: m.ForbiddenPage })));
 const NotFoundPage = lazy(() => import('./NotFoundPage').then(m => ({ default: m.NotFoundPage })));
 
@@ -141,16 +140,6 @@ const router = createBrowserRouter([
       <ProtectedRoute allowedRoles={['admin', 'teacher']}>
         <Suspense fallback={<LoadingSpinner />}>
           <FaceRegistrationPage />
-        </Suspense>
-      </ProtectedRoute>
-    ),
-  },
-  {
-    path: '/system-design',
-    element: (
-      <ProtectedRoute allowedRoles={['admin', 'teacher']}>
-        <Suspense fallback={<LoadingSpinner />}>
-          <SystemDesignPage />
         </Suspense>
       </ProtectedRoute>
     ),

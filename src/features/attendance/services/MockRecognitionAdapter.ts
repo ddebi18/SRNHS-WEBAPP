@@ -136,7 +136,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     }
 
     const newEvt: RecognitionEvent = {
-      id: `evt-sim-${Date.now()}`,
+      id: `evt-sim-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       student_id: studentId,
       student_name: studentName,
       student_lrn: studentLrn,

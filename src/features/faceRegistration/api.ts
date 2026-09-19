@@ -302,7 +302,17 @@ export function getStoredSections(): Section[] {
       }
     }
   } catch (e) {}
-  return []; // No sections yet — admin must create them
+
+  const defaultSections: Section[] = [
+    { id: 'sec-stem-12', name: 'Grade 12 - STEM Diamond', gradeLevel: 'Grade 12', teacherId: 't-1', teacherName: 'Unassigned', totalStudents: 0, registeredStudents: 0 },
+    { id: 'sec-tvl-12', name: 'Grade 12 - TVL ICT Cobalt', gradeLevel: 'Grade 12', teacherId: 't-2', teacherName: 'Unassigned', totalStudents: 0, registeredStudents: 0 },
+    { id: 'sec-humss-11', name: 'Grade 11 - HUMSS Emerald', gradeLevel: 'Grade 11', teacherId: 't-3', teacherName: 'Unassigned', totalStudents: 0, registeredStudents: 0 },
+    { id: 'sec-g10-1', name: 'Grade 10 - Rizal', gradeLevel: 'Grade 10', teacherId: 't-4', teacherName: 'Unassigned', totalStudents: 0, registeredStudents: 0 },
+  ];
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(defaultSections));
+  } catch {}
+  return defaultSections;
 }
 
 export function saveStoredSections(sections: Section[]): void {

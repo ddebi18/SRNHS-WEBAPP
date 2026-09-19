@@ -10,24 +10,32 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
 
     if (!supabase) return unsubMock;
 
-    const channel = supabase
-      .channel('public:recognition_events')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'recognition_events' },
-        payload => {
-          this.getEvents({ limit: 50 }).then(events => {
-            const hydratedEvent = events.find(event => event.id === payload.new.id);
-            callback(hydratedEvent || payload.new as RecognitionEvent);
-          });
-        }
-      )
-      .subscribe();
+    const channelId = `recognition_events_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    let channel: any = null;
+    try {
+      channel = supabase
+        .channel(channelId)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'recognition_events' },
+          payload => {
+            this.getEvents({ limit: 50 }).then(events => {
+              const hydratedEvent = events.find(event => event.id === payload.new.id);
+              callback(hydratedEvent || payload.new as RecognitionEvent);
+            });
+          }
+        )
+        .subscribe();
+    } catch (e) {
+      console.warn('Supabase Realtime subscription note:', e);
+    }
 
     return () => {
       unsubMock();
-      if (supabase) {
-        supabase.removeChannel(channel);
+      if (supabase && channel) {
+        try {
+          supabase.removeChannel(channel);
+        } catch {}
       }
     };
   }

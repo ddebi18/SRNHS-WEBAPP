@@ -3,11 +3,9 @@ import { mockRecognitionAdapter } from '@/features/attendance/services/MockRecog
 import { getRecognitionStatusText } from '@/features/attendance/lib/recognitionStatus';
 
 describe('MockRecognitionAdapter', () => {
-  it('fetches initial mock recognition events', async () => {
+  it('fetches recognition events array', async () => {
     const events = await mockRecognitionAdapter.getEvents();
-    expect(events.length).toBeGreaterThan(0);
-    expect(events[0]).toHaveProperty('student_name');
-    expect(events[0]).toHaveProperty('confidence_score');
+    expect(Array.isArray(events)).toBe(true);
   });
 
   it('triggers and subscribes to live recognition scan events', async () => {

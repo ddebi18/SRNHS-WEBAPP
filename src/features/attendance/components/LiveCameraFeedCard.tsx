@@ -86,19 +86,21 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
   const { isFaceDetected, faceBox, detectorError } = useFaceDetection(videoRef, 'front', hasVideoSource && isVideoReady);
-  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo } = useFaceRecognition(videoRef, hasVideoSource);
+  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo } = useFaceRecognition(videoRef, hasVideoSource);
   const [isInstantScanning, setIsInstantScanning] = useState(false);
+  const activeBox = faceBox || recognitionBox;
+  const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
 
-  // Auto-scan snapshot trigger: When face is stable in frame for 1.2s, trigger snapshot match automatically
+  // Auto-scan snapshot trigger: When face is stable in frame for 1.0s, trigger snapshot match automatically
   useEffect(() => {
-    if (!isFaceDetected || !isRecognitionReady || matchedStudent || !hasVideoSource) return;
+    if (!isAnyFaceDetected || !isRecognitionReady || matchedStudent || !hasVideoSource) return;
 
     const timer = setTimeout(() => {
       triggerInstantScan().catch(() => {});
-    }, 1200);
+    }, 1000);
 
     return () => clearTimeout(timer);
-  }, [isFaceDetected, isRecognitionReady, matchedStudent, hasVideoSource, triggerInstantScan]);
+  }, [isAnyFaceDetected, isRecognitionReady, matchedStudent, hasVideoSource, triggerInstantScan]);
 
   useEffect(() => {
     if (!useWebcam) {
@@ -448,7 +450,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               />
             )}
 
-            {faceBox && (() => {
+            {activeBox && (() => {
               const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.65);
               const isRecognized = Boolean(matchedStudent);
               const isDetecting = !isRecognized && (isAnalyzing || isInstantScanning || !isRecognitionReady);
@@ -469,10 +471,10 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                       : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)]'
                   )}
                   style={{
-                    left: `${(faceBox.x / faceBox.videoWidth) * 100}%`,
-                    top: `${(faceBox.y / faceBox.videoHeight) * 100}%`,
-                    width: `${(faceBox.width / faceBox.videoWidth) * 100}%`,
-                    height: `${(faceBox.height / faceBox.videoHeight) * 100}%`,
+                    left: `${(activeBox.x / activeBox.videoWidth) * 100}%`,
+                    top: `${(activeBox.y / activeBox.videoHeight) * 100}%`,
+                    width: `${(activeBox.width / activeBox.videoWidth) * 100}%`,
+                    height: `${(activeBox.height / activeBox.videoHeight) * 100}%`,
                   }}
                 >
                   <span
@@ -576,11 +578,11 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     matchedStudent,
                     isLoading: isRecognitionLoading,
                     isReady: isRecognitionReady,
-                    isFaceDetected,
+                    isFaceDetected: isAnyFaceDetected,
                     isAnalyzing,
                   })}
                 </span>
-                {isFaceDetected && (
+                {isAnyFaceDetected && (
                   <span className={cn(
                     'ml-1 px-1 py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase shrink-0',
                     isLive
