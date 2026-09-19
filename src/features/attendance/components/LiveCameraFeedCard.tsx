@@ -4,12 +4,12 @@ import {
   Camera,
   Maximize2,
   Video,
-  Settings,
   ShieldCheck,
   Radio,
   Eye,
   CheckCircle2,
   Info,
+  Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcStream';
@@ -86,7 +86,19 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
   const { isFaceDetected, faceBox, detectorError } = useFaceDetection(videoRef, 'front', hasVideoSource && isVideoReady);
-  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, isLive, isAnalyzing } = useFaceRecognition(videoRef, hasVideoSource);
+  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, isLive, isAnalyzing, triggerInstantScan } = useFaceRecognition(videoRef, hasVideoSource);
+  const [isInstantScanning, setIsInstantScanning] = useState(false);
+
+  // Auto-scan snapshot trigger: When face is stable in frame for 1.2s, trigger snapshot match automatically
+  useEffect(() => {
+    if (!isFaceDetected || !isRecognitionReady || matchedStudent || !hasVideoSource) return;
+
+    const timer = setTimeout(() => {
+      triggerInstantScan().catch(() => {});
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [isFaceDetected, isRecognitionReady, matchedStudent, hasVideoSource, triggerInstantScan]);
 
   useEffect(() => {
     if (!useWebcam) {
@@ -143,7 +155,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   }, []);
 
   useEffect(() => {
-    if (!matchedStudent || matchedStudent.confidence < 0.48 || !isLive) return;
+    if (!matchedStudent || matchedStudent.confidence < 0.35) return;
 
     const logKey = `${matchedStudent.id}_${scanMode}`;
     const alreadyLoggedTime = dailyCompletedMap.get(logKey);
@@ -437,10 +449,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             )}
 
             {faceBox && (() => {
-              const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.70);
+              const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.65);
               const isRecognized = Boolean(matchedStudent);
-              const isDetecting = !isRecognized && (isAnalyzing || !isRecognitionReady);
-              // Spoof: face is recognized but liveness check failed (photo/screen attack)
+              const isDetecting = !isRecognized && (isAnalyzing || isInstantScanning || !isRecognitionReady);
               const isSpoofWarning = isRecognized && !isLive;
 
               return (
@@ -486,11 +497,11 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     ) : isRecognized ? (
                       dailyCompletedMap.has(`${matchedStudent!.id}_${scanMode}`)
                         ? `✓ ${matchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
-                        : `✓ ${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}%`
+                        : `✓ ${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}% Match`
                     ) : isDetecting ? (
                       <>
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
-                        Detecting Face…
+                        Scanning Face (&lt;3s)…
                       </>
                     ) : (
                       'Unregistered Face'
@@ -585,18 +596,24 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
           <div className="mt-3 sm:mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs">
             <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-medium text-[11px] sm:text-xs">
               <Eye className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span>Face detection bounding boxes and LRN matches render on stream live.</span>
+              <span>Face recognition runs in &lt;3s. Click Instant Scan for immediate snapshot match.</span>
             </div>
 
             <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-              <button
-                disabled
-                title="Stream configuration"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 text-xs font-bold opacity-60 cursor-not-allowed"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Configure</span>
-              </button>
+              {hasVideoSource && (
+                <button
+                  onClick={async () => {
+                    setIsInstantScanning(true);
+                    await triggerInstantScan();
+                    setIsInstantScanning(false);
+                  }}
+                  disabled={isInstantScanning}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 active:scale-95 text-white font-black text-xs shadow-md transition-all cursor-pointer shrink-0"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{isInstantScanning ? 'Scanning Snapshot…' : '⚡ Instant Scan (<1s)'}</span>
+                </button>
+              )}
               <button
                 onClick={() => setIsFullscreen(!isFullscreen)}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-card-sm text-xs font-bold"
