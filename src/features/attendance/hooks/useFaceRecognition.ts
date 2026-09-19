@@ -47,6 +47,7 @@ interface UseFaceRecognitionReturn {
   isLive: boolean;
   isAnalyzing: boolean;
   triggerInstantScan: () => Promise<RecognizedStudent | null>;
+  diagnosticInfo: string;
 }
 
 function computeEAR(
@@ -125,6 +126,7 @@ export function useFaceRecognition(
   const [landmarks, setLandmarks] = useState<FaceLandmarkPoint[] | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [diagnosticInfo, setDiagnosticInfo] = useState('Initializing…');
 
   const matcherRef = useRef<faceapi.FaceMatcher | null>(null);
   const processingRef = useRef(false);
@@ -233,17 +235,34 @@ export function useFaceRecognition(
     const initialize = async () => {
       setIsLoading(true);
       setError(null);
+      setDiagnosticInfo('Loading face-api neural network models…');
+      console.log('[FaceRecognition] Starting initialization…');
 
       try {
         await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL).catch(() => {}),
+          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL).catch(() => {
+            console.warn('[FaceRecognition] TinyFaceDetector model not available, using SSD only');
+          }),
           faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
           faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
         ]);
+        console.log('[FaceRecognition] ✓ Models loaded. SSD:', faceapi.nets.ssdMobilenetv1.isLoaded, 'Tiny:', faceapi.nets.tinyFaceDetector.isLoaded);
+        setDiagnosticInfo('Models loaded. Fetching enrolled students…');
 
         const students = await fetchRegisteredStudents();
         studentsRef.current = students;
+        console.log(`[FaceRecognition] ✓ Found ${students.length} registered student(s):`, students.map(s => s.name));
+        setDiagnosticInfo(`Found ${students.length} enrolled student(s). Extracting face descriptors…`);
+
+        if (students.length === 0) {
+          setIsLoading(false);
+          const msg = 'No registered students found. Enroll a student and register their face first.';
+          setError(msg);
+          setDiagnosticInfo(msg);
+          console.warn('[FaceRecognition] ✗', msg);
+          return;
+        }
 
         // Build face descriptors from registered photos (downscaled for speed)
         const labeledDescriptors = (await Promise.all(students.map(async student => {
@@ -289,27 +308,42 @@ export function useFaceRecognition(
 
               if (detection) {
                 descriptors.push(detection.descriptor);
+                console.log(`[FaceRecognition] ✓ Descriptor extracted for ${student.name} (${url.substring(0, 30)}…)`);
+              } else {
+                console.warn(`[FaceRecognition] ✗ No face found in photo for ${student.name} (${url.substring(0, 30)}…)`);
               }
             } catch (imageError) {
               console.warn(`[FaceRecognition] Photo descriptor note for ${student.name}:`, imageError);
             }
           }
 
-          if (descriptors.length === 0) return null;
+          if (descriptors.length === 0) {
+            console.warn(`[FaceRecognition] ✗ No descriptors for ${student.name} — face not detectable in any photo`);
+            return null;
+          }
+          console.log(`[FaceRecognition] ✓ ${student.name}: ${descriptors.length} descriptor(s) ready`);
           return new faceapi.LabeledFaceDescriptors(student.id, descriptors);
         }))).filter((descriptor): descriptor is faceapi.LabeledFaceDescriptors => Boolean(descriptor));
 
         if (cancelled) return;
 
+        console.log(`[FaceRecognition] Descriptor summary: ${labeledDescriptors.length} student(s) with valid face descriptors`);
+
         if (labeledDescriptors.length === 0) {
           setIsLoading(false);
-          setError('No face descriptors could be extracted from enrolled student photos. Please ensure photos have clear frontal faces.');
+          const msg = `No face descriptors could be extracted from ${students.length} enrolled student photo(s). The registered face photos may not contain a clear, detectable face. Try re-registering with a well-lit frontal face photo.`;
+          setError(msg);
+          setDiagnosticInfo(msg);
+          console.error('[FaceRecognition] ✗', msg);
           return;
         }
 
         matcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, MATCH_THRESHOLD);
         setIsLoading(false);
         setIsReady(true);
+        const readyMsg = `Ready — ${labeledDescriptors.length} student(s) loaded, scanning at 180ms intervals`;
+        setDiagnosticInfo(readyMsg);
+        console.log(`[FaceRecognition] ✓ ${readyMsg}`);
 
         // Continuous high-speed recognition loop (runs on 480px downscaled canvas)
         interval = setInterval(async () => {
@@ -476,8 +510,10 @@ export function useFaceRecognition(
       } catch (initializationError: any) {
         if (!cancelled) {
           setIsLoading(false);
-          setError(initializationError?.message || 'Face recognition could not be initialized.');
-          console.error('[FaceRecognition] Init failed:', initializationError);
+          const msg = initializationError?.message || 'Face recognition could not be initialized.';
+          setError(msg);
+          setDiagnosticInfo(`Init error: ${msg}`);
+          console.error('[FaceRecognition] ✗ Init failed:', initializationError);
         }
       }
     };
@@ -502,5 +538,5 @@ export function useFaceRecognition(
     };
   }, [active, videoRef]);
 
-  return { isLoading, isReady, matchedStudent, error, landmarks, isLive, isAnalyzing, triggerInstantScan };
+  return { isLoading, isReady, matchedStudent, error, landmarks, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo };
 }

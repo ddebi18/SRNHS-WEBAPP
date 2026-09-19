@@ -86,7 +86,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
   const { isFaceDetected, faceBox, detectorError } = useFaceDetection(videoRef, 'front', hasVideoSource && isVideoReady);
-  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, isLive, isAnalyzing, triggerInstantScan } = useFaceRecognition(videoRef, hasVideoSource);
+  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo } = useFaceRecognition(videoRef, hasVideoSource);
   const [isInstantScanning, setIsInstantScanning] = useState(false);
 
   // Auto-scan snapshot trigger: When face is stable in frame for 1.2s, trigger snapshot match automatically
@@ -566,9 +566,11 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 <span>LATENCY: <strong className="text-emerald-400">&lt;50ms</strong></span>
               </div>
               <div className="flex items-center gap-1.5 text-slate-300 max-w-full truncate">
-                <ShieldCheck className={cn('w-3 h-3 shrink-0', isLive ? 'text-emerald-400' : 'text-amber-400')} />
+                <ShieldCheck className={cn('w-3 h-3 shrink-0', recognitionError ? 'text-rose-400' : isLive ? 'text-emerald-400' : 'text-amber-400')} />
                 <span className="truncate">
-                  {detectorError
+                  {recognitionError
+                    ? `⚠ ${recognitionError}`
+                    : detectorError
                     ? `Error: ${detectorError}`
                     : getRecognitionStatusText({
                     matchedStudent,
@@ -590,13 +592,20 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 )}
               </div>
             </div>
+
+            {/* Recognition Error Banner */}
+            {recognitionError && (
+              <div className="relative z-10 mt-1 px-2.5 py-1.5 rounded-lg bg-rose-950/80 backdrop-blur-md border border-rose-800/60 text-rose-300 text-[10px] sm:text-[11px] font-bold">
+                ⚠ Recognition: {recognitionError}
+              </div>
+            )}
           </div>
 
           {/* ── Stream Status & Action Bar ───────────────────────────────── */}
           <div className="mt-3 sm:mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs">
             <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-medium text-[11px] sm:text-xs">
               <Eye className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span>Face recognition runs in &lt;3s. Click Instant Scan for immediate snapshot match.</span>
+              <span className="truncate">{diagnosticInfo || 'Face recognition runs in <3s. Click Instant Scan for immediate snapshot match.'}</span>
             </div>
 
             <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
