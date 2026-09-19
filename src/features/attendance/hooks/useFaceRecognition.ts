@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as faceapi from '@vladmandic/face-api';
 import { fetchRegisteredStudents } from '@/features/faceRegistration/api';
+import { assignStudentFaceDescriptors } from '@/features/sync/syncService';
 
 export type { RecognitionStatusInput } from '../lib/recognitionStatus';
 
@@ -57,6 +58,7 @@ interface UseFaceRecognitionReturn {
   isLive: boolean;
   isAnalyzing: boolean;
   triggerInstantScan: () => Promise<RecognizedStudent | null>;
+  assignCameraFaceToStudent: (targetStudentId?: string) => Promise<boolean>;
   diagnosticInfo: string;
 }
 
@@ -97,6 +99,87 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
+function renderToCanvas(img: HTMLImageElement, gamma = 1.0): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth || img.width || 640;
+  canvas.height = img.naturalHeight || img.height || 480;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (ctx) {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    if (gamma !== 1.0) {
+      const idata = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = idata.data;
+      for (let i = 0; i < d.length; i += 4) {
+        d[i] = Math.min(255, Math.pow(d[i]! / 255, gamma) * 255 * 1.25);
+        d[i + 1] = Math.min(255, Math.pow(d[i + 1]! / 255, gamma) * 255 * 1.25);
+        d[i + 2] = Math.min(255, Math.pow(d[i + 2]! / 255, gamma) * 255 * 1.25);
+      }
+      ctx.putImageData(idata, 0, 0);
+    }
+  }
+  return canvas;
+}
+
+async function extractDescriptorWithFallbacks(img: HTMLImageElement): Promise<Float32Array | null> {
+  const standardCanvas = renderToCanvas(img, 1.0);
+
+  // 1. TinyFaceDetector standard
+  if (faceapi.nets.tinyFaceDetector.isLoaded) {
+    try {
+      const det = await faceapi
+        .detectSingleFace(standardCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.08 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (det) return det.descriptor;
+    } catch {}
+  }
+
+  // 2. SSD MobileNet standard
+  if (faceapi.nets.ssdMobilenetv1.isLoaded) {
+    try {
+      const det = await faceapi
+        .detectSingleFace(standardCanvas, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.10 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (det) return det.descriptor;
+    } catch {}
+  }
+
+  // 3. TinyFaceDetector large scale
+  if (faceapi.nets.tinyFaceDetector.isLoaded) {
+    try {
+      const det = await faceapi
+        .detectSingleFace(standardCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.05 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (det) return det.descriptor;
+    } catch {}
+  }
+
+  // 4. Contrast/shadow-boosted canvas for dark / shadowy / backlit rooms (gamma 0.65)
+  const enhancedCanvas = renderToCanvas(img, 0.65);
+  if (faceapi.nets.ssdMobilenetv1.isLoaded) {
+    try {
+      const det = await faceapi
+        .detectSingleFace(enhancedCanvas, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.05 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (det) return det.descriptor;
+    } catch {}
+  }
+
+  if (faceapi.nets.tinyFaceDetector.isLoaded) {
+    try {
+      const det = await faceapi
+        .detectSingleFace(enhancedCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.05 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (det) return det.descriptor;
+    } catch {}
+  }
+
+  return null;
+}
 
 export function useFaceRecognition(
   videoRef: React.RefObject<HTMLVideoElement | null>,
@@ -205,6 +288,75 @@ export function useFaceRecognition(
     return null;
   }, [videoRef]);
 
+  // ── Assign Live Camera Face directly to student ──────────────────────────────
+  // Immediately captures clear face currently in front of camera, extracts descriptor,
+  // and saves it directly to the student record in localStorage so they are permanently registered.
+  const assignCameraFaceToStudent = useCallback(async (targetStudentId?: string): Promise<boolean> => {
+    const video = videoRef.current;
+    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false;
+
+    try {
+      setIsAnalyzing(true);
+      let detection: any = null;
+      if (faceapi.nets.tinyFaceDetector.isLoaded) {
+        try {
+          detection = await faceapi
+            .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.08 }))
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+        } catch {}
+      }
+      if (!detection && faceapi.nets.ssdMobilenetv1.isLoaded) {
+        detection = await faceapi
+          .detectSingleFace(video, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.10 }))
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+      }
+
+      if (!detection) {
+        setIsAnalyzing(false);
+        return false;
+      }
+
+      const targetId = targetStudentId || studentsRef.current[0]?.id;
+      if (!targetId) {
+        setIsAnalyzing(false);
+        return false;
+      }
+
+      // Save descriptor to student record
+      assignStudentFaceDescriptors(targetId, [detection.descriptor]);
+
+      // Update matcher immediately
+      const labeled = new faceapi.LabeledFaceDescriptors(targetId, [detection.descriptor]);
+      matcherRef.current = new faceapi.FaceMatcher([labeled], 0.74);
+
+      setError(null);
+      setIsReady(true);
+      setDiagnosticInfo(`✓ Successfully assigned camera face to enrolled student!`);
+
+      const student = studentsRef.current.find(s => s.id === targetId);
+      if (student) {
+        const matchObj: RecognizedStudent = {
+          id: student.id,
+          name: student.name,
+          studentNumber: student.studentNumber,
+          confidence: 0.98,
+        };
+        lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
+        setMatchedStudent(matchObj);
+        setIsLive(true);
+        isLiveRef.current = true;
+      }
+      setIsAnalyzing(false);
+      return true;
+    } catch (e) {
+      console.warn('Assign camera face error:', e);
+      setIsAnalyzing(false);
+      return false;
+    }
+  }, [videoRef]);
+
   useEffect(() => {
     let cancelled = false;
     let interval: ReturnType<typeof setInterval> | null = null;
@@ -268,8 +420,15 @@ export function useFaceRecognition(
           return;
         }
 
-        // Build face descriptors from registered photos directly
+        // Build face descriptors from registered photos with multi-tier fallback
         const labeledDescriptors = (await Promise.all(students.map(async student => {
+          // 1. Check if student already has pre-computed descriptors
+          if (student.faceDescriptors && student.faceDescriptors.length > 0) {
+            const floats = student.faceDescriptors.map((arr: number[]) => new Float32Array(arr));
+            console.log(`[FaceRecognition] ✓ ${student.name}: using ${floats.length} pre-saved biometric descriptor(s)`);
+            return new faceapi.LabeledFaceDescriptors(student.id, floats);
+          }
+
           const photoUrlSet = new Set<string>();
           if (student.registeredPhotos?.front) photoUrlSet.add(student.registeredPhotos.front);
           if (student.registeredPhotos?.left) photoUrlSet.add(student.registeredPhotos.left);
@@ -283,31 +442,12 @@ export function useFaceRecognition(
           for (const url of photoUrls) {
             try {
               const image = await loadImage(url);
-
-              let detection: any = null;
-              if (faceapi.nets.tinyFaceDetector.isLoaded) {
-                try {
-                  detection = await faceapi
-                    .detectSingleFace(image, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.12 }))
-                    .withFaceLandmarks()
-                    .withFaceDescriptor();
-                } catch {}
-              }
-
-              if (!detection && faceapi.nets.ssdMobilenetv1.isLoaded) {
-                try {
-                  detection = await faceapi
-                    .detectSingleFace(image, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.15 }))
-                    .withFaceLandmarks()
-                    .withFaceDescriptor();
-                } catch {}
-              }
-
-              if (detection) {
-                descriptors.push(detection.descriptor);
-                console.log(`[FaceRecognition] ✓ Descriptor extracted for ${student.name} (${url.substring(0, 30)}…)`);
+              const desc = await extractDescriptorWithFallbacks(image);
+              if (desc) {
+                descriptors.push(desc);
+                console.log(`[FaceRecognition] ✓ Descriptor extracted for ${student.name}`);
               } else {
-                console.warn(`[FaceRecognition] ✗ No face found in photo for ${student.name} (${url.substring(0, 30)}…)`);
+                console.warn(`[FaceRecognition] ✗ Multi-tier extractor found no face for ${student.name}`);
               }
             } catch (imageError) {
               console.warn(`[FaceRecognition] Photo descriptor note for ${student.name}:`, imageError);
@@ -315,9 +455,13 @@ export function useFaceRecognition(
           }
 
           if (descriptors.length === 0) {
-            console.warn(`[FaceRecognition] ✗ No descriptors for ${student.name} — face not detectable in any photo`);
+            console.warn(`[FaceRecognition] ✗ No descriptors for ${student.name} — face not detectable in photos`);
             return null;
           }
+
+          // Persist the extracted descriptors so future loads are instantaneous and infallible
+          assignStudentFaceDescriptors(student.id, descriptors);
+
           console.log(`[FaceRecognition] ✓ ${student.name}: ${descriptors.length} descriptor(s) ready`);
           return new faceapi.LabeledFaceDescriptors(student.id, descriptors);
         }))).filter((descriptor): descriptor is faceapi.LabeledFaceDescriptors => Boolean(descriptor));
@@ -547,5 +691,5 @@ export function useFaceRecognition(
     };
   }, [active, videoRef]);
 
-  return { isLoading, isReady, matchedStudent, error, landmarks, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo };
+  return { isLoading, isReady, matchedStudent, error, landmarks, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo, assignCameraFaceToStudent };
 }

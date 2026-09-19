@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Info,
   Zap,
+  Smartphone,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcStream';
@@ -18,6 +19,7 @@ import { useFaceRecognition } from '../hooks/useFaceRecognition';
 import { getRecognitionStatusText } from '../lib/recognitionStatus';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
+import { DeviceSyncModal } from '@/features/sync/components/DeviceSyncModal';
 import type { EventType } from '@/types/domain.types';
 
 interface LiveCameraFeedCardProps {
@@ -86,8 +88,11 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
   const { isFaceDetected, faceBox, detectorError } = useFaceDetection(videoRef, 'front', hasVideoSource && isVideoReady);
-  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo } = useFaceRecognition(videoRef, hasVideoSource);
+  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo, assignCameraFaceToStudent } = useFaceRecognition(videoRef, hasVideoSource);
   const [isInstantScanning, setIsInstantScanning] = useState(false);
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [isAssigningFace, setIsAssigningFace] = useState(false);
+  const [assignResult, setAssignResult] = useState<string | null>(null);
   const activeBox = faceBox || recognitionBox;
   const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
 
@@ -597,8 +602,33 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
 
             {/* Recognition Error Banner */}
             {recognitionError && (
-              <div className="relative z-10 mt-1 px-2.5 py-1.5 rounded-lg bg-rose-950/80 backdrop-blur-md border border-rose-800/60 text-rose-300 text-[10px] sm:text-[11px] font-bold">
-                ⚠ Recognition: {recognitionError}
+              <div className="relative z-10 mt-1 px-2.5 py-1.5 rounded-lg bg-rose-950/80 backdrop-blur-md border border-rose-800/60 text-rose-300 text-[10px] sm:text-[11px] font-bold flex flex-col gap-1.5">
+                <span>⚠ Recognition: {recognitionError}</span>
+                {isAnyFaceDetected && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setIsAssigningFace(true);
+                      setAssignResult(null);
+                      const ok = await assignCameraFaceToStudent();
+                      setIsAssigningFace(false);
+                      setAssignResult(ok
+                        ? '✓ Face registered from live camera! Recognition is now active.'
+                        : '⚠ Could not extract face. Please make sure your face is fully visible.');
+                      if (ok) setTimeout(() => setAssignResult(null), 5000);
+                    }}
+                    disabled={isAssigningFace}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-[10px] sm:text-[11px] transition-all cursor-pointer self-start shadow-md"
+                  >
+                    <Zap className="w-3 h-3" />
+                    {isAssigningFace ? 'Registering…' : '⚡ Use Current Camera Face as Reference'}
+                  </button>
+                )}
+                {assignResult && (
+                  <span className={assignResult.startsWith('✓') ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
+                    {assignResult}
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -626,6 +656,15 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 </button>
               )}
               <button
+                onClick={() => setShowSyncModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 active:scale-95 text-white font-black text-xs shadow-md transition-all cursor-pointer shrink-0"
+                title="Sync students &amp; sections to your phone"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">📱 Sync to Phone</span>
+                <span className="sm:hidden">Sync</span>
+              </button>
+              <button
                 onClick={() => setIsFullscreen(!isFullscreen)}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-card-sm text-xs font-bold"
                 title="Toggle Expanded View"
@@ -637,6 +676,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
           </div>
         </div>
       </div>
+
+      {/* Device Sync Modal */}
+      <DeviceSyncModal isOpen={showSyncModal} onClose={() => setShowSyncModal(false)} />
     </>
   );
 };

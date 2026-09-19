@@ -18,6 +18,7 @@ export interface Student {
   registeredPhotos?: RegisteredPhotos;
   guardianName?: string;
   guardianPhone?: string;
+  faceDescriptors?: number[][];
 }
 
 export interface Section {
