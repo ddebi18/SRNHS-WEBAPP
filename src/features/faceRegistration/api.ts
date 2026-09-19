@@ -4,9 +4,21 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
 const LOCAL_STORAGE_KEY_SECTIONS = 'srnhs_face_registration_sections_v1';
 
+export function isValidUUID(id?: string | null): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id.trim());
+}
 
+export function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
 
-// IndexedDB & LocalStorage Hybrid Persistence for Biometric Face Photos
 const DB_NAME = 'srnhs_face_biometrics_db_v1';
 const DB_VERSION = 1;
 const STORE_NAME = 'face_photos';
@@ -126,11 +138,28 @@ export function getStoredStudents(): Student[] {
               !s.id?.startsWith('std-30')
           );
           if (realStudents.length > 0) {
-            // Restore/persist into canonical key
-            if (key !== LOCAL_STORAGE_KEY_STUDENTS) {
-              localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(realStudents));
+            let changed = false;
+            const cleaned = realStudents.map(s => {
+              let stuId = s.id;
+              if (!isValidUUID(stuId)) {
+                stuId = generateUUID();
+                changed = true;
+                if (s.id) {
+                  getPhotosFromDb(s.id).then(photos => {
+                    if (photos) savePhotosToDb(stuId, photos);
+                  });
+                }
+              }
+              return {
+                ...s,
+                id: stuId,
+              };
+            });
+
+            if (changed || key !== LOCAL_STORAGE_KEY_STUDENTS) {
+              try { localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(cleaned)); } catch {}
             }
-            return realStudents;
+            return cleaned;
           }
         }
       }
@@ -195,14 +224,28 @@ function dbRowToStudent(row: any, sections: Section[]): Student {
   const firstName = row.first_name || '';
   const lastName = row.last_name || '';
   const fullName = [firstName, lastName].filter(Boolean).join(' ') || 'Unknown Student';
+  
+  const photos = Array.isArray(row.photo_urls)
+    ? row.photo_urls
+    : (typeof row.photo_urls === 'string' && row.photo_urls ? [row.photo_urls] : []);
+  const frontPhoto = photos[0] || undefined;
+  const leftPhoto = photos[1] || undefined;
+  const rightPhoto = photos[2] || undefined;
+  const hasPhotos = photos.length > 0;
+
   return {
     id: row.id,
     name: fullName,
     studentNumber: row.lrn || '',
     sectionId: row.section_id || '',
     sectionName: sec?.name || '',
-    faceRegistrationStatus: row.photo_urls ? 'registered' : 'unregistered',
-    photoUrl: row.photo_urls || undefined,
+    faceRegistrationStatus: hasPhotos ? 'registered' : 'unregistered',
+    photoUrl: frontPhoto,
+    registeredPhotos: hasPhotos ? {
+      front: frontPhoto,
+      left: leftPhoto,
+      right: rightPhoto,
+    } : undefined,
     guardianName: undefined,
     guardianPhone: undefined,
     faceDescriptors: undefined,
@@ -230,67 +273,135 @@ function dbRowToSection(row: any): Section {
 export async function syncFromSupabase(): Promise<{ students: number; sections: number } | null> {
   if (!isSupabaseConfigured || !supabase) return null;
   try {
-    // 1. Fetch sections first (needed to resolve section names for students)
+    const localSections = getStoredSections();
+    const localStudents = getStoredStudents();
+
+    // 1. Fetch sections from Supabase
     const { data: sectionRows, error: secErr } = await supabase
       .from('sections')
       .select('id, name, grade_level, adviser_id')
       .order('grade_level');
 
-    if (secErr) throw secErr;
-
-    const dbSections: Section[] = (sectionRows || []).map(dbRowToSection);
-
-    if (dbSections.length > 0) {
-      // Merge with any locally-created sections not yet in Supabase
-      const localSections = getStoredSections();
-      const sectionMap = new Map<string, Section>();
-      localSections.forEach(s => sectionMap.set(s.id, s));
-      dbSections.forEach(s => {
-        const existing = sectionMap.get(s.id);
-        // Preserve local totalStudents/registeredStudents counts
-        sectionMap.set(s.id, { ...s, totalStudents: existing?.totalStudents ?? 0, registeredStudents: existing?.registeredStudents ?? 0 });
-      });
-      try {
-        localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(Array.from(sectionMap.values())));
-      } catch {}
+    if (secErr) {
+      console.warn('[Supabase] Sections fetch note:', secErr.message);
     }
 
-    const resolvedSections = getStoredSections();
+    const dbSections: Section[] = (sectionRows || []).map(dbRowToSection);
+    const sectionMap = new Map<string, Section>();
+    
+    // Seed with local sections
+    localSections.forEach(s => {
+      if (isValidUUID(s.id)) sectionMap.set(s.id, s);
+    });
+    // Overlay cloud sections
+    dbSections.forEach(s => {
+      const existing = sectionMap.get(s.id);
+      sectionMap.set(s.id, {
+        ...s,
+        totalStudents: existing?.totalStudents ?? 0,
+        registeredStudents: existing?.registeredStudents ?? 0,
+      });
+    });
 
-    // 2. Fetch students
+    const mergedSections = Array.from(sectionMap.values());
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(mergedSections));
+    } catch {}
+
+    // Cloud push: if local has sections not in Supabase, push them
+    const dbSectionIdSet = new Set(dbSections.map(s => s.id));
+    const missingInCloud = localSections.filter(s => isValidUUID(s.id) && !dbSectionIdSet.has(s.id));
+    if (missingInCloud.length > 0) {
+      const pushRows = missingInCloud.map(s => ({
+        id: s.id,
+        name: s.name,
+        grade_level: s.gradeLevel === 'Grade 12' ? 12
+          : s.gradeLevel === 'Grade 11' ? 11
+          : s.gradeLevel === 'Grade 10' ? 10
+          : 10,
+        adviser_id: (s.teacherId && isValidUUID(s.teacherId)) ? s.teacherId : null,
+      }));
+      supabase.from('sections').upsert(pushRows, { onConflict: 'id' }).then(({ error }) => {
+        if (error) console.warn('[Supabase] Error uploading local sections:', error.message);
+        else console.log(`[Supabase] ✓ Pushed ${pushRows.length} local section(s) to cloud`);
+      });
+    }
+
+    // 2. Fetch students from Supabase
     const { data: studentRows, error: stuErr } = await supabase
       .from('students')
       .select('id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at')
       .order('last_name');
 
-    if (stuErr) throw stuErr;
+    if (stuErr) {
+      console.warn('[Supabase] Students fetch note:', stuErr.message);
+    }
 
-    if ((studentRows || []).length > 0) {
-      const dbStudents: Student[] = (studentRows || []).map(r => dbRowToStudent(r, resolvedSections));
+    const dbStudents: Student[] = (studentRows || []).map(r => dbRowToStudent(r, mergedSections));
+    const studentMap = new Map<string, Student>();
 
-      // Merge: DB is authoritative for identity fields; preserve local biometric descriptors
-      const localStudents = getStoredStudents();
-      const studentMap = new Map<string, Student>();
-      localStudents.forEach(s => studentMap.set(s.id, s));
-      dbStudents.forEach(dbStu => {
-        const local = studentMap.get(dbStu.id);
-        studentMap.set(dbStu.id, {
-          ...dbStu,
-          // Preserve locally-captured biometric descriptors and photos
-          faceDescriptors: local?.faceDescriptors ?? dbStu.faceDescriptors,
-          photoUrl: dbStu.photoUrl || local?.photoUrl,
-          registeredPhotos: local?.registeredPhotos ?? dbStu.registeredPhotos,
-          faceRegistrationStatus: (local?.faceDescriptors?.length ?? 0) > 0
-            ? 'registered'
-            : dbStu.faceRegistrationStatus || local?.faceRegistrationStatus || 'unregistered',
-          guardianName: local?.guardianName,
-          guardianPhone: local?.guardianPhone,
-        });
+    // Seed with local students
+    localStudents.forEach(s => {
+      if (isValidUUID(s.id)) studentMap.set(s.id, s);
+    });
+
+    // Overlay cloud students
+    dbStudents.forEach(dbStu => {
+      const local = studentMap.get(dbStu.id);
+      studentMap.set(dbStu.id, {
+        ...dbStu,
+        faceDescriptors: local?.faceDescriptors ?? dbStu.faceDescriptors,
+        photoUrl: dbStu.photoUrl || local?.photoUrl,
+        registeredPhotos: local?.registeredPhotos ?? dbStu.registeredPhotos,
+        faceRegistrationStatus: (local?.faceDescriptors?.length ?? 0) > 0
+          ? 'registered'
+          : dbStu.faceRegistrationStatus || local?.faceRegistrationStatus || 'unregistered',
+        guardianName: local?.guardianName,
+        guardianPhone: local?.guardianPhone,
       });
+    });
 
-      try {
-        localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(Array.from(studentMap.values())));
-      } catch {}
+    const mergedStudents = Array.from(studentMap.values());
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(mergedStudents));
+    } catch {}
+
+    // Cloud push: if local has students not in Supabase, push them
+    const dbStudentIdSet = new Set(dbStudents.map(s => s.id));
+    const studentsToPush = localStudents.filter(s => isValidUUID(s.id) && !dbStudentIdSet.has(s.id));
+    for (const stu of studentsToPush) {
+      if (isValidUUID(stu.sectionId)) {
+        const nameParts = stu.name.trim().split(/\s+/);
+        const firstName = nameParts.slice(0, -1).join(' ') || nameParts[0] || 'Student';
+        const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
+        const sec = mergedSections.find(s => s.id === stu.sectionId);
+        const gradeLevelNum = sec?.gradeLevel === 'Grade 12' ? 12
+          : sec?.gradeLevel === 'Grade 11' ? 11
+          : sec?.gradeLevel === 'Grade 10' ? 10
+          : 10;
+        
+        const photoUrls: string[] = [];
+        if (stu.registeredPhotos?.front) photoUrls.push(stu.registeredPhotos.front);
+        else if (stu.photoUrl) photoUrls.push(stu.photoUrl);
+        if (stu.registeredPhotos?.left) photoUrls.push(stu.registeredPhotos.left);
+        if (stu.registeredPhotos?.right) photoUrls.push(stu.registeredPhotos.right);
+
+        supabase.from('students').upsert({
+          id: stu.id,
+          lrn: stu.studentNumber,
+          first_name: firstName,
+          last_name: lastName,
+          gender: 'Not Specified',
+          grade_level: gradeLevelNum,
+          section_id: stu.sectionId,
+          parent_consent: true,
+          consent_date: new Date().toISOString().split('T')[0],
+          photo_urls: photoUrls,
+        }, { onConflict: 'id' }).then(({ error }) => {
+          if (error) console.warn('[Supabase] Error uploading local student:', error.message);
+          else console.log(`[Supabase] ✓ Pushed local student ${stu.name} to cloud`);
+        });
+      }
     }
 
     // Notify all components to re-render with fresh data
@@ -298,8 +409,8 @@ export async function syncFromSupabase(): Promise<{ students: number; sections: 
     window.dispatchEvent(new CustomEvent('srnhs_storage_sync'));
 
     return {
-      students: (studentRows || []).length,
-      sections: (sectionRows || []).length,
+      students: mergedStudents.length,
+      sections: mergedSections.length,
     };
   } catch (err) {
     console.warn('[Supabase] Sync failed, using local data:', err);
@@ -344,11 +455,28 @@ export async function addNewStudent(studentData: {
   const cleanLrn = studentData.studentNumber.trim();
   const existingIndex = students.findIndex(s => s.studentNumber === cleanLrn);
 
+  // Ensure student ID is a valid UUID
+  const studentId = (studentData.id && isValidUUID(studentData.id))
+    ? studentData.id
+    : (existingIndex >= 0 && isValidUUID(students[existingIndex]!.id)
+      ? students[existingIndex]!.id
+      : generateUUID());
+
+  // Ensure section ID is a valid UUID
+  let finalSectionId = studentData.sectionId;
+  if (!isValidUUID(finalSectionId)) {
+    if (section && isValidUUID(section.id)) {
+      finalSectionId = section.id;
+    } else if (sections.length > 0 && sections[0] && isValidUUID(sections[0].id)) {
+      finalSectionId = sections[0].id;
+    }
+  }
+
   const student: Student = {
-    id: studentData.id || (existingIndex >= 0 ? students[existingIndex]!.id : `std-${Date.now()}`),
+    id: studentId,
     name: studentData.name.trim(),
     studentNumber: cleanLrn,
-    sectionId: studentData.sectionId,
+    sectionId: finalSectionId,
     sectionName: studentData.sectionName || section?.name || '',
     faceRegistrationStatus: existingIndex >= 0 ? students[existingIndex]!.faceRegistrationStatus : 'unregistered',
     lastRegisteredAt: existingIndex >= 0 ? students[existingIndex]!.lastRegisteredAt : undefined,
@@ -372,11 +500,26 @@ export async function addNewStudent(studentData: {
       const nameParts = student.name.trim().split(/\s+/);
       const firstName = nameParts.slice(0, -1).join(' ') || nameParts[0] || 'Student';
       const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
-      const section = sections.find(s => s.id === student.sectionId);
       const gradeLevelNum = section?.gradeLevel === 'Grade 12' ? 12
         : section?.gradeLevel === 'Grade 11' ? 11
         : section?.gradeLevel === 'Grade 10' ? 10
         : 10;
+
+      // Ensure section exists in Supabase first to satisfy foreign key
+      if (section && isValidUUID(section.id)) {
+        await supabase.from('sections').upsert({
+          id: section.id,
+          name: section.name,
+          grade_level: gradeLevelNum,
+          adviser_id: (section.teacherId && isValidUUID(section.teacherId)) ? section.teacherId : null,
+        }, { onConflict: 'id' });
+      }
+
+      const photoUrls: string[] = [];
+      if (student.registeredPhotos?.front) photoUrls.push(student.registeredPhotos.front);
+      else if (student.photoUrl) photoUrls.push(student.photoUrl);
+      if (student.registeredPhotos?.left) photoUrls.push(student.registeredPhotos.left);
+      if (student.registeredPhotos?.right) photoUrls.push(student.registeredPhotos.right);
 
       const { data: inserted, error: insertErr } = await supabase.from('students').upsert({
         id: student.id,
@@ -388,20 +531,39 @@ export async function addNewStudent(studentData: {
         section_id: student.sectionId,
         parent_consent: true,
         consent_date: new Date().toISOString().split('T')[0],
+        photo_urls: photoUrls,
       }, { onConflict: 'id' }).select().single();
 
       if (insertErr) {
         console.warn('Supabase student upsert warning:', insertErr.message);
+      } else {
+        console.log(`[Supabase] ✓ Student ${student.name} saved to database`);
       }
 
       if (inserted && (student.guardianName || student.guardianPhone)) {
-        await supabase.from('student_guardians').upsert({
-          student_id: inserted.id,
-          name: student.guardianName || 'Guardian',
-          relationship: 'Guardian',
-          phone_number: student.guardianPhone,
-          is_primary: true,
-        }, { onConflict: 'student_id' });
+        const { data: existingG } = await supabase
+          .from('student_guardians')
+          .select('id')
+          .eq('student_id', inserted.id)
+          .limit(1);
+
+        const firstG = existingG && existingG[0];
+        if (firstG) {
+          await supabase.from('student_guardians').update({
+            name: student.guardianName || 'Guardian',
+            relationship: 'Guardian',
+            phone_number: student.guardianPhone,
+            is_primary: true,
+          }).eq('id', firstG.id);
+        } else {
+          await supabase.from('student_guardians').insert({
+            student_id: inserted.id,
+            name: student.guardianName || 'Guardian',
+            relationship: 'Guardian',
+            phone_number: student.guardianPhone,
+            is_primary: true,
+          });
+        }
       }
     } catch (e) {
       console.warn('Supabase student save note (data saved locally):', e);
@@ -422,29 +584,67 @@ export function getStoredSections(): Section[] {
     if (raw) {
       const parsed: Section[] = JSON.parse(raw);
       if (Array.isArray(parsed)) {
+        let changed = false;
+        const idMap = new Map<string, string>();
+
         const cleaned = parsed
           .filter(s => !LEGACY_IDS.has(s.id))
-          .map(s => ({
-            ...s,
-            teacherName:
-              s.teacherName === 'Maria Santos' ||
-              s.teacherName === 'Juan Dela Cruz' ||
-              s.teacherName === 'Elena Reyes'
-                ? 'Unassigned'
-                : s.teacherName,
-            totalStudents: 0,
-            registeredStudents: 0,
-          }));
-        // Persist the cleaned list if any dummy entries were removed
-        if (cleaned.length !== parsed.length) {
+          .map(s => {
+            let sectionId = s.id;
+            if (!isValidUUID(sectionId)) {
+              sectionId = generateUUID();
+              idMap.set(s.id, sectionId);
+              changed = true;
+            }
+            return {
+              ...s,
+              id: sectionId,
+              teacherName:
+                s.teacherName === 'Maria Santos' ||
+                s.teacherName === 'Juan Dela Cruz' ||
+                s.teacherName === 'Elena Reyes'
+                  ? 'Unassigned'
+                  : s.teacherName,
+              totalStudents: 0,
+              registeredStudents: 0,
+            };
+          });
+
+        if (changed || cleaned.length !== parsed.length) {
           try { localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(cleaned)); } catch {}
         }
+
+        // If any section IDs were migrated, update student references in localStorage
+        if (idMap.size > 0) {
+          try {
+            const rawStu = localStorage.getItem(LOCAL_STORAGE_KEY_STUDENTS);
+            if (rawStu) {
+              const students: Student[] = JSON.parse(rawStu);
+              let stuChanged = false;
+              const updatedStudents = students.map(st => {
+                let updated = { ...st };
+                if (idMap.has(st.sectionId)) {
+                  updated.sectionId = idMap.get(st.sectionId)!;
+                  stuChanged = true;
+                }
+                if (!isValidUUID(updated.id)) {
+                  updated.id = generateUUID();
+                  stuChanged = true;
+                }
+                return updated;
+              });
+              if (stuChanged) {
+                localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(updatedStudents));
+              }
+            }
+          } catch {}
+        }
+
         return cleaned;
       }
     }
   } catch (e) {}
 
-  // No sections in storage — return empty so the user creates their own
   return [];
 }
 
@@ -456,21 +656,25 @@ export function saveStoredSections(sections: Section[]): void {
   }
   // Also upsert to Supabase so other devices see the new section immediately
   if (isSupabaseConfigured && supabase) {
-    const rows = sections.map(s => ({
-      id: s.id,
-      name: s.name,
-      grade_level: s.gradeLevel === 'Grade 12' ? 12
-        : s.gradeLevel === 'Grade 11' ? 11
-        : s.gradeLevel === 'Grade 10' ? 10
-        : 10,
-      adviser_id: s.teacherId || null,
-    }));
-    supabase
-      .from('sections')
-      .upsert(rows, { onConflict: 'id' })
-      .then(({ error }) => {
-        if (error) console.warn('Supabase sections upsert note:', error.message);
-      });
+    const validSections = sections.filter(s => isValidUUID(s.id));
+    if (validSections.length > 0) {
+      const rows = validSections.map(s => ({
+        id: s.id,
+        name: s.name,
+        grade_level: s.gradeLevel === 'Grade 12' ? 12
+          : s.gradeLevel === 'Grade 11' ? 11
+          : s.gradeLevel === 'Grade 10' ? 10
+          : 10,
+        adviser_id: (s.teacherId && isValidUUID(s.teacherId)) ? s.teacherId : null,
+      }));
+      supabase
+        .from('sections')
+        .upsert(rows, { onConflict: 'id' })
+        .then(({ error }) => {
+          if (error) console.warn('[Supabase] sections upsert note:', error.message);
+          else console.log(`[Supabase] ✓ Synced ${rows.length} section(s) to cloud`);
+        });
+    }
   }
 }
 
@@ -546,45 +750,26 @@ export async function submitFaceRegistration(
   // Save photos to IndexedDB for permanent browser persistence
   await savePhotosToDb(payload.studentId, photoMap);
 
-  // If Supabase is configured, attempt uploading frames to Storage and inserting metadata
+  // If Supabase is configured, update photo_urls on the student record
   if (isSupabaseConfigured && supabase) {
-    const client = supabase;
     try {
-      const uploadPromises = payload.frames.map(async frame => {
-        const timestamp = Date.now();
-        const filePath = `${payload.studentId}/${frame.angle}_${timestamp}.jpg`;
-        
-        // Upload image blob to Supabase Storage bucket 'face-registrations'
-        const { error: storageError } = await client.storage
-          .from('face-registrations')
-          .upload(filePath, frame.blob, {
-            contentType: 'image/jpeg',
-            upsert: true,
-          });
+      const photosToSave = [photoMap.front, photoMap.left, photoMap.right].filter(Boolean) as string[];
+      if (photosToSave.length > 0) {
+        const { error: photoErr } = await supabase
+          .from('students')
+          .update({
+            photo_urls: photosToSave,
+          })
+          .eq('id', payload.studentId);
 
-        if (storageError) {
-          console.warn(`Supabase Storage upload warning for ${frame.angle}:`, storageError.message);
+        if (photoErr) {
+          console.warn('[Supabase] Photo update note:', photoErr.message);
+        } else {
+          console.log(`[Supabase] ✓ Updated ${photosToSave.length} face photo(s) for student in cloud`);
         }
-
-        // Insert metadata record into 'face_registrations' table
-        const { error: dbError } = await client
-          .from('face_registrations')
-          .insert({
-            student_id: payload.studentId,
-            section_id: payload.sectionId,
-            angle: frame.angle,
-            storage_path: filePath,
-            consent_confirmed: true,
-          });
-
-        if (dbError) {
-          console.warn(`Supabase DB record warning for ${frame.angle}:`, dbError.message);
-        }
-      });
-
-      await Promise.allSettled(uploadPromises);
+      }
     } catch (supabaseErr) {
-      console.warn('Supabase synchronization note (will continue using local store):', supabaseErr);
+      console.warn('[Supabase] Synchronization note (will continue using local store):', supabaseErr);
     }
   }
 

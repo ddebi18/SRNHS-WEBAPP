@@ -20,6 +20,7 @@ import {
   getStoredSections,
   saveStoredSections,
   getStoredStudents,
+  generateUUID,
 } from '@/features/faceRegistration/api';
 import { Section as FRSection } from '@/features/faceRegistration/types';
 
@@ -175,7 +176,7 @@ export const AcademicsManager: React.FC = () => {
         );
       } else {
         const newSec: Section = {
-          id: `sec-${Date.now()}`,
+          id: generateUUID(),
           grade_level: grade,
           name: secName.trim(),
           adviser_id: null,
