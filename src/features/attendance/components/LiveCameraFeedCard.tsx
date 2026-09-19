@@ -69,8 +69,21 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   };
   const streamUrl = streamUrls[selectedCamera];
   const whepUrl = whepUrls[selectedCamera];
-  const useWebcam = import.meta.env.VITE_TURNSTILE_USE_WEBCAM === 'true';
-  const { stream: webcamStream, start: startWebcam, stop: stopWebcam } = useCamera();
+  const envUseWebcam = import.meta.env.VITE_TURNSTILE_USE_WEBCAM === 'true';
+  const [useWebcam, setUseWebcam] = useState<boolean>(() => {
+    const saved = localStorage.getItem('srnhs_turnstile_use_webcam');
+    return saved !== null ? saved === 'true' : envUseWebcam;
+  });
+
+  const toggleWebcam = () => {
+    setUseWebcam(prev => {
+      const next = !prev;
+      localStorage.setItem('srnhs_turnstile_use_webcam', String(next));
+      return next;
+    });
+  };
+
+  const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
   const { isFaceDetected, faceBox, detectorError } = useFaceDetection(videoRef, 'front', hasVideoSource && isVideoReady);
   const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, isLive, isAnalyzing } = useFaceRecognition(videoRef, hasVideoSource);
@@ -253,8 +266,23 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             </div>
           </div>
 
-          {/* Mode Switcher: Time-In vs Time-Out & Camera Selector */}
+          {/* Mode Switcher: Time-In vs Time-Out, Camera Selector & Webcam Toggle */}
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleWebcam}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-card-sm',
+                useWebcam
+                  ? 'bg-emerald-500 text-white border-emerald-500 shadow-emerald-500/20'
+                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+              )}
+              title={useWebcam ? 'Click to switch to IP/RTSP Stream mode' : 'Click to use your laptop or mobile camera'}
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>{useWebcam ? 'Webcam Active' : 'Use Webcam'}</span>
+            </button>
+
             <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 rounded-xl p-1 border border-slate-200 dark:border-slate-700">
               <button
                 type="button"
@@ -378,7 +406,13 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
 
             {((useWebcam && webcamStream) || (!useWebcam && (streamUrl || whepUrl))) && (
               <video
-                ref={videoRef}
+                ref={(el) => {
+                  (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+                  if (el && useWebcam && webcamStream && el.srcObject !== webcamStream) {
+                    el.srcObject = webcamStream;
+                    el.play().catch(() => {});
+                  }
+                }}
                 {...(!useWebcam && streamUrl ? { src: streamUrl } : {})}
                 autoPlay
                 muted
@@ -468,7 +502,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
 
             {/* Center Standby Viewfinder Placeholder */}
             {!hasVideoSource && (
-              <div className="relative z-10 my-auto text-center space-y-2 sm:space-y-3 py-4 sm:py-6">
+              <div className="relative z-10 my-auto text-center space-y-2 sm:space-y-3 py-4 sm:py-6 px-4">
                 <motion.div
                   animate={{ scale: [1, 1.05, 1] }}
                   transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
@@ -482,13 +516,33 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     Camera Stream Ingestion Standby
                   </div>
                   <p className="text-[11px] sm:text-xs text-slate-400 font-medium leading-relaxed">
-                    Connect RTSP / WebRTC / IP Camera endpoint to start live turnstile stream and bounding-box overlay.
+                    Connect an RTSP/WebRTC turnstile camera endpoint, or turn on your device webcam for testing.
                   </p>
                 </div>
 
+                <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUseWebcam(true);
+                      localStorage.setItem('srnhs_turnstile_use_webcam', 'true');
+                    }}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-bold text-xs shadow-lg shadow-emerald-500/25 transition-all cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>Turn On Device Camera / Webcam</span>
+                  </button>
+                </div>
+
+                {cameraErrorMessage && useWebcam && (
+                  <div className="text-xs text-rose-400 bg-rose-950/60 border border-rose-800/60 rounded-xl p-2.5 max-w-sm mx-auto">
+                    {cameraErrorMessage}
+                  </div>
+                )}
+
                 <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-900/80 border border-slate-800 text-[10px] sm:text-[11px] font-mono text-slate-400 max-w-full truncate">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
-                  <span className="truncate">rtsp://camera01.srnhs.local:554/live/ch0</span>
+                  <span className="truncate">RTSP: {streamUrl || whepUrl || 'rtsp://camera01.srnhs.local:554/live/ch0'}</span>
                 </div>
               </div>
             )}
