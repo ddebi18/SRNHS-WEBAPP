@@ -412,7 +412,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     <>
                       <CheckCircle2 className="w-4 h-4 shrink-0" />
                       <span>
-                        ✓ {lastScanNotice.type === 'entry' ? 'Time-In Logged' : 'Time-Out Logged'}: {lastScanNotice.studentName} at {lastScanNotice.time}
+                        {lastScanNotice.type === 'entry' ? 'Time-In Logged' : 'Time-Out Logged'}: {lastScanNotice.studentName} at {lastScanNotice.time}
                       </span>
                     </>
                   )}
@@ -496,12 +496,12 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     {isSpoofWarning ? (
                       <>
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
-                        ⚠ Verifying Liveness…
+                        Verifying Liveness…
                       </>
                     ) : isRecognized ? (
                       dailyCompletedMap.has(`${matchedStudent!.id}_${scanMode}`)
-                        ? `✓ ${matchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
-                        : `✓ ${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}% Match`
+                        ? `${matchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
+                        : `${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}% Match`
                     ) : isDetecting ? (
                       <>
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
@@ -573,7 +573,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 <ShieldCheck className={cn('w-3 h-3 shrink-0', recognitionError ? 'text-rose-400' : isLive ? 'text-emerald-400' : 'text-amber-400')} />
                 <span className="truncate">
                   {recognitionError
-                    ? `⚠ ${recognitionError}`
+                    ? recognitionError
                     : detectorError
                     ? `Error: ${detectorError}`
                     : getRecognitionStatusText({
@@ -600,7 +600,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             {/* Recognition Error Banner */}
             {recognitionError && (
               <div className="relative z-10 mt-1 px-2.5 py-1.5 rounded-lg bg-rose-950/80 backdrop-blur-md border border-rose-800/60 text-rose-300 text-[10px] sm:text-[11px] font-bold flex flex-col gap-1.5">
-                <span>⚠ Recognition: {recognitionError}</span>
+                <span>Recognition error: {recognitionError}</span>
                 {isAnyFaceDetected && (
                   <button
                     type="button"
@@ -610,19 +610,19 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                       const ok = await assignCameraFaceToStudent();
                       setIsAssigningFace(false);
                       setAssignResult(ok
-                        ? '✓ Face registered from live camera! Recognition is now active.'
-                        : '⚠ Could not extract face. Please make sure your face is fully visible.');
+                        ? 'Face registered from live camera. Recognition is now active.'
+                        : 'Could not extract face. Please make sure your face is fully visible.');
                       if (ok) setTimeout(() => setAssignResult(null), 5000);
                     }}
                     disabled={isAssigningFace}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-[10px] sm:text-[11px] transition-all cursor-pointer self-start shadow-md"
                   >
                     <Zap className="w-3 h-3" />
-                    {isAssigningFace ? 'Registering…' : '⚡ Use Current Camera Face as Reference'}
+                    {isAssigningFace ? 'Registering…' : 'Use Current Camera Face as Reference'}
                   </button>
                 )}
                 {assignResult && (
-                  <span className={assignResult.startsWith('✓') ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
+                  <span className={assignResult.startsWith('Face registered') ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
                     {assignResult}
                   </span>
                 )}
@@ -649,7 +649,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 active:scale-95 text-white font-black text-xs shadow-md transition-all cursor-pointer shrink-0"
                 >
                   <Zap className="w-3.5 h-3.5" />
-                  <span>{isInstantScanning ? 'Scanning Snapshot…' : '⚡ Instant Scan (<1s)'}</span>
+                  <span>{isInstantScanning ? 'Scanning Snapshot…' : 'Instant Scan (<1s)'}</span>
                 </button>
               )}
               <button

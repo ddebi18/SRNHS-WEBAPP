@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { useAuth, LoginPortal } from '@/context/AuthContext';
 import { SITE_CONFIG } from '@/config/siteConfig';
 import { checkLoginRateLimit, recordFailedLoginAttempt, resetLoginRateLimit, sanitizeInput } from '@/lib/validation';
-import { LogIn, Camera, Lock, Mail, ShieldAlert, Eye, EyeOff, Clock, ArrowRight, ShieldCheck, School } from 'lucide-react';
+import { LogIn, Camera, Lock, Mail, ShieldAlert, Eye, EyeOff, Clock, ArrowRight, ShieldCheck, School, Target, Scan, MessageSquare, ShieldCheck as ShieldPrivacy } from 'lucide-react';
 
 interface PortalLoginFormProps {
   portal: LoginPortal;
@@ -143,9 +143,14 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
           </div>
 
           <div className="flex flex-wrap gap-2 pt-2">
-            {['🎯 Real-time Turnstile Scans', '📸 128D Face Biometrics', '📱 Automated Parent SMS', '🔒 R.A. 10173 Compliant'].map(f => (
-              <span key={f} className="px-3 py-1.5 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 shadow-card-sm">
-                {f}
+            {[
+              { icon: <Target className="w-3 h-3" />, label: 'Real-time Turnstile Scans' },
+              { icon: <Scan className="w-3 h-3" />, label: '128D Face Biometrics' },
+              { icon: <MessageSquare className="w-3 h-3" />, label: 'Automated Parent SMS' },
+              { icon: <ShieldPrivacy className="w-3 h-3" />, label: 'R.A. 10173 Compliant' },
+            ].map(f => (
+              <span key={f.label} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 shadow-card-sm">
+                {f.icon}{f.label}
               </span>
             ))}
           </div>

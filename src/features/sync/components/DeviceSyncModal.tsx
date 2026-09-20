@@ -56,9 +56,9 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({ isOpen, onClos
       const text = evt.target?.result as string;
       const res = importSyncPayload(text);
       if (res.success) {
-        setImportNotice(`✓ Successfully imported ${res.studentCount} student(s) and ${res.sectionCount} section(s)!`);
+        setImportNotice(`Successfully imported ${res.studentCount} student(s) and ${res.sectionCount} section(s).`);
       } else {
-        setImportNotice(`⚠ Import failed: ${res.error || 'Invalid file format'}`);
+        setImportNotice(`Import failed: ${res.error || 'Invalid file format'}`);
       }
     };
     reader.readAsText(file);
@@ -129,7 +129,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({ isOpen, onClos
               className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
             >
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span>{copied ? '✓ Sync Link Copied to Clipboard!' : 'Copy Direct Phone Sync Link'}</span>
+              <span>{copied ? 'Sync Link Copied to Clipboard!' : 'Copy Direct Phone Sync Link'}</span>
             </button>
 
             <div className="grid grid-cols-2 gap-2 pt-1">

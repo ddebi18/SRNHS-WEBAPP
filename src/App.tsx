@@ -15,7 +15,7 @@ export const App: React.FC = () => {
     // 1. Check if opened via QR/sync URL (phone redirect)
     const urlRes = checkAndApplyUrlSync();
     if (urlRes.synced) {
-      setSyncToast(`✓ Synced ${urlRes.studentCount ?? 1} student(s) and sections to this device!`);
+      setSyncToast(`Synced ${urlRes.studentCount ?? 1} student(s) and sections to this device.`);
       const timer = setTimeout(() => setSyncToast(null), 5000);
       return () => clearTimeout(timer);
     }
