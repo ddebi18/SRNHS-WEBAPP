@@ -9,6 +9,7 @@ import {
   computeMatchConfidence,
   scoreFaceNetMatch,
   findDuplicateStudentId,
+  isSameEnrolledPerson,
   type LabeledDescriptors,
 } from '../lib/faceNetMatcher';
 import {
@@ -22,8 +23,10 @@ import {
 export type { RecognitionStatusInput } from '../lib/recognitionStatus';
 export { computeCosineSimilarity, computeCosineDistance } from '../lib/faceNetMatcher';
 
-const DETECTING_GRACE_FRAMES = 3;
-const SCAN_INTERVAL_MS = 240;
+const DETECTING_GRACE_FRAMES = 6;
+const SCAN_INTERVAL_MS = 200;
+const FACE_LEFT_MISS_FRAMES = 10;
+const ACCURATE_SCAN_EVERY = 8;
 
 const EAR_BLINK_THRESHOLD = 0.21;
 const EAR_DYNAMIC_DELTA = 0.035;
@@ -114,6 +117,8 @@ export function useFaceRecognition(
   const unmatchedCountRef = useRef(0);
   const consecutiveMissRef = useRef(0);
   const presenceCountRef = useRef(0);
+  const scanTickRef = useRef(0);
+  const lastBoxRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
   const landmarkHistoryRef = useRef<number[][]>([]);
   const earHistoryRef = useRef<number[]>([]);
@@ -267,6 +272,8 @@ export function useFaceRecognition(
       unmatchedCountRef.current = 0;
       consecutiveMissRef.current = 0;
       lastConfirmedMatchRef.current = null;
+      scanTickRef.current = 0;
+      lastBoxRef.current = null;
     };
 
     if (!active || !videoRef.current) {
@@ -354,14 +361,19 @@ export function useFaceRecognition(
 
           processingRef.current = true;
           try {
-            const detection = await detectLiveFace(video);
+            scanTickRef.current += 1;
+            const useAccurate = scanTickRef.current % ACCURATE_SCAN_EVERY === 0;
+            const detection = useAccurate
+              ? (await detectAccurateFace(video)) || (await detectLiveFace(video))
+              : await detectLiveFace(video);
 
             if (!detection) {
               consecutiveMissRef.current += 1;
-              if (consecutiveMissRef.current > 3) {
+              if (consecutiveMissRef.current > FACE_LEFT_MISS_FRAMES) {
                 stabilityRef.current = { studentId: '', count: 0 };
                 presenceCountRef.current = 0;
                 lastConfirmedMatchRef.current = null;
+                lastBoxRef.current = null;
                 setMatchedStudent(null);
                 setLandmarks(null);
                 setRecognitionBox(null);
@@ -375,6 +387,17 @@ export function useFaceRecognition(
             consecutiveMissRef.current = 0;
             presenceCountRef.current += 1;
             applyDetectionOverlay(detection, video);
+
+            const box = detection.detection?.box;
+            const prevBox = lastBoxRef.current;
+            const sameTrack = Boolean(
+              box &&
+              prevBox &&
+              Math.hypot((box.x + box.width / 2) - (prevBox.x + prevBox.width / 2), (box.y + box.height / 2) - (prevBox.y + prevBox.height / 2)) < Math.max(box.width, prevBox.width) * 1.15
+            );
+            if (box) {
+              lastBoxRef.current = { x: box.x, y: box.y, width: box.width, height: box.height };
+            }
 
             const pts = detection.landmarks.positions;
             const leftEAR = computeEAR(pts[36]!, pts[37]!, pts[38]!, pts[39]!, pts[40]!, pts[41]!);
@@ -423,6 +446,15 @@ export function useFaceRecognition(
             }
 
             const matchObj = resolveMatch(detection.descriptor);
+            const locked = lastConfirmedMatchRef.current;
+            const lockedGallery = locked
+              ? galleryRef.current.find(entry => entry.label === locked.student.id)
+              : undefined;
+            const stillLockedPerson = Boolean(
+              locked &&
+              lockedGallery &&
+              isSameEnrolledPerson(detection.descriptor, lockedGallery.descriptors)
+            );
 
             if (matchObj) {
               stabilityRef.current = {
@@ -430,7 +462,7 @@ export function useFaceRecognition(
                 count: (stabilityRef.current.studentId === matchObj.id ? stabilityRef.current.count + 1 : 1),
               };
 
-              if (stabilityRef.current.count >= STABILITY_FRAMES_REQUIRED) {
+              if (stabilityRef.current.count >= STABILITY_FRAMES_REQUIRED || stillLockedPerson) {
                 unmatchedCountRef.current = 0;
                 setIsAnalyzing(false);
                 lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
@@ -440,22 +472,23 @@ export function useFaceRecognition(
               } else {
                 setIsAnalyzing(true);
               }
+            } else if (locked && (stillLockedPerson || sameTrack)) {
+              unmatchedCountRef.current = 0;
+              setMatchedStudent(locked.student);
+              setIsAnalyzing(false);
+              setIsLive(true);
+              isLiveRef.current = true;
             } else {
               stabilityRef.current = { studentId: '', count: 0 };
               unmatchedCountRef.current += 1;
 
-              const recentMatch = lastConfirmedMatchRef.current;
-              if (recentMatch && (Date.now() - recentMatch.timestamp < 400) && unmatchedCountRef.current <= 2) {
-                setMatchedStudent(recentMatch.student);
-                setIsAnalyzing(false);
+              if (locked && unmatchedCountRef.current <= DETECTING_GRACE_FRAMES) {
+                setMatchedStudent(locked.student);
+                setIsAnalyzing(true);
               } else {
                 lastConfirmedMatchRef.current = null;
                 setMatchedStudent(null);
-                if (unmatchedCountRef.current <= DETECTING_GRACE_FRAMES) {
-                  setIsAnalyzing(true);
-                } else {
-                  setIsAnalyzing(false);
-                }
+                setIsAnalyzing(true);
               }
             }
           } finally {
@@ -490,6 +523,8 @@ export function useFaceRecognition(
       unmatchedCountRef.current = 0;
       consecutiveMissRef.current = 0;
       lastConfirmedMatchRef.current = null;
+      scanTickRef.current = 0;
+      lastBoxRef.current = null;
     };
   }, [active, applyDetectionOverlay, resolveMatch, videoRef]);
 

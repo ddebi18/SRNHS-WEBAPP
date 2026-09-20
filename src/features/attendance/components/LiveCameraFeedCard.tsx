@@ -92,15 +92,17 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const activeBox = faceBox || recognitionBox;
   const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
 
-  // Auto-scan snapshot trigger: When face is stable in frame for 1.0s, trigger snapshot match automatically
+  // Keep scanning whenever a face is in the camera, including after Time-In.
   useEffect(() => {
-    if (!isAnyFaceDetected || !isRecognitionReady || matchedStudent || !hasVideoSource) return;
+    if (!isAnyFaceDetected || !isRecognitionReady || !hasVideoSource) return;
 
-    const timer = setTimeout(() => {
+    const runScan = () => {
       triggerInstantScan().catch(() => {});
-    }, 1000);
+    };
 
-    return () => clearTimeout(timer);
+    runScan();
+    const timer = setInterval(runScan, matchedStudent ? 2200 : 900);
+    return () => clearInterval(timer);
   }, [isAnyFaceDetected, isRecognitionReady, matchedStudent, hasVideoSource, triggerInstantScan]);
 
   useEffect(() => {
@@ -504,10 +506,10 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     ) : isDetecting ? (
                       <>
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
-                        Scanning Face (&lt;3s)…
+                        Scanning Face…
                       </>
                     ) : (
-                      'Unregistered Face'
+                      'Unknown Face'
                     )}
                   </span>
                 </div>
