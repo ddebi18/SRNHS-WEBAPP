@@ -4,18 +4,19 @@ import {
   Camera,
   Maximize2,
   Video,
-  Settings,
   ShieldCheck,
   Radio,
   Eye,
   CheckCircle2,
   Info,
+  Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcStream';
 import { useFaceDetection } from '@/features/faceRegistration/hooks/useFaceDetection';
 import { useFaceRecognition } from '../hooks/useFaceRecognition';
 import { getRecognitionStatusText } from '../lib/recognitionStatus';
+import { MIN_ATTENDANCE_LOG_CONFIDENCE } from '../lib/faceNetMatcher';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
 import type { EventType } from '@/types/domain.types';
@@ -69,11 +70,38 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   };
   const streamUrl = streamUrls[selectedCamera];
   const whepUrl = whepUrls[selectedCamera];
-  const useWebcam = import.meta.env.VITE_TURNSTILE_USE_WEBCAM === 'true';
-  const { stream: webcamStream, start: startWebcam, stop: stopWebcam } = useCamera();
+  const envUseWebcam = import.meta.env.VITE_TURNSTILE_USE_WEBCAM === 'true';
+  const [useWebcam, setUseWebcam] = useState<boolean>(() => {
+    const saved = localStorage.getItem('srnhs_turnstile_use_webcam');
+    return saved !== null ? saved === 'true' : envUseWebcam;
+  });
+
+  const toggleWebcam = () => {
+    setUseWebcam(prev => {
+      const next = !prev;
+      localStorage.setItem('srnhs_turnstile_use_webcam', String(next));
+      return next;
+    });
+  };
+
+  const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
   const { isFaceDetected, faceBox, detectorError } = useFaceDetection(videoRef, 'front', hasVideoSource && isVideoReady);
-  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, isLive, isAnalyzing } = useFaceRecognition(videoRef, hasVideoSource);
+  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo } = useFaceRecognition(videoRef, hasVideoSource);
+  const [isInstantScanning, setIsInstantScanning] = useState(false);
+  const activeBox = faceBox || recognitionBox;
+  const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
+
+  // Auto-scan snapshot trigger: When face is stable in frame for 1.0s, trigger snapshot match automatically
+  useEffect(() => {
+    if (!isAnyFaceDetected || !isRecognitionReady || matchedStudent || !hasVideoSource) return;
+
+    const timer = setTimeout(() => {
+      triggerInstantScan().catch(() => {});
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [isAnyFaceDetected, isRecognitionReady, matchedStudent, hasVideoSource, triggerInstantScan]);
 
   useEffect(() => {
     if (!useWebcam) {
@@ -130,7 +158,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   }, []);
 
   useEffect(() => {
-    if (!matchedStudent || matchedStudent.confidence < 0.48 || !isLive) return;
+    if (!isLive || !matchedStudent || matchedStudent.confidence < MIN_ATTENDANCE_LOG_CONFIDENCE) return;
 
     const logKey = `${matchedStudent.id}_${scanMode}`;
     const alreadyLoggedTime = dailyCompletedMap.get(logKey);
@@ -253,8 +281,23 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             </div>
           </div>
 
-          {/* Mode Switcher: Time-In vs Time-Out & Camera Selector */}
+          {/* Mode Switcher: Time-In vs Time-Out, Camera Selector & Webcam Toggle */}
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleWebcam}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-card-sm',
+                useWebcam
+                  ? 'bg-emerald-500 text-white border-emerald-500 shadow-emerald-500/20'
+                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
+              )}
+              title={useWebcam ? 'Click to switch to IP/RTSP Stream mode' : 'Click to use your laptop or mobile camera'}
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>{useWebcam ? 'Webcam Active' : 'Use Webcam'}</span>
+            </button>
+
             <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 rounded-xl p-1 border border-slate-200 dark:border-slate-700">
               <button
                 type="button"
@@ -368,7 +411,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     <>
                       <CheckCircle2 className="w-4 h-4 shrink-0" />
                       <span>
-                        ✓ {lastScanNotice.type === 'entry' ? 'Time-In Logged' : 'Time-Out Logged'}: {lastScanNotice.studentName} at {lastScanNotice.time}
+                        {lastScanNotice.type === 'entry' ? 'Time-In Logged' : 'Time-Out Logged'}: {lastScanNotice.studentName} at {lastScanNotice.time}
                       </span>
                     </>
                   )}
@@ -378,7 +421,13 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
 
             {((useWebcam && webcamStream) || (!useWebcam && (streamUrl || whepUrl))) && (
               <video
-                ref={videoRef}
+                ref={(el) => {
+                  (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+                  if (el && useWebcam && webcamStream && el.srcObject !== webcamStream) {
+                    el.srcObject = webcamStream;
+                    el.play().catch(() => {});
+                  }
+                }}
                 {...(!useWebcam && streamUrl ? { src: streamUrl } : {})}
                 autoPlay
                 muted
@@ -402,11 +451,10 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               />
             )}
 
-            {faceBox && (() => {
-              const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.70);
+            {activeBox && (() => {
+              const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.65);
               const isRecognized = Boolean(matchedStudent);
-              const isDetecting = !isRecognized && (isAnalyzing || !isRecognitionReady);
-              // Spoof: face is recognized but liveness check failed (photo/screen attack)
+              const isDetecting = !isRecognized && (isAnalyzing || isInstantScanning || !isRecognitionReady);
               const isSpoofWarning = isRecognized && !isLive;
 
               return (
@@ -424,10 +472,10 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                       : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)]'
                   )}
                   style={{
-                    left: `${(faceBox.x / faceBox.videoWidth) * 100}%`,
-                    top: `${(faceBox.y / faceBox.videoHeight) * 100}%`,
-                    width: `${(faceBox.width / faceBox.videoWidth) * 100}%`,
-                    height: `${(faceBox.height / faceBox.videoHeight) * 100}%`,
+                    left: `${(activeBox.x / activeBox.videoWidth) * 100}%`,
+                    top: `${(activeBox.y / activeBox.videoHeight) * 100}%`,
+                    width: `${(activeBox.width / activeBox.videoWidth) * 100}%`,
+                    height: `${(activeBox.height / activeBox.videoHeight) * 100}%`,
                   }}
                 >
                   <span
@@ -447,16 +495,16 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     {isSpoofWarning ? (
                       <>
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
-                        ⚠ Verifying Liveness…
+                        Verifying Liveness…
                       </>
                     ) : isRecognized ? (
                       dailyCompletedMap.has(`${matchedStudent!.id}_${scanMode}`)
-                        ? `✓ ${matchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
-                        : `✓ ${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}%`
+                        ? `${matchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
+                        : `${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}% Match`
                     ) : isDetecting ? (
                       <>
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
-                        Detecting Face…
+                        Scanning Face (&lt;3s)…
                       </>
                     ) : (
                       'Unregistered Face'
@@ -468,7 +516,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
 
             {/* Center Standby Viewfinder Placeholder */}
             {!hasVideoSource && (
-              <div className="relative z-10 my-auto text-center space-y-2 sm:space-y-3 py-4 sm:py-6">
+              <div className="relative z-10 my-auto text-center space-y-2 sm:space-y-3 py-4 sm:py-6 px-4">
                 <motion.div
                   animate={{ scale: [1, 1.05, 1] }}
                   transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
@@ -482,13 +530,33 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     Camera Stream Ingestion Standby
                   </div>
                   <p className="text-[11px] sm:text-xs text-slate-400 font-medium leading-relaxed">
-                    Connect RTSP / WebRTC / IP Camera endpoint to start live turnstile stream and bounding-box overlay.
+                    Connect an RTSP/WebRTC turnstile camera endpoint, or turn on your device webcam for testing.
                   </p>
                 </div>
 
+                <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUseWebcam(true);
+                      localStorage.setItem('srnhs_turnstile_use_webcam', 'true');
+                    }}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-bold text-xs shadow-lg shadow-emerald-500/25 transition-all cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>Turn On Device Camera / Webcam</span>
+                  </button>
+                </div>
+
+                {cameraErrorMessage && useWebcam && (
+                  <div className="text-xs text-rose-400 bg-rose-950/60 border border-rose-800/60 rounded-xl p-2.5 max-w-sm mx-auto">
+                    {cameraErrorMessage}
+                  </div>
+                )}
+
                 <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-900/80 border border-slate-800 text-[10px] sm:text-[11px] font-mono text-slate-400 max-w-full truncate">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
-                  <span className="truncate">rtsp://camera01.srnhs.local:554/live/ch0</span>
+                  <span className="truncate">RTSP: {streamUrl || whepUrl || 'rtsp://camera01.srnhs.local:554/live/ch0'}</span>
                 </div>
               </div>
             )}
@@ -501,19 +569,21 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 <span>LATENCY: <strong className="text-emerald-400">&lt;50ms</strong></span>
               </div>
               <div className="flex items-center gap-1.5 text-slate-300 max-w-full truncate">
-                <ShieldCheck className={cn('w-3 h-3 shrink-0', isLive ? 'text-emerald-400' : 'text-amber-400')} />
+                <ShieldCheck className={cn('w-3 h-3 shrink-0', recognitionError ? 'text-rose-400' : isLive ? 'text-emerald-400' : 'text-amber-400')} />
                 <span className="truncate">
-                  {detectorError
+                  {recognitionError
+                    ? recognitionError
+                    : detectorError
                     ? `Error: ${detectorError}`
                     : getRecognitionStatusText({
                     matchedStudent,
                     isLoading: isRecognitionLoading,
                     isReady: isRecognitionReady,
-                    isFaceDetected,
+                    isFaceDetected: isAnyFaceDetected,
                     isAnalyzing,
                   })}
                 </span>
-                {isFaceDetected && (
+                {isAnyFaceDetected && (
                   <span className={cn(
                     'ml-1 px-1 py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase shrink-0',
                     isLive
@@ -525,24 +595,40 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 )}
               </div>
             </div>
+
+            {/* Recognition Error Banner */}
+            {recognitionError && (
+              <div className="relative z-10 mt-1 px-2.5 py-1.5 rounded-lg bg-rose-950/80 backdrop-blur-md border border-rose-800/60 text-rose-300 text-[10px] sm:text-[11px] font-bold flex flex-col gap-1.5">
+                <span>Recognition error: {recognitionError}</span>
+                <span className="text-amber-200 font-semibold">
+                  Register the correct student from Face Registration. Live camera faces are never auto-assigned to another person.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* ── Stream Status & Action Bar ───────────────────────────────── */}
           <div className="mt-3 sm:mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs">
             <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-medium text-[11px] sm:text-xs">
               <Eye className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span>Face detection bounding boxes and LRN matches render on stream live.</span>
+              <span className="truncate">{diagnosticInfo || 'Face recognition runs in <3s. Click Instant Scan for immediate snapshot match.'}</span>
             </div>
 
             <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-              <button
-                disabled
-                title="Stream configuration"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 text-xs font-bold opacity-60 cursor-not-allowed"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Configure</span>
-              </button>
+              {hasVideoSource && (
+                <button
+                  onClick={async () => {
+                    setIsInstantScanning(true);
+                    await triggerInstantScan();
+                    setIsInstantScanning(false);
+                  }}
+                  disabled={isInstantScanning}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 active:scale-95 text-white font-black text-xs shadow-md transition-all cursor-pointer shrink-0"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{isInstantScanning ? 'Scanning Snapshot…' : 'Instant Scan (<1s)'}</span>
+                </button>
+              )}
               <button
                 onClick={() => setIsFullscreen(!isFullscreen)}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-card-sm text-xs font-bold"

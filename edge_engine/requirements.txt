@@ -1,0 +1,16 @@
+# ==============================================================================
+# SRNHS Turnstile Biometric Edge Engine — Python 3.11 Dependencies
+# Conforms to Capstone Paper Chapter 3: Development & Hardware Requirements
+# ==============================================================================
+
+# Core Computer Vision (ver. 4.8+)
+opencv-python>=4.8.0.76
+
+# Numerical & Vector Processing for 128-Dimensional Embeddings
+numpy>=1.24.0
+
+# HTTP Networking for Supabase PostgREST & Realtime Broadcasts
+requests>=2.31.0
+
+# Environment Variable Configuration
+python-dotenv>=1.0.0

@@ -1,322 +1,25 @@
 import { Student, Section, FaceRegistrationPayload, FaceRegistrationResult } from './types';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { FACE_DESCRIPTOR_VERSION } from '@/features/attendance/lib/faceNetMatcher';
 
 const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
 const LOCAL_STORAGE_KEY_SECTIONS = 'srnhs_face_registration_sections_v1';
 
-const INITIAL_SECTIONS: Section[] = [
-  { id: 'sec-101', name: 'Grade 10 – Sampaguita', gradeLevel: 'Grade 10', teacherId: 'tch-1', teacherName: 'Maria Santos', totalStudents: 8, registeredStudents: 5 },
-  { id: 'sec-102', name: 'Grade 11 – STEM A',     gradeLevel: 'Grade 11', teacherId: 'tch-2', teacherName: 'Juan Dela Cruz', totalStudents: 6, registeredStudents: 4 },
-  { id: 'sec-103', name: 'Grade 12 – ABM A',      gradeLevel: 'Grade 12', teacherId: 'tch-3', teacherName: 'Elena Reyes',    totalStudents: 5, registeredStudents: 2 },
-];
+export function isValidUUID(id?: string | null): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id.trim());
+}
 
-const INITIAL_STUDENTS: Student[] = [
-  // Grade 10 - Sampaguita
-  {
-    id: 'std-101',
-    name: 'Juan Carlos Garcia',
-    studentNumber: '109823456701',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-20T08:30:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Carlos Garcia',
-    guardianPhone: '+639171234567',
-  },
-  {
-    id: 'std-102',
-    name: 'Sophia Nicole Reyes',
-    studentNumber: '109823456702',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-21T09:15:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Nicole Reyes',
-    guardianPhone: '+639189876543',
-  },
-  {
-    id: 'std-103',
-    name: 'Angelo Gabriel Mendoza',
-    studentNumber: '109823456703',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'unregistered',
-    lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=350&auto=format&fit=crop&q=80',
-    guardianName: 'Gabriel Mendoza',
-    guardianPhone: '+639194443322',
-  },
-  {
-    id: 'std-104',
-    name: 'Samantha Claire Santos',
-    studentNumber: '109823456704',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-22T10:45:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Claire Santos',
-    guardianPhone: '+639178889900',
-  },
-  {
-    id: 'std-105',
-    name: 'Mark Anthony Ramos',
-    studentNumber: '109823456705',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'needs_review',
-    lastRegisteredAt: '2026-08-15T14:20:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Anthony Ramos',
-    guardianPhone: '+639195551212',
-  },
-  {
-    id: 'std-106',
-    name: 'Patricia Marie Cruz',
-    studentNumber: '109823456706',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'unregistered',
-    lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=350&auto=format&fit=crop&q=80',
-    guardianName: 'Marie Cruz',
-    guardianPhone: '+639173332211',
-  },
-  {
-    id: 'std-107',
-    name: 'Gabriel Luis Bautista',
-    studentNumber: '109823456707',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-23T11:00:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Luis Bautista',
-    guardianPhone: '+639187776655',
-  },
-  {
-    id: 'std-108',
-    name: 'Andrea Beatrice Lopez',
-    studentNumber: '109823456708',
-    sectionId: 'sec-101',
-    sectionName: 'Grade 10 – Sampaguita',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-24T08:10:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Beatrice Lopez',
-    guardianPhone: '+639192221100',
-  },
+export function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
 
-  // Grade 11 - STEM A
-  {
-    id: 'std-201',
-    name: 'Christian Dave Aquino',
-    studentNumber: '109823456709',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-19T09:00:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Dave Aquino',
-    guardianPhone: '+639170001122',
-  },
-  {
-    id: 'std-202',
-    name: 'Alyssa Joy Hernandez',
-    studentNumber: '109823456710',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'unregistered',
-    lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=350&auto=format&fit=crop&q=80',
-    guardianName: 'Joy Hernandez',
-    guardianPhone: '+639181112233',
-  },
-  {
-    id: 'std-203',
-    name: 'Joshua Ryan Castillo',
-    studentNumber: '109823456711',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-21T13:30:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Ryan Castillo',
-    guardianPhone: '+639193334455',
-  },
-  {
-    id: 'std-204',
-    name: 'Hannah Sofia Villanueva',
-    studentNumber: '109823456712',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-22T14:15:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Sofia Villanueva',
-    guardianPhone: '+639174445566',
-  },
-  {
-    id: 'std-205',
-    name: 'Kenneth James Diaz',
-    studentNumber: '109823456713',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'needs_review',
-    lastRegisteredAt: '2026-08-18T16:00:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1501196354995-cbb51c65aaea?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'James Diaz',
-    guardianPhone: '+639185556677',
-  },
-  {
-    id: 'std-206',
-    name: 'Bea Isabel Mercado',
-    studentNumber: '109823456714',
-    sectionId: 'sec-102',
-    sectionName: 'Grade 11 – STEM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-25T08:45:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1514315384763-ba401779410f?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Isabel Mercado',
-    guardianPhone: '+639196667788',
-  },
-
-  // Grade 12 - ABM A
-  {
-    id: 'std-301',
-    name: 'John Paul Fernandez',
-    studentNumber: '109823456715',
-    sectionId: 'sec-103',
-    sectionName: 'Grade 12 – ABM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-17T10:20:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Paul Fernandez',
-    guardianPhone: '+639177778899',
-  },
-  {
-    id: 'std-302',
-    name: 'Chloe Anne Navarro',
-    studentNumber: '109823456716',
-    sectionId: 'sec-103',
-    sectionName: 'Grade 12 – ABM A',
-    faceRegistrationStatus: 'unregistered',
-    lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=350&auto=format&fit=crop&q=80',
-    guardianName: 'Anne Navarro',
-    guardianPhone: '+639188889900',
-  },
-  {
-    id: 'std-303',
-    name: 'Dominic Joel Santos',
-    studentNumber: '109823456717',
-    sectionId: 'sec-103',
-    sectionName: 'Grade 12 – ABM A',
-    faceRegistrationStatus: 'unregistered',
-    lastRegisteredAt: undefined,
-    photoUrl: 'https://images.unsplash.com/photo-1528892952291-009c663ce843?w=350&auto=format&fit=crop&q=80',
-    guardianName: 'Joel Santos',
-    guardianPhone: '+639199990011',
-  },
-  {
-    id: 'std-304',
-    name: 'Samantha Jane Tan',
-    studentNumber: '109823456718',
-    sectionId: 'sec-103',
-    sectionName: 'Grade 12 – ABM A',
-    faceRegistrationStatus: 'registered',
-    lastRegisteredAt: '2026-08-24T14:50:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1554151228-14d9def656e4?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Jane Tan',
-    guardianPhone: '+639171110022',
-  },
-  {
-    id: 'std-305',
-    name: 'Justin Eric Del Rosario',
-    studentNumber: '109823456719',
-    sectionId: 'sec-103',
-    sectionName: 'Grade 12 – ABM A',
-    faceRegistrationStatus: 'needs_review',
-    lastRegisteredAt: '2026-08-16T15:30:00Z',
-    photoUrl: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=350&auto=format&fit=crop&q=80',
-    registeredPhotos: {
-      front: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=450&auto=format&fit=crop&q=80',
-      left: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=450&auto=format&fit=crop&q=80',
-      right: 'https://images.unsplash.com/photo-1513956589380-bad6acb9b9d4?w=450&auto=format&fit=crop&q=80',
-    },
-    guardianName: 'Eric Del Rosario',
-    guardianPhone: '+639182223344',
-  },
-];
-
-// IndexedDB & LocalStorage Hybrid Persistence for Biometric Face Photos
 const DB_NAME = 'srnhs_face_biometrics_db_v1';
 const DB_VERSION = 1;
 const STORE_NAME = 'face_photos';
@@ -409,50 +112,61 @@ async function resizeBlobToDataUrl(blob: Blob, maxDim = 720): Promise<string> {
   });
 }
 
+const CANDIDATE_STUDENT_KEYS = [
+  'srnhs_face_registration_students_v1',
+  'srnhs_face_registration_students',
+  'srnhs_students',
+  'srnhs_students_v1',
+  'students',
+];
+
 export function getStoredStudents(): Student[] {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY_STUDENTS);
-    if (raw) {
-      const parsed: Student[] = JSON.parse(raw);
-      // Clean up any legacy cached mock photos where left/right pointed to other students
-      let hasCleaned = false;
-      const sanitized = parsed.map(s => {
-        const front = s.registeredPhotos?.front || s.photoUrl;
-        const left = s.registeredPhotos?.left;
-        const right = s.registeredPhotos?.right;
+    for (const key of CANDIDATE_STUDENT_KEYS) {
+      const raw =
+        localStorage.getItem(key) ||
+        (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(key) : null);
+      if (raw) {
+        const parsed: Student[] = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Only filter out the specific legacy dummy IDs (std-10x, std-20x, std-30x)
+          const realStudents = parsed.filter(
+            s =>
+              s &&
+              s.name &&
+              !s.id?.startsWith('std-10') &&
+              !s.id?.startsWith('std-20') &&
+              !s.id?.startsWith('std-30')
+          );
+          if (realStudents.length > 0) {
+            let changed = false;
+            const cleaned = realStudents.map(s => {
+              let stuId = s.id;
+              if (!isValidUUID(stuId)) {
+                stuId = generateUUID();
+                changed = true;
+                if (s.id) {
+                  getPhotosFromDb(s.id).then(photos => {
+                    if (photos) savePhotosToDb(stuId, photos);
+                  });
+                }
+              }
+              return {
+                ...s,
+                id: stuId,
+              };
+            });
 
-        // If left/right is not a real user webcam data URL and differs from front, reset to match front
-        const leftIsDataUrl = left?.startsWith('data:');
-        const rightIsDataUrl = right?.startsWith('data:');
-        const needsLeftReset = left && !leftIsDataUrl && left !== front;
-        const needsRightReset = right && !rightIsDataUrl && right !== front;
-
-        if (needsLeftReset || needsRightReset) {
-          hasCleaned = true;
-          return {
-            ...s,
-            registeredPhotos: {
-              front: front,
-              left: needsLeftReset ? front : left,
-              right: needsRightReset ? front : right,
-            },
-          };
+            if (changed || key !== LOCAL_STORAGE_KEY_STUDENTS) {
+              try { localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(cleaned)); } catch {}
+            }
+            return cleaned;
+          }
         }
-        return s;
-      });
-
-      if (hasCleaned) {
-        try {
-          localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(sanitized));
-        } catch {}
       }
-      return sanitized;
     }
   } catch (e) {}
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(INITIAL_STUDENTS));
-  } catch {}
-  return INITIAL_STUDENTS;
+  return [];
 }
 
 export async function fetchRegisteredStudents(): Promise<Student[]> {
@@ -504,9 +218,218 @@ export function saveStoredStudents(students: Student[]): void {
   }
 }
 
+// ── Helpers: map between Supabase DB schema and app Student/Section types ────
+
+function dbRowToStudent(row: any, sections: Section[]): Student {
+  const sec = sections.find(s => s.id === row.section_id);
+  const firstName = row.first_name || '';
+  const lastName = row.last_name || '';
+  const fullName = [firstName, lastName].filter(Boolean).join(' ') || 'Unknown Student';
+  
+  const photos = Array.isArray(row.photo_urls)
+    ? row.photo_urls
+    : (typeof row.photo_urls === 'string' && row.photo_urls ? [row.photo_urls] : []);
+  const frontPhoto = photos[0] || undefined;
+  const leftPhoto = photos[1] || undefined;
+  const rightPhoto = photos[2] || undefined;
+  const hasPhotos = photos.length > 0;
+
+  return {
+    id: row.id,
+    name: fullName,
+    studentNumber: row.lrn || '',
+    sectionId: row.section_id || '',
+    sectionName: sec?.name || '',
+    faceRegistrationStatus: hasPhotos ? 'registered' : 'unregistered',
+    photoUrl: frontPhoto,
+    registeredPhotos: hasPhotos ? {
+      front: frontPhoto,
+      left: leftPhoto,
+      right: rightPhoto,
+    } : undefined,
+    guardianName: undefined,
+    guardianPhone: undefined,
+    faceDescriptors: undefined,
+  };
+}
+
+function dbRowToSection(row: any): Section {
+  const gradeLevel = row.grade_level ? `Grade ${row.grade_level}` : 'Grade 10';
+  return {
+    id: row.id,
+    name: row.name || '',
+    gradeLevel,
+    teacherId: row.adviser_id || '',
+    teacherName: 'Unassigned',
+    totalStudents: 0,
+    registeredStudents: 0,
+  };
+}
+
+/**
+ * Pull students and sections from Supabase and populate localStorage.
+ * Call this on app startup — any device will then see up-to-date data.
+ * Returns how many records were synced, or null if Supabase is not reachable.
+ */
+export async function syncFromSupabase(): Promise<{ students: number; sections: number } | null> {
+  if (!isSupabaseConfigured || !supabase) return null;
+  try {
+    const localSections = getStoredSections();
+    const localStudents = getStoredStudents();
+
+    // 1. Fetch sections from Supabase
+    const { data: sectionRows, error: secErr } = await supabase
+      .from('sections')
+      .select('id, name, grade_level, adviser_id')
+      .order('grade_level');
+
+    if (secErr) {
+      console.warn('[Supabase] Sections fetch note:', secErr.message);
+    }
+
+    const dbSections: Section[] = (sectionRows || []).map(dbRowToSection);
+    const sectionMap = new Map<string, Section>();
+    
+    // Seed with local sections
+    localSections.forEach(s => {
+      if (isValidUUID(s.id)) sectionMap.set(s.id, s);
+    });
+    // Overlay cloud sections
+    dbSections.forEach(s => {
+      const existing = sectionMap.get(s.id);
+      sectionMap.set(s.id, {
+        ...s,
+        totalStudents: existing?.totalStudents ?? 0,
+        registeredStudents: existing?.registeredStudents ?? 0,
+      });
+    });
+
+    const mergedSections = Array.from(sectionMap.values());
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(mergedSections));
+    } catch {}
+
+    // Cloud push: if local has sections not in Supabase, push them
+    const dbSectionIdSet = new Set(dbSections.map(s => s.id));
+    const missingInCloud = localSections.filter(s => isValidUUID(s.id) && !dbSectionIdSet.has(s.id));
+    if (missingInCloud.length > 0) {
+      const pushRows = missingInCloud.map(s => ({
+        id: s.id,
+        name: s.name,
+        grade_level: s.gradeLevel === 'Grade 12' ? 12
+          : s.gradeLevel === 'Grade 11' ? 11
+          : s.gradeLevel === 'Grade 10' ? 10
+          : 10,
+        adviser_id: (s.teacherId && isValidUUID(s.teacherId)) ? s.teacherId : null,
+      }));
+      supabase.from('sections').upsert(pushRows, { onConflict: 'id' }).then(({ error }) => {
+        if (error) console.warn('[Supabase] Error uploading local sections:', error.message);
+        else console.log(`[Supabase] ✓ Pushed ${pushRows.length} local section(s) to cloud`);
+      });
+    }
+
+    // 2. Fetch students from Supabase
+    const { data: studentRows, error: stuErr } = await supabase
+      .from('students')
+      .select('id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at')
+      .order('last_name');
+
+    if (stuErr) {
+      console.warn('[Supabase] Students fetch note:', stuErr.message);
+    }
+
+    const dbStudents: Student[] = (studentRows || []).map(r => dbRowToStudent(r, mergedSections));
+    const studentMap = new Map<string, Student>();
+
+    // Seed with local students
+    localStudents.forEach(s => {
+      if (isValidUUID(s.id)) studentMap.set(s.id, s);
+    });
+
+    // Overlay cloud students
+    dbStudents.forEach(dbStu => {
+      const local = studentMap.get(dbStu.id);
+      studentMap.set(dbStu.id, {
+        ...dbStu,
+        faceDescriptors: local?.faceDescriptors ?? dbStu.faceDescriptors,
+        photoUrl: dbStu.photoUrl || local?.photoUrl,
+        registeredPhotos: local?.registeredPhotos ?? dbStu.registeredPhotos,
+        faceRegistrationStatus: (local?.faceDescriptors?.length ?? 0) > 0
+          ? 'registered'
+          : dbStu.faceRegistrationStatus || local?.faceRegistrationStatus || 'unregistered',
+        guardianName: local?.guardianName,
+        guardianPhone: local?.guardianPhone,
+      });
+    });
+
+    const mergedStudents = Array.from(studentMap.values());
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(mergedStudents));
+    } catch {}
+
+    // Cloud push: if local has students not in Supabase, push them
+    const dbStudentIdSet = new Set(dbStudents.map(s => s.id));
+    const studentsToPush = localStudents.filter(s => isValidUUID(s.id) && !dbStudentIdSet.has(s.id));
+    for (const stu of studentsToPush) {
+      if (isValidUUID(stu.sectionId)) {
+        const nameParts = stu.name.trim().split(/\s+/);
+        const firstName = nameParts.slice(0, -1).join(' ') || nameParts[0] || 'Student';
+        const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
+        const sec = mergedSections.find(s => s.id === stu.sectionId);
+        const gradeLevelNum = sec?.gradeLevel === 'Grade 12' ? 12
+          : sec?.gradeLevel === 'Grade 11' ? 11
+          : sec?.gradeLevel === 'Grade 10' ? 10
+          : 10;
+        
+        const photoUrls: string[] = [];
+        if (stu.registeredPhotos?.front) photoUrls.push(stu.registeredPhotos.front);
+        else if (stu.photoUrl) photoUrls.push(stu.photoUrl);
+        if (stu.registeredPhotos?.left) photoUrls.push(stu.registeredPhotos.left);
+        if (stu.registeredPhotos?.right) photoUrls.push(stu.registeredPhotos.right);
+
+        supabase.from('students').upsert({
+          id: stu.id,
+          lrn: stu.studentNumber,
+          first_name: firstName,
+          last_name: lastName,
+          gender: 'Not Specified',
+          grade_level: gradeLevelNum,
+          section_id: stu.sectionId,
+          parent_consent: true,
+          consent_date: new Date().toISOString().split('T')[0],
+          photo_urls: photoUrls,
+        }, { onConflict: 'id' }).then(({ error }) => {
+          if (error) console.warn('[Supabase] Error uploading local student:', error.message);
+          else console.log(`[Supabase] ✓ Pushed local student ${stu.name} to cloud`);
+        });
+      }
+    }
+
+    // Notify all components to re-render with fresh data
+    window.dispatchEvent(new Event('storage'));
+    window.dispatchEvent(new CustomEvent('srnhs_storage_sync'));
+
+    return {
+      students: mergedStudents.length,
+      sections: mergedSections.length,
+    };
+  } catch (err) {
+    console.warn('[Supabase] Sync failed, using local data:', err);
+    return null;
+  }
+}
+
 export async function deleteStudent(studentId: string): Promise<void> {
   const students = getStoredStudents().filter(s => s.id !== studentId);
   saveStoredStudents(students);
+  // Also delete from Supabase
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('students').delete().eq('id', studentId);
+    } catch (e) {
+      console.warn('Supabase delete student note:', e);
+    }
+  }
   try {
     const db = await openFaceDb();
     if (db) {
@@ -533,15 +456,32 @@ export async function addNewStudent(studentData: {
   const cleanLrn = studentData.studentNumber.trim();
   const existingIndex = students.findIndex(s => s.studentNumber === cleanLrn);
 
+  // Ensure student ID is a valid UUID
+  const studentId = (studentData.id && isValidUUID(studentData.id))
+    ? studentData.id
+    : (existingIndex >= 0 && isValidUUID(students[existingIndex]!.id)
+      ? students[existingIndex]!.id
+      : generateUUID());
+
+  // Ensure section ID is a valid UUID
+  let finalSectionId = studentData.sectionId;
+  if (!isValidUUID(finalSectionId)) {
+    if (section && isValidUUID(section.id)) {
+      finalSectionId = section.id;
+    } else if (sections.length > 0 && sections[0] && isValidUUID(sections[0].id)) {
+      finalSectionId = sections[0].id;
+    }
+  }
+
   const student: Student = {
-    id: studentData.id || (existingIndex >= 0 ? students[existingIndex]!.id : `std-${Date.now()}`),
+    id: studentId,
     name: studentData.name.trim(),
     studentNumber: cleanLrn,
-    sectionId: studentData.sectionId,
-    sectionName: studentData.sectionName || section?.name || 'Grade 10 – Sampaguita',
+    sectionId: finalSectionId,
+    sectionName: studentData.sectionName || section?.name || '',
     faceRegistrationStatus: existingIndex >= 0 ? students[existingIndex]!.faceRegistrationStatus : 'unregistered',
     lastRegisteredAt: existingIndex >= 0 ? students[existingIndex]!.lastRegisteredAt : undefined,
-    photoUrl: studentData.photoUrl || (existingIndex >= 0 ? students[existingIndex]!.photoUrl : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=350&auto=format&fit=crop&q=80'),
+    photoUrl: studentData.photoUrl || (existingIndex >= 0 ? students[existingIndex]!.photoUrl : undefined),
     registeredPhotos: existingIndex >= 0 ? students[existingIndex]!.registeredPhotos : undefined,
     guardianName: studentData.guardianName?.trim() || 'Parent / Guardian',
     guardianPhone: studentData.guardianPhone?.trim() || '+639170000000',
@@ -555,35 +495,79 @@ export async function addNewStudent(studentData: {
 
   saveStoredStudents(students);
 
-  // If Supabase is configured, also attempt to insert into Supabase
+  // If Supabase is configured, upsert (insert or update) the student record
   if (isSupabaseConfigured && supabase) {
     try {
-      const nameParts = student.name.split(' ');
+      const nameParts = student.name.trim().split(/\s+/);
       const firstName = nameParts.slice(0, -1).join(' ') || nameParts[0] || 'Student';
       const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
+      const gradeLevelNum = section?.gradeLevel === 'Grade 12' ? 12
+        : section?.gradeLevel === 'Grade 11' ? 11
+        : section?.gradeLevel === 'Grade 10' ? 10
+        : 10;
 
-      const { data: inserted } = await supabase.from('students').insert({
+      // Ensure section exists in Supabase first to satisfy foreign key
+      if (section && isValidUUID(section.id)) {
+        await supabase.from('sections').upsert({
+          id: section.id,
+          name: section.name,
+          grade_level: gradeLevelNum,
+          adviser_id: (section.teacherId && isValidUUID(section.teacherId)) ? section.teacherId : null,
+        }, { onConflict: 'id' });
+      }
+
+      const photoUrls: string[] = [];
+      if (student.registeredPhotos?.front) photoUrls.push(student.registeredPhotos.front);
+      else if (student.photoUrl) photoUrls.push(student.photoUrl);
+      if (student.registeredPhotos?.left) photoUrls.push(student.registeredPhotos.left);
+      if (student.registeredPhotos?.right) photoUrls.push(student.registeredPhotos.right);
+
+      const { data: inserted, error: insertErr } = await supabase.from('students').upsert({
+        id: student.id,
         lrn: student.studentNumber,
         first_name: firstName,
         last_name: lastName,
         gender: 'Not Specified',
-        grade_level: section?.gradeLevel === 'Grade 12' ? 12 : section?.gradeLevel === 'Grade 11' ? 11 : 10,
+        grade_level: gradeLevelNum,
         section_id: student.sectionId,
         parent_consent: true,
         consent_date: new Date().toISOString().split('T')[0],
-      }).select().single();
+        photo_urls: photoUrls,
+      }, { onConflict: 'id' }).select().single();
+
+      if (insertErr) {
+        console.warn('Supabase student upsert warning:', insertErr.message);
+      } else {
+        console.log(`[Supabase] ✓ Student ${student.name} saved to database`);
+      }
 
       if (inserted && (student.guardianName || student.guardianPhone)) {
-        await supabase.from('student_guardians').insert({
-          student_id: inserted.id,
-          name: student.guardianName,
-          relationship: 'Guardian',
-          phone_number: student.guardianPhone,
-          is_primary: true,
-        });
+        const { data: existingG } = await supabase
+          .from('student_guardians')
+          .select('id')
+          .eq('student_id', inserted.id)
+          .limit(1);
+
+        const firstG = existingG && existingG[0];
+        if (firstG) {
+          await supabase.from('student_guardians').update({
+            name: student.guardianName || 'Guardian',
+            relationship: 'Guardian',
+            phone_number: student.guardianPhone,
+            is_primary: true,
+          }).eq('id', firstG.id);
+        } else {
+          await supabase.from('student_guardians').insert({
+            student_id: inserted.id,
+            name: student.guardianName || 'Guardian',
+            relationship: 'Guardian',
+            phone_number: student.guardianPhone,
+            is_primary: true,
+          });
+        }
       }
     } catch (e) {
-      console.warn('Supabase student save fallback:', e);
+      console.warn('Supabase student save note (data saved locally):', e);
     }
   }
 
@@ -591,14 +575,108 @@ export async function addNewStudent(studentData: {
 }
 
 export function getStoredSections(): Section[] {
+  // IDs that were ever used as hardcoded dummy/seed data — purge them always
+  const LEGACY_IDS = new Set([
+    'sec-101', 'sec-102', 'sec-103',
+    'sec-stem-12', 'sec-tvl-12', 'sec-humss-11', 'sec-g10-1',
+  ]);
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY_SECTIONS);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed: Section[] = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        let changed = false;
+        const idMap = new Map<string, string>();
+
+        const cleaned = parsed
+          .filter(s => !LEGACY_IDS.has(s.id))
+          .map(s => {
+            let sectionId = s.id;
+            if (!isValidUUID(sectionId)) {
+              sectionId = generateUUID();
+              idMap.set(s.id, sectionId);
+              changed = true;
+            }
+            return {
+              ...s,
+              id: sectionId,
+              teacherName:
+                s.teacherName === 'Maria Santos' ||
+                s.teacherName === 'Juan Dela Cruz' ||
+                s.teacherName === 'Elena Reyes'
+                  ? 'Unassigned'
+                  : s.teacherName,
+              totalStudents: 0,
+              registeredStudents: 0,
+            };
+          });
+
+        if (changed || cleaned.length !== parsed.length) {
+          try { localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(cleaned)); } catch {}
+        }
+
+        // If any section IDs were migrated, update student references in localStorage
+        if (idMap.size > 0) {
+          try {
+            const rawStu = localStorage.getItem(LOCAL_STORAGE_KEY_STUDENTS);
+            if (rawStu) {
+              const students: Student[] = JSON.parse(rawStu);
+              let stuChanged = false;
+              const updatedStudents = students.map(st => {
+                let updated = { ...st };
+                if (idMap.has(st.sectionId)) {
+                  updated.sectionId = idMap.get(st.sectionId)!;
+                  stuChanged = true;
+                }
+                if (!isValidUUID(updated.id)) {
+                  updated.id = generateUUID();
+                  stuChanged = true;
+                }
+                return updated;
+              });
+              if (stuChanged) {
+                localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(updatedStudents));
+              }
+            }
+          } catch {}
+        }
+
+        return cleaned;
+      }
+    }
   } catch (e) {}
+
+  return [];
+}
+
+export function saveStoredSections(sections: Section[]): void {
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(INITIAL_SECTIONS));
-  } catch {}
-  return INITIAL_SECTIONS;
+    localStorage.setItem(LOCAL_STORAGE_KEY_SECTIONS, JSON.stringify(sections));
+  } catch (err) {
+    console.warn('LocalStorage quota warning (sections):', err);
+  }
+  // Also upsert to Supabase so other devices see the new section immediately
+  if (isSupabaseConfigured && supabase) {
+    const validSections = sections.filter(s => isValidUUID(s.id));
+    if (validSections.length > 0) {
+      const rows = validSections.map(s => ({
+        id: s.id,
+        name: s.name,
+        grade_level: s.gradeLevel === 'Grade 12' ? 12
+          : s.gradeLevel === 'Grade 11' ? 11
+          : s.gradeLevel === 'Grade 10' ? 10
+          : 10,
+        adviser_id: (s.teacherId && isValidUUID(s.teacherId)) ? s.teacherId : null,
+      }));
+      supabase
+        .from('sections')
+        .upsert(rows, { onConflict: 'id' })
+        .then(({ error }) => {
+          if (error) console.warn('[Supabase] sections upsert note:', error.message);
+          else console.log(`[Supabase] ✓ Synced ${rows.length} section(s) to cloud`);
+        });
+    }
+  }
 }
 
 export async function fetchSections(): Promise<Section[]> {
@@ -620,7 +698,10 @@ export async function fetchSections(): Promise<Section[]> {
 export async function fetchSectionRoster(sectionId: string): Promise<Student[]> {
   await new Promise(r => setTimeout(r, 150));
   const students = getStoredStudents();
-  const sectionStudents = students.filter(s => s.sectionId === sectionId);
+  const sectionStudents =
+    sectionId === 'all' || !sectionId
+      ? students
+      : students.filter(s => s.sectionId === sectionId);
 
   // Hydrate high-res photos from IndexedDB if available
   const hydrated = await Promise.all(
@@ -670,45 +751,26 @@ export async function submitFaceRegistration(
   // Save photos to IndexedDB for permanent browser persistence
   await savePhotosToDb(payload.studentId, photoMap);
 
-  // If Supabase is configured, attempt uploading frames to Storage and inserting metadata
+  // If Supabase is configured, update photo_urls on the student record
   if (isSupabaseConfigured && supabase) {
-    const client = supabase;
     try {
-      const uploadPromises = payload.frames.map(async frame => {
-        const timestamp = Date.now();
-        const filePath = `${payload.studentId}/${frame.angle}_${timestamp}.jpg`;
-        
-        // Upload image blob to Supabase Storage bucket 'face-registrations'
-        const { error: storageError } = await client.storage
-          .from('face-registrations')
-          .upload(filePath, frame.blob, {
-            contentType: 'image/jpeg',
-            upsert: true,
-          });
+      const photosToSave = [photoMap.front, photoMap.left, photoMap.right].filter(Boolean) as string[];
+      if (photosToSave.length > 0) {
+        const { error: photoErr } = await supabase
+          .from('students')
+          .update({
+            photo_urls: photosToSave,
+          })
+          .eq('id', payload.studentId);
 
-        if (storageError) {
-          console.warn(`Supabase Storage upload warning for ${frame.angle}:`, storageError.message);
+        if (photoErr) {
+          console.warn('[Supabase] Photo update note:', photoErr.message);
+        } else {
+          console.log(`[Supabase] ✓ Updated ${photosToSave.length} face photo(s) for student in cloud`);
         }
-
-        // Insert metadata record into 'face_registrations' table
-        const { error: dbError } = await client
-          .from('face_registrations')
-          .insert({
-            student_id: payload.studentId,
-            section_id: payload.sectionId,
-            angle: frame.angle,
-            storage_path: filePath,
-            consent_confirmed: true,
-          });
-
-        if (dbError) {
-          console.warn(`Supabase DB record warning for ${frame.angle}:`, dbError.message);
-        }
-      });
-
-      await Promise.allSettled(uploadPromises);
+      }
     } catch (supabaseErr) {
-      console.warn('Supabase synchronization note (will continue using local store):', supabaseErr);
+      console.warn('[Supabase] Synchronization note (will continue using local store):', supabaseErr);
     }
   }
 
@@ -730,6 +792,12 @@ export async function submitFaceRegistration(
       left: photoMap.left || students[index]!.registeredPhotos?.left,
       right: photoMap.right || students[index]!.registeredPhotos?.right,
     },
+    faceDescriptors: payload.faceDescriptors && payload.faceDescriptors.length > 0
+      ? payload.faceDescriptors
+      : students[index]!.faceDescriptors,
+    faceDescriptorVersion: payload.faceDescriptors && payload.faceDescriptors.length > 0
+      ? FACE_DESCRIPTOR_VERSION
+      : students[index]!.faceDescriptorVersion,
   };
   saveStoredStudents(students);
 

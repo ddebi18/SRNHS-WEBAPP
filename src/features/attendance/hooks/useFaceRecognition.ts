@@ -1,46 +1,35 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import * as faceapi from '@vladmandic/face-api';
 import { fetchRegisteredStudents } from '@/features/faceRegistration/api';
+import { assignStudentFaceDescriptors } from '@/features/sync/syncService';
+import {
+  FACE_DESCRIPTOR_VERSION,
+  FACENET_DISTANCE_THRESHOLD,
+  STABILITY_FRAMES_REQUIRED,
+  computeMatchConfidence,
+  scoreFaceNetMatch,
+  findDuplicateStudentId,
+  type LabeledDescriptors,
+} from '../lib/faceNetMatcher';
+import {
+  detectAccurateFace,
+  detectLiveFace,
+  ensureFaceNetModels,
+  extractDescriptorFromImage,
+  loadImage,
+} from '../lib/faceNetEngine';
 
 export type { RecognitionStatusInput } from '../lib/recognitionStatus';
+export { computeCosineSimilarity, computeCosineDistance } from '../lib/faceNetMatcher';
 
-const MODEL_URL = 'https://vladmandic.github.io/face-api/model';
+const DETECTING_GRACE_FRAMES = 3;
+const SCAN_INTERVAL_MS = 240;
 
-// FaceMatcher distance threshold: 0.55 provides accurate biometric identification
-// and prevents false positive matches for unregistered individuals or classmates
-const MATCH_THRESHOLD = 0.55;
-
-// Minimum confidence (1 - distance) to accept a match: 0.48 requires distance <= 0.52
-const MIN_CONFIDENCE = 0.48;
-
-// Consecutive matching frames required to verify and lock identity (eliminates 1-frame glitches)
-const STABILITY_FRAMES_REQUIRED = 2;
-
-// Number of frames to stay in 'Detecting Face...' mode before marking as Unknown (~1.3s at 220ms)
-const DETECTING_GRACE_FRAMES = 6;
-
-// Detection score threshold for SSD MobileNet: 0.38 allows detection in dim or backlit conditions
-const DETECTION_SCORE_THRESHOLD = 0.38;
-
-// ── Liveness detection constants ──────────────────────────────────────────────
-// Eye Aspect Ratio thresholds
 const EAR_BLINK_THRESHOLD = 0.21;
-const EAR_DYNAMIC_DELTA = 0.035; // Rapid eye contraction/flutter indicates living eyelid movement
-
-// History windows for fast liveness verification (~1-2 seconds at 220ms interval)
+const EAR_DYNAMIC_DELTA = 0.035;
 const HISTORY_WINDOW_FRAMES = 8;
-const MIN_FRAMES_FOR_LIVENESS = 3;
-
-// Minimum eye variance over window (living eyes naturally fluctuate; printed photos have ~0 variance)
-const EYE_VARIANCE_THRESHOLD = 0.00025;
-
-// 3D non-rigid landmark ratio variance threshold:
-// A 2D photo/phone moved by hand translates rigidly (internal ratio variance ≈ 0).
-// A real 3D face has natural parallax, breathing, and facial muscle elasticity (ratio variance > threshold).
-const NON_RIGID_RATIO_VARIANCE_THRESHOLD = 0.00010;
-
-// Minimum absolute motion to reject completely stationary photos on stands
-const MIN_LANDMARK_MOTION = 1.2; // pixels
+const EYE_VARIANCE_THRESHOLD = 0.00020;
+const MIN_LANDMARK_MOTION = 0.8;
 
 export interface RecognizedStudent {
   id: string;
@@ -54,19 +43,29 @@ export interface FaceLandmarkPoint {
   y: number;
 }
 
+export interface FaceRecognitionBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  videoWidth: number;
+  videoHeight: number;
+}
+
 interface UseFaceRecognitionReturn {
   isLoading: boolean;
   isReady: boolean;
   matchedStudent: RecognizedStudent | null;
   error: string | null;
   landmarks: FaceLandmarkPoint[] | null;
+  recognitionBox: FaceRecognitionBox | null;
   isLive: boolean;
   isAnalyzing: boolean;
+  triggerInstantScan: () => Promise<RecognizedStudent | null>;
+  assignCameraFaceToStudent: (targetStudentId?: string) => Promise<boolean>;
+  diagnosticInfo: string;
 }
 
-// ── EAR helper ────────────────────────────────────────────────────────────────
-// Eye Aspect Ratio for one eye using 6 landmark points.
-// Left eye: landmarks 36–41, Right eye: landmarks 42–47.
 function computeEAR(
   p0: faceapi.Point, p1: faceapi.Point, p2: faceapi.Point,
   p3: faceapi.Point, p4: faceapi.Point, p5: faceapi.Point
@@ -82,32 +81,17 @@ function computeEAR(
   return (vertical1 + vertical2) / (2 * horizontal);
 }
 
-// ── Variance helper ───────────────────────────────────────────────────────────
 function computeVariance(values: number[]): number {
   if (values.length < 2) return 0;
   const mean = values.reduce((s, v) => s + v, 0) / values.length;
   return values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
 }
 
-// ── Match confidence mapping ──────────────────────────────────────────────────
-// Maps distance to true biometric confidence [0.0 to 1.0] based on 128D Euclidean distance
-function computeMatchConfidence(distance: number): number {
-  return Math.max(0, Math.min(1, Math.round((1 - distance) * 100) / 100));
-}
-
-/**
- * Load an image from a URL (supports both HTTP URLs and data: URLs).
- * faceapi.fetchImage can fail silently on data URLs in some browsers,
- * so we fall back to direct HTMLImageElement loading.
- */
-function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Image load failed: ${url.substring(0, 60)}...`));
-    img.src = url;
-  });
+function toLabeledGallery(labeled: faceapi.LabeledFaceDescriptors[]): LabeledDescriptors[] {
+  return labeled.map(entry => ({
+    label: entry.label,
+    descriptors: entry.descriptors,
+  }));
 }
 
 export function useFaceRecognition(
@@ -121,12 +105,16 @@ export function useFaceRecognition(
   const [landmarks, setLandmarks] = useState<FaceLandmarkPoint[] | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const matcherRef = useRef<faceapi.FaceMatcher | null>(null);
+  const [recognitionBox, setRecognitionBox] = useState<FaceRecognitionBox | null>(null);
+  const [diagnosticInfo, setDiagnosticInfo] = useState('Initializing…');
+
+  const galleryRef = useRef<LabeledDescriptors[]>([]);
   const processingRef = useRef(false);
   const stabilityRef = useRef<{ studentId: string; count: number }>({ studentId: '', count: 0 });
   const unmatchedCountRef = useRef(0);
   const consecutiveMissRef = useRef(0);
-  // Liveness: multi-signal fast anti-spoof tracking refs
+  const presenceCountRef = useRef(0);
+
   const landmarkHistoryRef = useRef<number[][]>([]);
   const earHistoryRef = useRef<number[]>([]);
   const ratioHistoryRef = useRef<number[]>([]);
@@ -134,6 +122,126 @@ export function useFaceRecognition(
   const isLiveRef = useRef(false);
   const studentsRef = useRef<any[]>([]);
   const lastConfirmedMatchRef = useRef<{ student: RecognizedStudent; timestamp: number } | null>(null);
+
+  const applyDetectionOverlay = useCallback((detection: faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }>, video: HTMLVideoElement) => {
+    const b = detection.detection?.box;
+    const vw = video.videoWidth || 640;
+    const vh = video.videoHeight || 480;
+    if (b) {
+      setRecognitionBox({
+        x: b.x,
+        y: b.y,
+        width: b.width,
+        height: b.height,
+        videoWidth: vw,
+        videoHeight: vh,
+      });
+    }
+
+    const pts = detection.landmarks?.positions;
+    if (pts) {
+      setLandmarks(pts.map((p: faceapi.Point) => ({ x: p.x / vw, y: p.y / vh })));
+    }
+  }, []);
+
+  const resolveMatch = useCallback((descriptor: Float32Array): RecognizedStudent | null => {
+    const result = scoreFaceNetMatch(descriptor, galleryRef.current);
+    if (!result.accepted) return null;
+    const student = studentsRef.current.find((s: any) => s.id === result.label);
+    if (!student) return null;
+    return {
+      id: student.id,
+      name: student.name,
+      studentNumber: student.studentNumber,
+      confidence: result.confidence,
+    };
+  }, []);
+
+  const triggerInstantScan = useCallback(async (): Promise<RecognizedStudent | null> => {
+    const video = videoRef.current;
+    if (!video || galleryRef.current.length === 0 || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      return null;
+    }
+
+    setIsAnalyzing(true);
+    try {
+      const detection = await detectAccurateFace(video);
+      if (!detection) return null;
+
+      applyDetectionOverlay(detection, video);
+      const matchObj = resolveMatch(detection.descriptor);
+      if (!matchObj) return null;
+
+      lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
+      setMatchedStudent(matchObj);
+      setIsLive(true);
+      isLiveRef.current = true;
+      return matchObj;
+    } catch (err) {
+      console.warn('[FaceRecognition] Instant scan warning:', err);
+      return null;
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [applyDetectionOverlay, resolveMatch, videoRef]);
+
+  const assignCameraFaceToStudent = useCallback(async (targetStudentId?: string): Promise<boolean> => {
+    const video = videoRef.current;
+    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false;
+
+    const targetId = targetStudentId;
+    if (!targetId) {
+      setDiagnosticInfo('Select a student before assigning this camera face. Open Face Registration instead of auto-assigning.');
+      return false;
+    }
+
+    try {
+      setIsAnalyzing(true);
+      const detection = await detectAccurateFace(video);
+      if (!detection) {
+        setIsAnalyzing(false);
+        return false;
+      }
+
+      const duplicateId = findDuplicateStudentId(detection.descriptor, galleryRef.current, targetId);
+      if (duplicateId && duplicateId !== targetId) {
+        const other = studentsRef.current.find((s: any) => s.id === duplicateId);
+        setDiagnosticInfo(`This face already matches ${other?.name || 'another student'}. Registration blocked.`);
+        setIsAnalyzing(false);
+        return false;
+      }
+
+      assignStudentFaceDescriptors(targetId, [detection.descriptor]);
+
+      const nextGallery = galleryRef.current.filter(entry => entry.label !== targetId);
+      nextGallery.push({ label: targetId, descriptors: [detection.descriptor] });
+      galleryRef.current = nextGallery;
+
+      setError(null);
+      setIsReady(true);
+      setDiagnosticInfo('Camera face saved for the selected student only.');
+
+      const student = studentsRef.current.find(s => s.id === targetId);
+      if (student) {
+        const matchObj: RecognizedStudent = {
+          id: student.id,
+          name: student.name,
+          studentNumber: student.studentNumber,
+          confidence: computeMatchConfidence(0.2),
+        };
+        lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
+        setMatchedStudent(matchObj);
+        setIsLive(true);
+        isLiveRef.current = true;
+      }
+      setIsAnalyzing(false);
+      return true;
+    } catch (e) {
+      console.warn('Assign camera face error:', e);
+      setIsAnalyzing(false);
+      return false;
+    }
+  }, [videoRef]);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,15 +253,17 @@ export function useFaceRecognition(
       setMatchedStudent(null);
       setError(null);
       setLandmarks(null);
+      setRecognitionBox(null);
       setIsLive(false);
       setIsAnalyzing(false);
-      matcherRef.current = null;
+      galleryRef.current = [];
       stabilityRef.current = { studentId: '', count: 0 };
       landmarkHistoryRef.current = [];
       earHistoryRef.current = [];
       ratioHistoryRef.current = [];
       hasBlinkedRef.current = false;
       isLiveRef.current = false;
+      presenceCountRef.current = 0;
       unmatchedCountRef.current = 0;
       consecutiveMissRef.current = 0;
       lastConfirmedMatchRef.current = null;
@@ -167,22 +277,35 @@ export function useFaceRecognition(
     const initialize = async () => {
       setIsLoading(true);
       setError(null);
+      setDiagnosticInfo('Loading FaceNet models…');
+      console.log('[FaceRecognition] Starting initialization…');
 
       try {
-        // Load SSD MobileNet + landmarks + recognition
-        await Promise.all([
-          faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-        ]);
+        await ensureFaceNetModels();
+        setDiagnosticInfo('Models loaded. Fetching enrolled students…');
 
         const students = await fetchRegisteredStudents();
         studentsRef.current = students;
+        setDiagnosticInfo(`Found ${students.length} enrolled student(s). Extracting FaceNet descriptors…`);
 
-        console.log(`[FaceRecognition] Building descriptors for ${students.length} registered students...`);
+        if (students.length === 0) {
+          setIsLoading(false);
+          const msg = 'No registered students found. Enroll a student and register their face first.';
+          setError(msg);
+          setDiagnosticInfo(msg);
+          return;
+        }
 
         const labeledDescriptors = (await Promise.all(students.map(async student => {
-          // Collect distinct registered photo URLs (front, left, right)
+          if (
+            student.faceDescriptorVersion === FACE_DESCRIPTOR_VERSION &&
+            student.faceDescriptors &&
+            student.faceDescriptors.length > 0
+          ) {
+            const floats = student.faceDescriptors.map((arr: number[]) => new Float32Array(arr));
+            return new faceapi.LabeledFaceDescriptors(student.id, floats);
+          }
+
           const photoUrlSet = new Set<string>();
           if (student.registeredPhotos?.front) photoUrlSet.add(student.registeredPhotos.front);
           if (student.registeredPhotos?.left) photoUrlSet.add(student.registeredPhotos.left);
@@ -190,38 +313,22 @@ export function useFaceRecognition(
           if (photoUrlSet.size === 0 && student.photoUrl) photoUrlSet.add(student.photoUrl);
 
           const photoUrls = Array.from(photoUrlSet);
+          if (photoUrls.length === 0) return null;
 
-          if (photoUrls.length === 0) {
-            console.warn(`[FaceRecognition] No photo URLs for ${student.name} (${student.id})`);
-            return null;
-          }
-
-          // Build a descriptor from each distinct angle photo
           const descriptors: Float32Array[] = [];
           for (const url of photoUrls) {
             try {
               const image = await loadImage(url);
-              const detection = await faceapi
-                .detectSingleFace(image, new faceapi.SsdMobilenetv1Options({ minConfidence: DETECTION_SCORE_THRESHOLD }))
-                .withFaceLandmarks()
-                .withFaceDescriptor();
-
-              if (detection) {
-                descriptors.push(detection.descriptor);
-              } else {
-                console.warn(`[FaceRecognition] No face found in photo for ${student.name} (url: ${url.substring(0, 50)}…)`);
-              }
+              const desc = await extractDescriptorFromImage(image);
+              if (desc) descriptors.push(desc);
             } catch (imageError) {
-              console.warn(`[FaceRecognition] ✗ Failed descriptor for ${student.name} from ${url.substring(0, 50)}…:`, imageError);
+              console.warn(`[FaceRecognition] Photo descriptor note for ${student.name}:`, imageError);
             }
           }
 
-          if (descriptors.length === 0) {
-            console.warn(`[FaceRecognition] ✗ No usable descriptors for ${student.name} (${student.id})`);
-            return null;
-          }
+          if (descriptors.length === 0) return null;
 
-          console.log(`[FaceRecognition] ✓ ${descriptors.length} descriptor(s) created for ${student.name}`);
+          assignStudentFaceDescriptors(student.id, descriptors);
           return new faceapi.LabeledFaceDescriptors(student.id, descriptors);
         }))).filter((descriptor): descriptor is faceapi.LabeledFaceDescriptors => Boolean(descriptor));
 
@@ -229,40 +336,35 @@ export function useFaceRecognition(
 
         if (labeledDescriptors.length === 0) {
           setIsLoading(false);
-          setError('No face descriptors could be loaded from registered photos. Please re-register student faces.');
+          const msg = `No FaceNet descriptors could be extracted from ${students.length} enrolled photo(s). Re-register with a clear, well-lit face.`;
+          setError(msg);
+          setDiagnosticInfo(msg);
           return;
         }
 
-        console.log(`[FaceRecognition] Matcher ready with ${labeledDescriptors.length} descriptors (threshold: ${MATCH_THRESHOLD})`);
-        matcherRef.current = new faceapi.FaceMatcher(labeledDescriptors, MATCH_THRESHOLD);
+        galleryRef.current = toLabeledGallery(labeledDescriptors);
         setIsLoading(false);
         setIsReady(true);
+        const readyMsg = `Ready — FaceNet scanning ${labeledDescriptors.length} student(s), threshold ${FACENET_DISTANCE_THRESHOLD}`;
+        setDiagnosticInfo(readyMsg);
 
         interval = setInterval(async () => {
           const video = videoRef.current;
-          const matcher = matcherRef.current;
-          if (!video || !matcher || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || processingRef.current) return;
+          if (!video || galleryRef.current.length === 0 || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || processingRef.current) return;
 
           processingRef.current = true;
           try {
-            const detection = await faceapi
-              .detectSingleFace(video, new faceapi.SsdMobilenetv1Options({ minConfidence: DETECTION_SCORE_THRESHOLD }))
-              .withFaceLandmarks()
-              .withFaceDescriptor();
+            const detection = await detectLiveFace(video);
 
             if (!detection) {
               consecutiveMissRef.current += 1;
-              // Allow a 4-frame grace period (~1.0s) for head movement, looking away, or momentary obstructions
-              if (consecutiveMissRef.current > 4) {
+              if (consecutiveMissRef.current > 3) {
                 stabilityRef.current = { studentId: '', count: 0 };
-                landmarkHistoryRef.current = [];
-                earHistoryRef.current = [];
-                ratioHistoryRef.current = [];
-                hasBlinkedRef.current = false;
-                isLiveRef.current = false;
+                presenceCountRef.current = 0;
                 lastConfirmedMatchRef.current = null;
                 setMatchedStudent(null);
                 setLandmarks(null);
+                setRecognitionBox(null);
                 setIsLive(false);
                 setIsAnalyzing(false);
                 unmatchedCountRef.current = 0;
@@ -271,46 +373,24 @@ export function useFaceRecognition(
             }
 
             consecutiveMissRef.current = 0;
+            presenceCountRef.current += 1;
+            applyDetectionOverlay(detection, video);
 
-            // Extract landmark points (68 points)
             const pts = detection.landmarks.positions;
-            const vw = video.videoWidth || 640;
-            const vh = video.videoHeight || 480;
-            const normalizedLandmarks: FaceLandmarkPoint[] = pts.map(p => ({
-              x: p.x / vw,
-              y: p.y / vh,
-            }));
-            setLandmarks(normalizedLandmarks);
-
-            // ══════════════════════════════════════════════════════════════════
-            // LIVENESS DETECTION — Multi-signal anti-spoofing (Fast Verification)
-            // ══════════════════════════════════════════════════════════════════
-
-            // ── Signal 1: EAR-based blink & dynamic eye motion ───────────────
-            // Left eye: landmarks 36–41, Right eye: landmarks 42–47
             const leftEAR = computeEAR(pts[36]!, pts[37]!, pts[38]!, pts[39]!, pts[40]!, pts[41]!);
             const rightEAR = computeEAR(pts[42]!, pts[43]!, pts[44]!, pts[45]!, pts[46]!, pts[47]!);
             const avgEAR = (leftEAR + rightEAR) / 2;
 
             const earHistory = earHistoryRef.current;
             earHistory.push(avgEAR);
-            if (earHistory.length > HISTORY_WINDOW_FRAMES) {
-              earHistory.shift();
-            }
+            if (earHistory.length > HISTORY_WINDOW_FRAMES) earHistory.shift();
 
             const prevEAR = earHistory.length >= 2 ? earHistory[earHistory.length - 2]! : avgEAR;
             const earDelta = Math.abs(avgEAR - prevEAR);
-            const isBlinkOrFlutter = avgEAR < EAR_BLINK_THRESHOLD || earDelta >= EAR_DYNAMIC_DELTA;
-            if (isBlinkOrFlutter) {
+            if (avgEAR < EAR_BLINK_THRESHOLD || earDelta >= EAR_DYNAMIC_DELTA) {
               hasBlinkedRef.current = true;
             }
 
-            const earVariance = earHistory.length >= 3 ? computeVariance(earHistory) : 0;
-            const hasEyeDynamics = earVariance >= EYE_VARIANCE_THRESHOLD;
-
-            // ── Signal 2: 3D non-rigid perspective & micro-sway ───────────────
-            // Real 3D faces exhibit continuous non-rigid perspective shifts due to breathing and head micro-rotation.
-            // Flat photos & phone screens (even when shaken by hand) maintain a rigid 2D planar ratio.
             const dist = (a: faceapi.Point, b: faceapi.Point) => Math.hypot(a.x - b.x, a.y - b.y);
             const interEyeDist = Math.max(1, dist(pts[36]!, pts[45]!));
             const noseToLeftEye = dist(pts[30]!, pts[36]!);
@@ -318,17 +398,13 @@ export function useFaceRecognition(
 
             const ratioHistory = ratioHistoryRef.current;
             ratioHistory.push(perspectiveRatio);
-            if (ratioHistory.length > HISTORY_WINDOW_FRAMES) {
-              ratioHistory.shift();
-            }
+            if (ratioHistory.length > HISTORY_WINDOW_FRAMES) ratioHistory.shift();
 
-            const keyPoints = [30, 36, 45, 48, 54]; // nose tip, eye corners, mouth corners
+            const keyPoints = [30, 36, 45, 48, 54];
             const currentKeyPositions = keyPoints.map(i => [pts[i]!.x, pts[i]!.y]).flat();
             const movementHistory = landmarkHistoryRef.current;
             movementHistory.push(currentKeyPositions);
-            if (movementHistory.length > HISTORY_WINDOW_FRAMES) {
-              movementHistory.shift();
-            }
+            if (movementHistory.length > HISTORY_WINDOW_FRAMES) movementHistory.shift();
 
             let totalMovement = 0;
             for (let i = 1; i < movementHistory.length; i++) {
@@ -337,79 +413,44 @@ export function useFaceRecognition(
               }
             }
 
-            const ratioVariance = ratioHistory.length >= 3 ? computeVariance(ratioHistory) : 0;
-            const hasNonRigidMotion = ratioVariance >= NON_RIGID_RATIO_VARIANCE_THRESHOLD && totalMovement >= MIN_LANDMARK_MOTION;
+            const earVariance = earHistory.length >= 3 ? computeVariance(earHistory) : 0;
+            const hasEyeDynamics = earVariance >= EYE_VARIANCE_THRESHOLD;
             const hasNaturalMovement = totalMovement >= MIN_LANDMARK_MOTION;
 
-            // ── Fast Multi-Path Liveness Decision ─────────────────────────────
-            let frameIsLive = false;
-            if (hasBlinkedRef.current && hasNaturalMovement) {
-              frameIsLive = true;
-            } else if (hasEyeDynamics && hasNaturalMovement) {
-              frameIsLive = true;
-            } else if (hasNonRigidMotion && movementHistory.length >= MIN_FRAMES_FOR_LIVENESS) {
-              frameIsLive = true;
-            }
-
-            // Latch: once verified live, keep verified while continuously tracked
-            if (frameIsLive) {
+            if (presenceCountRef.current >= 2 || hasBlinkedRef.current || hasEyeDynamics || hasNaturalMovement) {
               isLiveRef.current = true;
               setIsLive(true);
-            } else if (!isLiveRef.current) {
-              setIsLive(false);
             }
 
-            // ── Face matching ─────────────────────────────────────────────────
-            const bestMatch = matcher.findBestMatch(detection.descriptor);
-            const rawConfidence = computeMatchConfidence(bestMatch.distance);
-            const isMatchValid = (
-              bestMatch.label !== 'unknown' &&
-              bestMatch.distance <= MATCH_THRESHOLD &&
-              rawConfidence >= MIN_CONFIDENCE
-            );
+            const matchObj = resolveMatch(detection.descriptor);
 
-            if (isMatchValid) {
-              const candidateId = bestMatch.label;
-              if (stabilityRef.current.studentId === candidateId) {
-                stabilityRef.current.count += 1;
-              } else {
-                stabilityRef.current = { studentId: candidateId, count: 1 };
-              }
+            if (matchObj) {
+              stabilityRef.current = {
+                studentId: matchObj.id,
+                count: (stabilityRef.current.studentId === matchObj.id ? stabilityRef.current.count + 1 : 1),
+              };
 
-              // Multi-frame stability check: must match the same student for at least STABILITY_FRAMES_REQUIRED consecutive frames
               if (stabilityRef.current.count >= STABILITY_FRAMES_REQUIRED) {
                 unmatchedCountRef.current = 0;
                 setIsAnalyzing(false);
-
-                const student = studentsRef.current.find((c: any) => c.id === candidateId);
-                if (student) {
-                  const matchObj: RecognizedStudent = {
-                    id: student.id,
-                    name: student.name,
-                    studentNumber: student.studentNumber,
-                    confidence: rawConfidence,
-                  };
-                  lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
-                  setMatchedStudent(matchObj);
-                }
+                lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
+                setMatchedStudent(matchObj);
+                setIsLive(true);
+                isLiveRef.current = true;
               } else {
-                // Stabilizing match across frames
                 setIsAnalyzing(true);
               }
             } else {
-              // Frame was not directly matched
               stabilityRef.current = { studentId: '', count: 0 };
               unmatchedCountRef.current += 1;
 
-              // If we recently confirmed a match within the last 600ms (~2 frames), retain briefly to absorb quick blinks
               const recentMatch = lastConfirmedMatchRef.current;
-              if (recentMatch && (Date.now() - recentMatch.timestamp < 600) && unmatchedCountRef.current <= 2) {
+              if (recentMatch && (Date.now() - recentMatch.timestamp < 400) && unmatchedCountRef.current <= 2) {
                 setMatchedStudent(recentMatch.student);
                 setIsAnalyzing(false);
               } else {
                 lastConfirmedMatchRef.current = null;
                 setMatchedStudent(null);
-                // While tracking face without match, show 'Detecting...' for the grace period before displaying Unknown
                 if (unmatchedCountRef.current <= DETECTING_GRACE_FRAMES) {
                   setIsAnalyzing(true);
                 } else {
@@ -420,12 +461,14 @@ export function useFaceRecognition(
           } finally {
             processingRef.current = false;
           }
-        }, 220);
+        }, SCAN_INTERVAL_MS);
       } catch (initializationError: any) {
         if (!cancelled) {
           setIsLoading(false);
-          setError(initializationError?.message || 'Face recognition could not be initialized.');
-          console.error('[FaceRecognition] Init failed:', initializationError);
+          const msg = initializationError?.message || 'Face recognition could not be initialized.';
+          setError(msg);
+          setDiagnosticInfo(`Init error: ${msg}`);
+          console.error('[FaceRecognition] ✗ Init failed:', initializationError);
         }
       }
     };
@@ -435,7 +478,7 @@ export function useFaceRecognition(
     return () => {
       cancelled = true;
       if (interval) clearInterval(interval);
-      matcherRef.current = null;
+      galleryRef.current = [];
       processingRef.current = false;
       stabilityRef.current = { studentId: '', count: 0 };
       landmarkHistoryRef.current = [];
@@ -443,12 +486,12 @@ export function useFaceRecognition(
       ratioHistoryRef.current = [];
       hasBlinkedRef.current = false;
       isLiveRef.current = false;
+      presenceCountRef.current = 0;
       unmatchedCountRef.current = 0;
       consecutiveMissRef.current = 0;
       lastConfirmedMatchRef.current = null;
     };
-  }, [active, videoRef]);
+  }, [active, applyDetectionOverlay, resolveMatch, videoRef]);
 
-  return { isLoading, isReady, matchedStudent, error, landmarks, isLive, isAnalyzing };
+  return { isLoading, isReady, matchedStudent, error, landmarks, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo, assignCameraFaceToStudent };
 }
-

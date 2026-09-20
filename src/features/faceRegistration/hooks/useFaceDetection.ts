@@ -166,7 +166,7 @@ export function useFaceDetection(
             delegate: 'GPU' as const,
           },
           runningMode: 'VIDEO' as const,
-          minDetectionConfidence: 0.35,
+          minDetectionConfidence: 0.55,
         };
         let detector: FaceDetector;
 
