@@ -106,11 +106,16 @@ export const LiveGateLog: React.FC = () => {
       cell: evt => <SourceBadge source={evt.source} />,
     },
     {
-      header: 'Time',
+      header: 'Date & Time',
       cell: evt => (
-        <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-          {new Date(evt.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-        </span>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+            {new Date(evt.captured_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+          </span>
+          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+            {new Date(evt.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </span>
+        </div>
       ),
     },
   ];
