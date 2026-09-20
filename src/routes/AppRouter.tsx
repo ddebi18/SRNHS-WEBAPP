@@ -6,7 +6,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { UserRole } from '@/types/domain.types';
 
-const LoginPage = lazy(() => import('./LoginPage').then(m => ({ default: m.LoginPage })));
+const AdminLoginPage = lazy(() => import('./AdminLoginPage').then(m => ({ default: m.AdminLoginPage })));
+const TeacherLoginPage = lazy(() => import('./TeacherLoginPage').then(m => ({ default: m.TeacherLoginPage })));
 const DashboardOverviewPage = lazy(() => import('./DashboardOverviewPage').then(m => ({ default: m.DashboardOverviewPage })));
 const GateLogPage = lazy(() => import('./GateLogPage').then(m => ({ default: m.GateLogPage })));
 const ClassroomAttendancePage = lazy(() => import('./ClassroomAttendancePage').then(m => ({ default: m.ClassroomAttendancePage })));
@@ -18,7 +19,7 @@ const FaceRegistrationPage = lazy(() => import('./FaceRegistrationPage').then(m 
 const ForbiddenPage = lazy(() => import('./ForbiddenPage').then(m => ({ default: m.ForbiddenPage })));
 const NotFoundPage = lazy(() => import('./NotFoundPage').then(m => ({ default: m.NotFoundPage })));
 
-// Protected Route Guard Wrapper
+// Protected Route Guard Wrapper (Requirement 4: Role-based guards and targeted redirects)
 const ProtectedRoute: React.FC<{
   children: React.ReactNode;
   allowedRoles?: UserRole[];
@@ -30,14 +31,17 @@ const ProtectedRoute: React.FC<{
     return <LoadingSpinner label="Authenticating session..." />;
   }
 
+  // Unauthenticated users go to the login portal for the area they tried to reach
   if (!user) {
-    return <Navigate to="/login" replace />;
+    const isAdminOnlyRoute = allowedRoles && allowedRoles.length === 1 && allowedRoles[0] === 'admin';
+    return <Navigate to={isAdminOnlyRoute ? '/admin/login' : '/teacher/login'} replace />;
   }
 
+  // Wrong-role users get a 403 Forbidden state
   if (allowedRoles && role && !allowedRoles.includes(role)) {
     return (
       <NavigationLayout>
-        <ForbiddenState message={`This route requires one of the following roles: ${allowedRoles.join(', ')}`} />
+        <ForbiddenState message="Access restricted. Your account scope does not have authorization for this area." />
       </NavigationLayout>
     );
   }
@@ -47,12 +51,24 @@ const ProtectedRoute: React.FC<{
 
 const router = createBrowserRouter([
   {
-    path: '/login',
+    path: '/admin/login',
     element: (
       <Suspense fallback={<LoadingSpinner />}>
-        <LoginPage />
+        <AdminLoginPage />
       </Suspense>
     ),
+  },
+  {
+    path: '/teacher/login',
+    element: (
+      <Suspense fallback={<LoadingSpinner />}>
+        <TeacherLoginPage />
+      </Suspense>
+    ),
+  },
+  {
+    path: '/login',
+    element: <Navigate to="/teacher/login" replace />,
   },
   {
     path: '/',

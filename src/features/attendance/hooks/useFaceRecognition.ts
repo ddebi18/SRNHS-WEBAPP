@@ -83,9 +83,40 @@ function computeVariance(values: number[]): number {
   return values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
 }
 
+/**
+ * Computes Cosine Similarity between two 128-dimensional FaceNet biometric embeddings.
+ * Cosine Similarity = (u · v) / (||u|| * ||v||)
+ * For unit-normalized (L2-normalized) vectors: Cosine Similarity = u · v = 1 - (d^2 / 2)
+ */
+export function computeCosineSimilarity(a: Float32Array | number[], b: Float32Array | number[]): number {
+  if (a.length !== b.length || a.length === 0) return 0;
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    const valA = a[i]!;
+    const valB = b[i]!;
+    dotProduct += valA * valB;
+    normA += valA * valA;
+    normB += valB * valB;
+  }
+  const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+  if (denominator < 1e-8) return 0;
+  return Math.max(-1, Math.min(1, dotProduct / denominator));
+}
+
+/**
+ * Computes Cosine Distance (1 - Cosine Similarity) between two 128D embeddings.
+ * Range: [0, 2], where 0 indicates identical facial vectors.
+ */
+export function computeCosineDistance(a: Float32Array | number[], b: Float32Array | number[]): number {
+  return 1 - computeCosineSimilarity(a, b);
+}
+
 function computeMatchConfidence(distance: number): number {
   return Math.max(0, Math.min(1, Math.round((1 - distance) * 100) / 100));
 }
+
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {

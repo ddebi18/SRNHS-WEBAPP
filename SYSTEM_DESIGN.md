@@ -174,7 +174,7 @@ graph TD
   - Message status tags (`Delivered`, `Queued`, `Failed`).
   - Detailed log card displaying Student Name, Destination Guardian Phone, Timestamp, Event Type, and Actual Message Body text.
 * **Discussion:**
-  To guarantee accountability, every biometric scan that triggers an external communication creates an audit log entry. Employs the **Adapter Pattern** (`NotificationAdapter` interface) allowing seamless hot-swapping between the local test adapter (`MockNotificationAdapter`) and live enterprise telco SMS gateways (e.g., Semaphore Philippines, Twilio, or Infobip).
+  To guarantee accountability, every biometric scan that triggers an external communication creates an audit log entry. Employs the **Adapter Pattern** (`NotificationAdapter` interface) allowing seamless hot-swapping between the local test adapter (`MockNotificationAdapter`) and live enterprise telco SMS gateways (specifically the **PhilSMS REST API**).
 
 ### Module 9: Student Conduct & Disciplinary Violation Module
 * **Location:** Embedded in `StudentManager.tsx` and `src/types/domain.types.ts`
@@ -532,7 +532,7 @@ graph TD
 3. **Component 3: Turnstile Biometric Edge Ingestion Node:** Physical edge appliance positioned at school turnstiles. Houses high-definition IP cameras running RTSP video streams, MediaMTX for WebRTC/WHEP protocol translation, and local neural network models for facial boundary detection and feature embedding extraction.
 4. **Component 4: Supabase BaaS Cloud Engine:** Managed cloud tier orchestrating authentication tokens, PostgREST API generation, Realtime WebSocket broadcast multiplexing, and secure S3 file storage.
 5. **Component 5: PostgreSQL 15 Relational Engine:** Primary transactional ACID database running Row-Level Security, constraints, foreign keys, stored functions, and automated timestamp triggers.
-6. **Component 6: Telco Cellular SMS Gateway:** Outbound SMS distribution engine (Semaphore / Twilio) communicating over cellular networks to reach parents in areas with intermittent Internet connectivity.
+6. **Component 6: Telco Cellular SMS Gateway:** Outbound SMS distribution engine (**PhilSMS REST API**) communicating over cellular networks to reach parents across Globe, Smart, and DITO networks even in areas with intermittent Internet connectivity.
 
 ---
 
@@ -546,7 +546,7 @@ graph TD
 | Supabase Realtime | WebApp Dashboard | **WSS** (Secure WebSockets) | Real-time PostgreSQL row insertion notifications | Bi-directional asynchronous push |
 | WebApp Dashboard | Supabase PostgREST | **HTTPS / TLS 1.3** | CRUD queries, faculty schedules, section rosters | Asynchronous request-response |
 | WebApp Dashboard | IndexedDB Engine | **IndexedDB API** (W3C Standard) | Binary JPEG Blob structures for 3-angle biometric sets | Asynchronous transactional I/O |
-| Supabase Cloud | Telco SMS Gateway | **HTTPS / REST Webhook** | E.164 destination mobile number, formatted message text | Asynchronous queued delivery |
+| Supabase Cloud | PhilSMS Gateway | **HTTPS / REST Webhook** | E.164 destination mobile number, formatted message text | Asynchronous queued delivery |
 
 ---
 
@@ -554,7 +554,7 @@ graph TD
 
 ### 1. Internal Software Interfaces
 * **`RecognitionAdapter` Interface:** Decouples UI components from recognition backends. Allows development using `MockRecognitionAdapter` and production using `SupabaseRecognitionAdapter`.
-* **`NotificationAdapter` Interface:** Abstraction layer decoupling attendance events from telecom hardware.
+* **`NotificationAdapter` Interface:** Abstraction layer decoupling attendance events from telecom hardware. Fulfills `PhilSmsAdapter` and `MockNotificationAdapter`.
 
 ### 2. Hardware Interfaces
 * **Webcam Media Capture Interface:** Complies with W3C `navigator.mediaDevices.getUserMedia`. Requests 1280x720 video feed, auto-focus, and natural lighting calibration for face enrollment.
@@ -562,7 +562,7 @@ graph TD
 
 ### 3. External Cloud Interfaces
 * **Supabase GoTrue Auth API:** OAuth2 / JWT bearer token exchange interface.
-* **Semaphore Philippine SMS REST API:** Outbound JSON payload over HTTPS delivering parent SMS alerts to Smart, Globe, and DITO cellular networks.
+* **PhilSMS REST API (v3):** Outbound JSON payload over HTTPS delivering parent SMS alerts to Smart, Globe, and DITO cellular networks via `https://app.philsms.com/api/v3/sms/send`.
 
 ### 4. Human-Computer Interfaces (HCI)
 * **Desktop Workstation View:** Multi-column layout optimized for 1080p staff office monitors, featuring live camera viewfinders, data tables, and rapid hotkey navigation.

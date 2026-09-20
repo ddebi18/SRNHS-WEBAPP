@@ -56,7 +56,7 @@ const STATUS_ACTIONS: { status: AttendanceStatus; label: string; icon: React.Rea
 ];
 
 export const ClassroomAttendanceBoard: React.FC = () => {
-  const { user } = useRole();
+  const { user, isTeacher, isAdmin } = useRole();
   const [sections, setSections] = useState<Section[]>([]);
   const [selectedSection, setSelectedSection] = useState('');
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -66,12 +66,34 @@ export const ClassroomAttendanceBoard: React.FC = () => {
   const [manualOverrides, setManualOverrides] = useState<Record<string, { status: AttendanceStatus; markedBy?: string }>>(loadStoredOverrides());
   const [isLoading, setIsLoading] = useState(true);
 
+  // Filter sections by teacher ownership (Requirement 4)
+  const authorizedSections = React.useMemo(() => {
+    if (isAdmin) return sections;
+    return sections.filter(sec => {
+      const sTeacherId = sec.teacherId || (sec as any).adviser_id;
+      const sTeacherName = sec.teacherName || (sec as any).adviser_name;
+      if (sTeacherId && user?.id && sTeacherId === user.id) return true;
+      if (sTeacherName && user?.full_name && sTeacherName.toLowerCase().includes(user.full_name.toLowerCase())) return true;
+      if (!sTeacherId && !sTeacherName) return true;
+      return false;
+    });
+  }, [sections, isAdmin, user]);
+
   // Load sections and subjects on mount
   useEffect(() => {
     fetchSections().then(data => {
       setSections(data);
       if (!selectedSection) {
-        setSelectedSection('all');
+        if (isTeacher) {
+          const firstAuthorized = data.find(s => {
+            const tId = s.teacherId || (s as any).adviser_id;
+            const tName = s.teacherName || (s as any).adviser_name;
+            return !tId || tId === user?.id || (user?.full_name && tName?.toLowerCase().includes(user.full_name.toLowerCase()));
+          });
+          setSelectedSection(firstAuthorized ? firstAuthorized.id : (data[0]?.id || ''));
+        } else {
+          setSelectedSection('all');
+        }
       }
     });
     const stored = getStoredSubjects();
@@ -79,7 +101,8 @@ export const ClassroomAttendanceBoard: React.FC = () => {
     if (stored.length > 0) {
       setSelectedSubject(stored[0]!.title);
     }
-  }, []);
+  }, [isTeacher, user]);
+
 
   // Fetch roster when selected section changes
   const loadRoster = useCallback(async (secId: string) => {
@@ -213,16 +236,18 @@ export const ClassroomAttendanceBoard: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-3 py-2 shadow-card-sm transition-colors">
             <Users className="w-4 h-4 text-slate-400 dark:text-slate-500" />
-            {sections.length > 0 ? (
+            {authorizedSections.length > 0 ? (
               <select
                 value={selectedSection}
                 onChange={e => setSelectedSection(e.target.value)}
                 className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
               >
-                <option value="all" className="dark:bg-slate-900">
-                  All Sections (All Students)
-                </option>
-                {sections.map(sec => (
+                {isAdmin && (
+                  <option value="all" className="dark:bg-slate-900">
+                    All Sections (All Students)
+                  </option>
+                )}
+                {authorizedSections.map(sec => (
                   <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
                     {sec.name}
                   </option>
@@ -231,7 +256,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
             ) : (
               <span className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
                 <Users className="w-3.5 h-3.5" />
-                All Enrolled Students
+                {isTeacher ? 'No assigned sections' : 'All Enrolled Students'}
               </span>
             )}
           </div>
