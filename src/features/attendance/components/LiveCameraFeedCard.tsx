@@ -86,10 +86,15 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
 
   const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
-  const { isFaceDetected, faceBox, detectorError } = useFaceDetection(videoRef, 'front', hasVideoSource && isVideoReady);
+  const { isFaceDetected, faceBox, detectorError } = useFaceDetection(
+    videoRef,
+    'front',
+    hasVideoSource && isVideoReady,
+    { maxMissedFrames: 0 }
+  );
   const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo } = useFaceRecognition(videoRef, hasVideoSource);
   const [isInstantScanning, setIsInstantScanning] = useState(false);
-  const activeBox = faceBox || recognitionBox;
+  const activeBox = isFaceDetected ? (faceBox || recognitionBox) : recognitionBox;
   const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
 
   // Keep scanning whenever a face is in the camera, including after Time-In.

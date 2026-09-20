@@ -23,9 +23,8 @@ import {
 export type { RecognitionStatusInput } from '../lib/recognitionStatus';
 export { computeCosineSimilarity, computeCosineDistance } from '../lib/faceNetMatcher';
 
-const DETECTING_GRACE_FRAMES = 6;
 const SCAN_INTERVAL_MS = 200;
-const FACE_LEFT_MISS_FRAMES = 10;
+const FACE_LEFT_MISS_FRAMES = 1;
 const ACCURATE_SCAN_EVERY = 8;
 
 const EAR_BLINK_THRESHOLD = 0.21;
@@ -369,14 +368,14 @@ export function useFaceRecognition(
 
             if (!detection) {
               consecutiveMissRef.current += 1;
-              if (consecutiveMissRef.current > FACE_LEFT_MISS_FRAMES) {
+              setRecognitionBox(null);
+              setLandmarks(null);
+              if (consecutiveMissRef.current >= FACE_LEFT_MISS_FRAMES) {
                 stabilityRef.current = { studentId: '', count: 0 };
                 presenceCountRef.current = 0;
                 lastConfirmedMatchRef.current = null;
                 lastBoxRef.current = null;
                 setMatchedStudent(null);
-                setLandmarks(null);
-                setRecognitionBox(null);
                 setIsLive(false);
                 setIsAnalyzing(false);
                 unmatchedCountRef.current = 0;
@@ -389,12 +388,6 @@ export function useFaceRecognition(
             applyDetectionOverlay(detection, video);
 
             const box = detection.detection?.box;
-            const prevBox = lastBoxRef.current;
-            const sameTrack = Boolean(
-              box &&
-              prevBox &&
-              Math.hypot((box.x + box.width / 2) - (prevBox.x + prevBox.width / 2), (box.y + box.height / 2) - (prevBox.y + prevBox.height / 2)) < Math.max(box.width, prevBox.width) * 1.15
-            );
             if (box) {
               lastBoxRef.current = { x: box.x, y: box.y, width: box.width, height: box.height };
             }
@@ -462,7 +455,7 @@ export function useFaceRecognition(
                 count: (stabilityRef.current.studentId === matchObj.id ? stabilityRef.current.count + 1 : 1),
               };
 
-              if (stabilityRef.current.count >= STABILITY_FRAMES_REQUIRED || stillLockedPerson) {
+              if (stabilityRef.current.count >= STABILITY_FRAMES_REQUIRED || (locked && matchObj.id === locked.student.id)) {
                 unmatchedCountRef.current = 0;
                 setIsAnalyzing(false);
                 lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
@@ -472,7 +465,7 @@ export function useFaceRecognition(
               } else {
                 setIsAnalyzing(true);
               }
-            } else if (locked && (stillLockedPerson || sameTrack)) {
+            } else if (locked && stillLockedPerson) {
               unmatchedCountRef.current = 0;
               setMatchedStudent(locked.student);
               setIsAnalyzing(false);
@@ -481,15 +474,9 @@ export function useFaceRecognition(
             } else {
               stabilityRef.current = { studentId: '', count: 0 };
               unmatchedCountRef.current += 1;
-
-              if (locked && unmatchedCountRef.current <= DETECTING_GRACE_FRAMES) {
-                setMatchedStudent(locked.student);
-                setIsAnalyzing(true);
-              } else {
-                lastConfirmedMatchRef.current = null;
-                setMatchedStudent(null);
-                setIsAnalyzing(true);
-              }
+              lastConfirmedMatchRef.current = null;
+              setMatchedStudent(null);
+              setIsAnalyzing(true);
             }
           } finally {
             processingRef.current = false;
