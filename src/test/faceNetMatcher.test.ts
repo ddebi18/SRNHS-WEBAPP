@@ -4,6 +4,7 @@ import {
   euclideanDistance,
   findDuplicateStudentId,
   isFaceBoxUsable,
+  isSameEnrolledPerson,
   scoreFaceNetMatch,
 } from '@/features/attendance/lib/faceNetMatcher';
 
@@ -63,6 +64,11 @@ describe('FaceNet matcher', () => {
     );
     expect(result.accepted).toBe(false);
     expect(result.reason).toBe('ambiguous');
+  });
+
+  it('keeps a previously verified student when the live embedding is still theirs', () => {
+    expect(isSameEnrolledPerson(studentAClose, [studentA])).toBe(true);
+    expect(isSameEnrolledPerson(stranger, [studentA])).toBe(false);
   });
 
   it('blocks registering a face that already belongs to another student', () => {

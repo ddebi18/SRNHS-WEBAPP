@@ -22,7 +22,8 @@ export interface UseFaceDetectionReturn {
 export function useFaceDetection(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   currentAngle: CaptureAngle,
-  active: boolean
+  active: boolean,
+  options?: { maxMissedFrames?: number }
 ): UseFaceDetectionReturn {
   const [isFaceDetected, setIsFaceDetected] = useState(false);
   const [isCentered, setIsCentered] = useState(false);
@@ -34,7 +35,7 @@ export function useFaceDetection(
   const missedFramesRef = useRef(0);
   const faceBoxRef = useRef<FaceBox | null>(null);
 
-  const MAX_MISSED_FRAMES = 4; // ~1.2s grace period for fast movements or momentary obstruction
+  const MAX_MISSED_FRAMES = options?.maxMissedFrames ?? 4;
 
   useEffect(() => {
     let cancelled = false;
@@ -210,7 +211,7 @@ export function useFaceDetection(
       detectorRef.current?.close();
       detectorRef.current = null;
     };
-  }, [active, videoRef, currentAngle]);
+  }, [active, videoRef, currentAngle, options?.maxMissedFrames]);
 
   return {
     isFaceDetected,

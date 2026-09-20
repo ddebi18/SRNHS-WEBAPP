@@ -88,17 +88,6 @@ export async function detectLiveFace(
       // Keep the camera loop moving if a single inference frame fails.
     }
   }
-
-  if (faceapi.nets.ssdMobilenetv1.isLoaded) {
-    try {
-      const detection = await faceapi
-        .detectSingleFace(input, new faceapi.SsdMobilenetv1Options({ minConfidence: MIN_LIVE_DETECTION_SCORE }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-      if (isQualityDetection(detection, MIN_LIVE_DETECTION_SCORE)) return detection;
-    } catch {}
-  }
-
   return null;
 }
 

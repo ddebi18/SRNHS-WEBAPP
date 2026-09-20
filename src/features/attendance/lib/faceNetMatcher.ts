@@ -7,6 +7,7 @@
 export const FACENET_DISTANCE_THRESHOLD = 0.55;
 export const FACENET_AMBIGUITY_MARGIN = 0.08;
 export const FACENET_DUPLICATE_DISTANCE = 0.42;
+export const SAME_PERSON_RELOCK_THRESHOLD = 0.56;
 export const MIN_FACE_SIZE_PX = 70;
 export const MIN_LIVE_DETECTION_SCORE = 0.32;
 export const MIN_REGISTER_DETECTION_SCORE = 0.38;
@@ -136,6 +137,14 @@ export function scoreFaceNetMatch(
     accepted: true,
     reason: 'matched',
   };
+}
+
+export function isSameEnrolledPerson(
+  query: Float32Array | number[],
+  descriptors: Array<Float32Array | number[]>,
+  threshold = SAME_PERSON_RELOCK_THRESHOLD
+): boolean {
+  return minDistanceToLabel(query, descriptors) <= threshold;
 }
 
 export function findDuplicateStudentId(

@@ -86,21 +86,28 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
 
   const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
-  const { isFaceDetected, faceBox, detectorError } = useFaceDetection(videoRef, 'front', hasVideoSource && isVideoReady);
+  const { isFaceDetected, faceBox, detectorError } = useFaceDetection(
+    videoRef,
+    'front',
+    hasVideoSource && isVideoReady,
+    { maxMissedFrames: 0 }
+  );
   const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo } = useFaceRecognition(videoRef, hasVideoSource);
   const [isInstantScanning, setIsInstantScanning] = useState(false);
-  const activeBox = faceBox || recognitionBox;
+  const activeBox = isFaceDetected ? (faceBox || recognitionBox) : recognitionBox;
   const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
 
-  // Auto-scan snapshot trigger: When face is stable in frame for 1.0s, trigger snapshot match automatically
+  // Keep scanning whenever a face is in the camera, including after Time-In.
   useEffect(() => {
-    if (!isAnyFaceDetected || !isRecognitionReady || matchedStudent || !hasVideoSource) return;
+    if (!isAnyFaceDetected || !isRecognitionReady || !hasVideoSource) return;
 
-    const timer = setTimeout(() => {
+    const runScan = () => {
       triggerInstantScan().catch(() => {});
-    }, 1000);
+    };
 
-    return () => clearTimeout(timer);
+    runScan();
+    const timer = setInterval(runScan, matchedStudent ? 2200 : 900);
+    return () => clearInterval(timer);
   }, [isAnyFaceDetected, isRecognitionReady, matchedStudent, hasVideoSource, triggerInstantScan]);
 
   useEffect(() => {
@@ -504,10 +511,10 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     ) : isDetecting ? (
                       <>
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
-                        Scanning Face (&lt;3s)…
+                        Scanning Face…
                       </>
                     ) : (
-                      'Unregistered Face'
+                      'Unknown Face'
                     )}
                   </span>
                 </div>
