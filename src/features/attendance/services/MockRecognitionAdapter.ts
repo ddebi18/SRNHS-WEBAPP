@@ -1,7 +1,7 @@
 import { RecognitionAdapter } from './RecognitionAdapter';
 import { RecognitionEvent, EventType } from '@/types/domain.types';
 import { getStoredStudents } from '@/features/faceRegistration/api';
-import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
+import { activeNotificationAdapter } from '@/features/notifications/services';
 
 export const INITIAL_MOCK_EVENTS: RecognitionEvent[] = [];
 
@@ -163,11 +163,11 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
       const actionText = eventType === 'exit' ? 'exited campus via' : 'entered campus via';
       const smsType = eventType === 'exit' ? 'gate_exit' : 'gate_entry';
 
-      mockNotificationAdapter.sendAlert({
+      activeNotificationAdapter.sendAlert({
         student_id: newEvt.student_id,
         student_name: studentName,
         guardian_phone: guardianPhone,
-        message: `[SRNHS Alert] ${studentName} (LRN: ${studentLrn}) ${actionText} ${locationName} at ${timeStr}.`,
+        message: `[SRNHS] ${studentName} (LRN: ${studentLrn}) ${actionText} ${locationName} at ${timeStr}. - San Roque National High School`,
         event_type: smsType,
       }).catch(err => console.warn('SMS dispatch notice:', err));
     } catch (smsErr) {
