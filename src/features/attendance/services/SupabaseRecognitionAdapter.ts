@@ -41,8 +41,10 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
     };
   }
 
-  async getEvents(filters?: { studentId?: string; type?: EventType; limit?: number }): Promise<RecognitionEvent[]> {
-    const localEvents = await mockRecognitionAdapter.getEvents(filters);
+  async getEvents(filters?: { studentId?: string; type?: EventType; limit?: number; cloudOnly?: boolean }): Promise<RecognitionEvent[]> {
+    // cloudOnly=true: skip localStorage entirely and return all Supabase rows unfiltered.
+    // Used by the admin gate log so scans from every device are visible.
+    const localEvents = filters?.cloudOnly ? [] : await mockRecognitionAdapter.getEvents(filters);
     if (!supabase) return localEvents;
 
     try {
@@ -81,7 +83,12 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
         captured_at: row.captured_at,
       }));
 
-      // Merge cloud events with local events, deduplicated by student + type + date
+      // cloudOnly: return raw Supabase rows sorted by time, no local merge or dedup.
+      if (filters?.cloudOnly) {
+        return dbEvents;
+      }
+
+      // Default: merge cloud events with local events, deduplicated by student + type + date
       const mergedMap = new Map<string, RecognitionEvent>();
       localEvents.forEach(e => {
         const dateStr = new Date(e.captured_at).toDateString();

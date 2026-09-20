@@ -19,15 +19,18 @@ export const LiveGateLog: React.FC = () => {
 
   const loadEvents = async () => {
     setIsLoading(true);
-    const data = await supabaseRecognitionAdapter.getEvents();
+    // cloudOnly: read directly from Supabase so the admin sees scans from
+    // every scanning device, not just events stored on this machine.
+    const data = await supabaseRecognitionAdapter.getEvents({ cloudOnly: true });
     setEvents(data);
     setIsLoading(false);
   };
 
   useEffect(() => {
     loadEvents();
-    const unsubscribe = supabaseRecognitionAdapter.subscribeToEvents(newEvent => {
-      setEvents(prev => [newEvent, ...prev]);
+    const unsubscribe = supabaseRecognitionAdapter.subscribeToEvents(_newEvent => {
+      // On any new event, re-fetch the full cloud log so new scans appear instantly
+      supabaseRecognitionAdapter.getEvents({ cloudOnly: true }).then(setEvents);
     });
     return () => unsubscribe();
   }, []);
