@@ -1,6 +1,7 @@
 import * as faceapi from '@vladmandic/face-api';
 import {
   MIN_LIVE_DETECTION_SCORE,
+  MIN_PHOTO_DETECTION_SCORE,
   MIN_REGISTER_DETECTION_SCORE,
   isFaceBoxUsable,
 } from './faceNetMatcher';
@@ -87,6 +88,17 @@ export async function detectLiveFace(
       // Keep the camera loop moving if a single inference frame fails.
     }
   }
+
+  if (faceapi.nets.ssdMobilenetv1.isLoaded) {
+    try {
+      const detection = await faceapi
+        .detectSingleFace(input, new faceapi.SsdMobilenetv1Options({ minConfidence: MIN_LIVE_DETECTION_SCORE }))
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (isQualityDetection(detection, MIN_LIVE_DETECTION_SCORE)) return detection;
+    } catch {}
+  }
+
   return null;
 }
 
@@ -122,7 +134,7 @@ export async function detectAccurateFace(
 
 export async function extractDescriptorFromImage(
   img: HTMLImageElement,
-  minScore = MIN_REGISTER_DETECTION_SCORE
+  minScore = MIN_PHOTO_DETECTION_SCORE
 ): Promise<Float32Array | null> {
   const canvas = renderToCanvas(img, 1.0);
   const primary = await detectAccurateFace(canvas, minScore);
@@ -141,7 +153,7 @@ export async function extractDescriptorsFromBlobs(blobs: Blob[]): Promise<Float3
     const url = URL.createObjectURL(blob);
     try {
       const image = await loadImage(url);
-      const descriptor = await extractDescriptorFromImage(image, MIN_REGISTER_DETECTION_SCORE);
+      const descriptor = await extractDescriptorFromImage(image, MIN_PHOTO_DETECTION_SCORE);
       if (descriptor) descriptors.push(descriptor);
     } finally {
       URL.revokeObjectURL(url);

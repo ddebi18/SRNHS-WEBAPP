@@ -26,11 +26,23 @@ describe('FaceNet matcher', () => {
     { label: 'std-b', descriptors: [studentB] },
   ];
 
-  it('accepts a true FaceNet match only when distance is tight and unique', () => {
+  it('accepts a registered face when it is clearly closer than anyone else', () => {
     const result = scoreFaceNetMatch(studentAClose, gallery);
     expect(result.accepted).toBe(true);
     expect(result.label).toBe('std-a');
-    expect(result.distance).toBeLessThan(0.48);
+    expect(result.distance).toBeLessThan(0.55);
+  });
+
+  it('still accepts a registered face under normal webcam variance', () => {
+    const result = scoreFaceNetMatch(
+      [0.40, 0],
+      [
+        { label: 'std-a', descriptors: [[0, 0]] },
+        { label: 'std-b', descriptors: [[0.90, 0]] },
+      ]
+    );
+    expect(result.accepted).toBe(true);
+    expect(result.label).toBe('std-a');
   });
 
   it('rejects an unknown face instead of assigning the nearest student', () => {

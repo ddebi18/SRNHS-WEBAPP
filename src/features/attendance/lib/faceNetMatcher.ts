@@ -1,18 +1,19 @@
 /**
  * FaceNet 128D matching helpers.
  * face-api FaceMatcher uses Euclidean distance on L2-normalized embeddings.
- * Same-person distances are typically < 0.45; unknown faces sit near 0.6+.
+ * Same-person webcam captures are typically 0.20–0.55; different people sit near 0.6+.
  */
 
-export const FACENET_DISTANCE_THRESHOLD = 0.48;
-export const FACENET_AMBIGUITY_MARGIN = 0.10;
+export const FACENET_DISTANCE_THRESHOLD = 0.55;
+export const FACENET_AMBIGUITY_MARGIN = 0.08;
 export const FACENET_DUPLICATE_DISTANCE = 0.42;
-export const MIN_FACE_SIZE_PX = 90;
-export const MIN_LIVE_DETECTION_SCORE = 0.42;
-export const MIN_REGISTER_DETECTION_SCORE = 0.50;
-export const STABILITY_FRAMES_REQUIRED = 3;
+export const MIN_FACE_SIZE_PX = 70;
+export const MIN_LIVE_DETECTION_SCORE = 0.32;
+export const MIN_REGISTER_DETECTION_SCORE = 0.38;
+export const MIN_PHOTO_DETECTION_SCORE = 0.28;
+export const STABILITY_FRAMES_REQUIRED = 2;
 export const FACE_DESCRIPTOR_VERSION = 2;
-export const MIN_ATTENDANCE_LOG_CONFIDENCE = 0.55;
+export const MIN_ATTENDANCE_LOG_CONFIDENCE = 0.45;
 
 export interface LabeledDescriptors {
   label: string;
@@ -115,7 +116,8 @@ export function scoreFaceNetMatch(
     };
   }
 
-  if (Number.isFinite(secondDistance) && secondDistance - best.distance < margin) {
+  const secondIsAlsoAMatch = Number.isFinite(secondDistance) && secondDistance <= threshold;
+  if (secondIsAlsoAMatch && secondDistance - best.distance < margin) {
     return {
       label: 'unknown',
       distance: best.distance,

@@ -452,7 +452,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             )}
 
             {activeBox && (() => {
-              const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.65);
+              const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.50);
               const isRecognized = Boolean(matchedStudent);
               const isDetecting = !isRecognized && (isAnalyzing || isInstantScanning || !isRecognitionReady);
               const isSpoofWarning = isRecognized && !isLive;
