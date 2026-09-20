@@ -16,6 +16,7 @@ import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcS
 import { useFaceDetection } from '@/features/faceRegistration/hooks/useFaceDetection';
 import { useFaceRecognition } from '../hooks/useFaceRecognition';
 import { getRecognitionStatusText } from '../lib/recognitionStatus';
+import { MIN_ATTENDANCE_LOG_CONFIDENCE } from '../lib/faceNetMatcher';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
 import type { EventType } from '@/types/domain.types';
@@ -86,10 +87,8 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
   const { isFaceDetected, faceBox, detectorError } = useFaceDetection(videoRef, 'front', hasVideoSource && isVideoReady);
-  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo, assignCameraFaceToStudent } = useFaceRecognition(videoRef, hasVideoSource);
+  const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo } = useFaceRecognition(videoRef, hasVideoSource);
   const [isInstantScanning, setIsInstantScanning] = useState(false);
-  const [isAssigningFace, setIsAssigningFace] = useState(false);
-  const [assignResult, setAssignResult] = useState<string | null>(null);
   const activeBox = faceBox || recognitionBox;
   const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
 
@@ -159,7 +158,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   }, []);
 
   useEffect(() => {
-    if (!matchedStudent || matchedStudent.confidence < 0.35) return;
+    if (!isLive || !matchedStudent || matchedStudent.confidence < MIN_ATTENDANCE_LOG_CONFIDENCE) return;
 
     const logKey = `${matchedStudent.id}_${scanMode}`;
     const alreadyLoggedTime = dailyCompletedMap.get(logKey);
@@ -453,7 +452,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             )}
 
             {activeBox && (() => {
-              const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.65);
+              const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.50);
               const isRecognized = Boolean(matchedStudent);
               const isDetecting = !isRecognized && (isAnalyzing || isInstantScanning || !isRecognitionReady);
               const isSpoofWarning = isRecognized && !isLive;
@@ -601,31 +600,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             {recognitionError && (
               <div className="relative z-10 mt-1 px-2.5 py-1.5 rounded-lg bg-rose-950/80 backdrop-blur-md border border-rose-800/60 text-rose-300 text-[10px] sm:text-[11px] font-bold flex flex-col gap-1.5">
                 <span>Recognition error: {recognitionError}</span>
-                {isAnyFaceDetected && (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setIsAssigningFace(true);
-                      setAssignResult(null);
-                      const ok = await assignCameraFaceToStudent();
-                      setIsAssigningFace(false);
-                      setAssignResult(ok
-                        ? 'Face registered from live camera. Recognition is now active.'
-                        : 'Could not extract face. Please make sure your face is fully visible.');
-                      if (ok) setTimeout(() => setAssignResult(null), 5000);
-                    }}
-                    disabled={isAssigningFace}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black text-[10px] sm:text-[11px] transition-all cursor-pointer self-start shadow-md"
-                  >
-                    <Zap className="w-3 h-3" />
-                    {isAssigningFace ? 'Registering…' : 'Use Current Camera Face as Reference'}
-                  </button>
-                )}
-                {assignResult && (
-                  <span className={assignResult.startsWith('Face registered') ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
-                    {assignResult}
-                  </span>
-                )}
+                <span className="text-amber-200 font-semibold">
+                  Register the correct student from Face Registration. Live camera faces are never auto-assigned to another person.
+                </span>
               </div>
             )}
           </div>

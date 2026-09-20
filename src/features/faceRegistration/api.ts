@@ -1,5 +1,6 @@
 import { Student, Section, FaceRegistrationPayload, FaceRegistrationResult } from './types';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { FACE_DESCRIPTOR_VERSION } from '@/features/attendance/lib/faceNetMatcher';
 
 const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
 const LOCAL_STORAGE_KEY_SECTIONS = 'srnhs_face_registration_sections_v1';
@@ -791,6 +792,12 @@ export async function submitFaceRegistration(
       left: photoMap.left || students[index]!.registeredPhotos?.left,
       right: photoMap.right || students[index]!.registeredPhotos?.right,
     },
+    faceDescriptors: payload.faceDescriptors && payload.faceDescriptors.length > 0
+      ? payload.faceDescriptors
+      : students[index]!.faceDescriptors,
+    faceDescriptorVersion: payload.faceDescriptors && payload.faceDescriptors.length > 0
+      ? FACE_DESCRIPTOR_VERSION
+      : students[index]!.faceDescriptorVersion,
   };
   saveStoredStudents(students);
 

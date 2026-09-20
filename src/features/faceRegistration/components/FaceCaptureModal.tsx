@@ -82,7 +82,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
   const handleCaptureFrame = async () => {
     if (videoRef.current) {
-      await captureCurrentAngle(videoRef.current);
+      await captureCurrentAngle(videoRef.current, faceBox);
     }
   };
 
@@ -107,8 +107,10 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
         onSuccess(student.id);
         handleClose();
       }
-    } catch (e) {
-      // Error handled in hook state
+    } catch (e: any) {
+      if (!submitError && e?.message) {
+        console.warn('[FaceRegistration]', e.message);
+      }
     }
   };
 

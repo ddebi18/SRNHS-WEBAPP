@@ -80,34 +80,100 @@ export class AndroidSmsGatewayAdapter implements NotificationAdapter {
     const notificationId = `android-gw-${Date.now()}`;
     let deliveryStatus: 'sent' | 'failed' = 'sent';
 
-    if (!this.baseUrl) {
+    if (!this.baseUrl && !import.meta.env.VITE_TEXTBEE_API_KEY && !import.meta.env.VITE_INFINIREACH_API_KEY && !import.meta.env.VITE_ANDROID_GATEWAY_API_KEY) {
       // No gateway URL configured — simulate for dev
-      console.log(`[AndroidGateway] No gateway URL set. Simulating SMS to ${data.guardian_phone}: "${data.message}"`);
+      console.log(`[AndroidGateway] No gateway URL/Key set. Simulating SMS to ${data.guardian_phone}: "${data.message}"`);
     } else {
       try {
-        const credentials = btoa(`${this.username}:${this.password}`);
-        const response = await fetch(`${this.baseUrl}/3rdparty/v1/message`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Basic ${credentials}`,
-          },
-          body: JSON.stringify({
-            message: data.message,
-            phoneNumbers: [this.formatPhilippineNumber(data.guardian_phone)],
-          }),
-        });
+        const isTextBee = !!import.meta.env.VITE_TEXTBEE_API_KEY;
+        const isInfinireach = this.baseUrl.includes('infinireach') || !!import.meta.env.VITE_INFINIREACH_API_KEY || !!import.meta.env.VITE_ANDROID_GATEWAY_API_KEY;
 
-        if (!response.ok) {
-          const errBody = await response.text();
-          console.error(`[AndroidGateway] HTTP ${response.status}:`, errBody);
-          deliveryStatus = 'failed';
+        if (isTextBee) {
+          const apiKey = import.meta.env.VITE_TEXTBEE_API_KEY as string;
+          const deviceId = import.meta.env.VITE_TEXTBEE_DEVICE_ID as string | undefined;
+
+          const payload: Record<string, any> = {
+            recipients: [this.formatPhilippineNumber(data.guardian_phone)],
+            message: data.message,
+          };
+          if (deviceId) {
+            payload.deviceId = deviceId;
+          }
+
+          const response = await fetch('https://api.textbee.dev/api/v1/gateway/send-sms', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (!response.ok) {
+            const errBody = await response.text();
+            console.error(`[TextBee] HTTP ${response.status}:`, errBody);
+            deliveryStatus = 'failed';
+          } else {
+            const resJson = await response.json().catch(() => ({}));
+            console.log('[TextBee] SMS dispatched successfully:', resJson);
+          }
+        } else if (isInfinireach) {
+          const apiKey = import.meta.env.VITE_INFINIREACH_API_KEY || import.meta.env.VITE_ANDROID_GATEWAY_API_KEY || this.password || this.username;
+          const endpoint = this.baseUrl.startsWith('http') ? `${this.baseUrl}/api/v1/messages` : 'https://api.infinireach.io/api/v1/messages';
+          const senderPhone = import.meta.env.VITE_INFINIREACH_SENDER || import.meta.env.VITE_ANDROID_GATEWAY_SENDER || undefined;
+
+          const payload: Record<string, any> = {
+            to: this.formatPhilippineNumber(data.guardian_phone),
+            message: data.message,
+            channel: 'sms',
+          };
+          if (senderPhone) {
+            payload.from = this.formatPhilippineNumber(senderPhone);
+          }
+
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-API-Key': apiKey,
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (!response.ok) {
+            const errBody = await response.text();
+            console.error(`[InfiniReach] HTTP ${response.status}:`, errBody);
+            deliveryStatus = 'failed';
+          } else {
+            const resJson = await response.json().catch(() => ({}));
+            console.log('[InfiniReach] SMS dispatched successfully:', resJson);
+          }
         } else {
-          const resJson = await response.json().catch(() => ({}));
-          console.log('[AndroidGateway] SMS dispatched successfully:', resJson);
+          // Standard Capcom6 Android SMS Gateway
+          const credentials = btoa(`${this.username}:${this.password}`);
+          const response = await fetch(`${this.baseUrl}/3rdparty/v1/message`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Basic ${credentials}`,
+            },
+            body: JSON.stringify({
+              message: data.message,
+              phoneNumbers: [this.formatPhilippineNumber(data.guardian_phone)],
+            }),
+          });
+
+          if (!response.ok) {
+            const errBody = await response.text();
+            console.error(`[AndroidGateway] HTTP ${response.status}:`, errBody);
+            deliveryStatus = 'failed';
+          } else {
+            const resJson = await response.json().catch(() => ({}));
+            console.log('[AndroidGateway] SMS dispatched successfully:', resJson);
+          }
         }
       } catch (networkErr) {
-        console.error('[AndroidGateway] Network error — is the phone reachable?', networkErr);
+        console.error('[AndroidGateway] Network error — is the gateway reachable?', networkErr);
         deliveryStatus = 'failed';
       }
     }

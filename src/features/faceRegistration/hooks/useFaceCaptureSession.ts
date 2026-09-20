@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { CaptureAngle, CapturedFrame } from '../types';
+import { FaceBox } from './useFaceDetection';
 
 export type SessionStep = 'consent' | 'front' | 'left' | 'right' | 'review';
 
@@ -9,7 +10,7 @@ export interface UseFaceCaptureSessionReturn {
   consentConfirmed: boolean;
   isAllCaptured: boolean;
   setConsentConfirmed: (confirmed: boolean) => void;
-  captureCurrentAngle: (videoElement: HTMLVideoElement) => Promise<void>;
+  captureCurrentAngle: (videoElement: HTMLVideoElement, faceBox?: FaceBox | null) => Promise<void>;
   retakeAngle: (angle: CaptureAngle) => void;
   goToStep: (step: SessionStep) => void;
   resetSession: () => void;
@@ -38,18 +39,31 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     };
   }, []);
 
-  const captureCurrentAngle = useCallback(async (video: HTMLVideoElement) => {
+  const captureCurrentAngle = useCallback(async (video: HTMLVideoElement, faceBox?: FaceBox | null) => {
     if (currentStep === 'review' || currentStep === 'consent') return;
     const angle = currentStep as CaptureAngle;
 
+    const sourceWidth = video.videoWidth || 1280;
+    const sourceHeight = video.videoHeight || 720;
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Draw video frame to canvas
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    if (faceBox && faceBox.width > 0 && faceBox.height > 0) {
+      const padX = faceBox.width * 0.28;
+      const padY = faceBox.height * 0.35;
+      const sx = Math.max(0, faceBox.x - padX);
+      const sy = Math.max(0, faceBox.y - padY);
+      const sw = Math.min(sourceWidth - sx, faceBox.width + padX * 2);
+      const sh = Math.min(sourceHeight - sy, faceBox.height + padY * 2);
+      canvas.width = Math.max(1, Math.round(sw));
+      canvas.height = Math.max(1, Math.round(sh));
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    } else {
+      canvas.width = sourceWidth;
+      canvas.height = sourceHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
 
     // Convert canvas to Blob
     const blob: Blob = await new Promise(resolve => {

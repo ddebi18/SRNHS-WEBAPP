@@ -12,8 +12,8 @@ This module implements the physical terminal edge biometric processing pipeline 
 | :--- | :--- | :--- |
 | **Operating System** | Windows 10 / 11 (64-bit) | Native Windows support via OpenCV and Python 3.11. |
 | **Scripting Runtime** | Python (ver. 3.11) | Written in Python 3.11 with strict typing. |
-| **Computer Vision** | OpenCV (ver. 4.8+) | Optical frame extraction, Haar ROI isolation, and CLAHE normalization (`cv2.createCLAHE`). |
-| **Biometric Model** | FaceNet (128D DCNN) | 128-dimensional L2 unit-normalized feature embeddings. |
+| **Computer Vision** | OpenCV (ver. 4.8+) | YuNet (`cv2.FaceDetectorYN`) on a 640px working frame, CLAHE lighting normalize, Haar fallback. |
+| **Biometric Model** | FaceNet-class 128D | OpenCV SFace (`cv2.FaceRecognizerSF`) 128D embeddings. Unknown faces are not assigned to the nearest student. |
 | **Similarity Metric** | Cosine Similarity Engine | Vector dot product: $\text{Cosine Similarity} = \frac{u \cdot v}{\|u\| \|v\|}$. |
 | **Cloud BaaS** | Supabase PostgreSQL 15+ | HTTPS POST to Supabase REST API `/rest/v1/gate_logs`. |
 | **Hardware** | 1080p Optical Sensor, i3/i5 CPU | Configured for 1920x1080 USB optical sensors. |
@@ -32,7 +32,7 @@ Because all vectors are $L_2$-normalized ($\|u\|_2 = 1, \|v\|_2 = 1$), the cosin
 $$\text{Cosine Similarity} = \cos(\theta) = \sum_{i=1}^{128} u_i v_i$$
 $$\text{Cosine Distance} = 1 - \cos(\theta) = \frac{\|u - v\|_2^2}{2}$$
 
-A student is confirmed when $\text{Cosine Similarity} \ge 0.65$ (or $\text{Cosine Distance} \le 0.35$).
+A student is confirmed when cosine similarity is at least `0.47` **and** the next-best student is at least `0.08` farther. Unknown faces stay unknown.
 
 ---
 

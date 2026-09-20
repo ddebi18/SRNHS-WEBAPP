@@ -1,5 +1,6 @@
 import { getStoredSections, saveStoredSections, getStoredStudents, saveStoredStudents } from '@/features/faceRegistration/api';
 import { Student, Section } from '@/features/faceRegistration/types';
+import { FACE_DESCRIPTOR_VERSION } from '@/features/attendance/lib/faceNetMatcher';
 
 export interface SyncPayload {
   version: 1;
@@ -143,6 +144,7 @@ export function assignStudentFaceDescriptors(studentId: string, descriptors: Flo
     ...students[index]!,
     faceRegistrationStatus: 'registered',
     faceDescriptors: serialized,
+    faceDescriptorVersion: FACE_DESCRIPTOR_VERSION,
     lastRegisteredAt: new Date().toISOString(),
   };
 

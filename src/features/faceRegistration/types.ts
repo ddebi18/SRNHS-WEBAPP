@@ -19,6 +19,7 @@ export interface Student {
   guardianName?: string;
   guardianPhone?: string;
   faceDescriptors?: number[][];
+  faceDescriptorVersion?: number;
 }
 
 export interface Section {
@@ -46,6 +47,7 @@ export interface FaceRegistrationPayload {
   sectionId: string;
   frames: { angle: CaptureAngle; blob: Blob }[];
   consentConfirmed: boolean;
+  faceDescriptors?: number[][];
 }
 
 export interface FaceRegistrationResult {
