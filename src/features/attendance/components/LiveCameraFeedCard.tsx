@@ -97,19 +97,6 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const activeBox = isFaceDetected ? (faceBox || recognitionBox) : recognitionBox;
   const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
 
-  // Keep scanning whenever a face is in the camera, including after Time-In.
-  useEffect(() => {
-    if (!isAnyFaceDetected || !isRecognitionReady || !hasVideoSource) return;
-
-    const runScan = () => {
-      triggerInstantScan().catch(() => {});
-    };
-
-    runScan();
-    const timer = setInterval(runScan, matchedStudent ? 2200 : 900);
-    return () => clearInterval(timer);
-  }, [isAnyFaceDetected, isRecognitionReady, matchedStudent, hasVideoSource, triggerInstantScan]);
-
   useEffect(() => {
     if (!useWebcam) {
       stopWebcam();
