@@ -26,7 +26,6 @@ export { computeCosineSimilarity, computeCosineDistance } from '../lib/faceNetMa
 const SCAN_INTERVAL_MS = 200;
 const FACE_LEFT_MISS_FRAMES = 1;
 const ACCURATE_SCAN_EVERY = 8;
-const MATCH_SWITCH_STABILITY_FRAMES = 5;
 
 const EAR_BLINK_THRESHOLD = 0.21;
 const EAR_DYNAMIC_DELTA = 0.035;
@@ -447,36 +446,20 @@ export function useFaceRecognition(
               setIsLive(true);
             }
 
+            // Restore the simpler older behavior: once a live face matches a student,
+            // we hold the current identity through a brief stability window instead of
+            // aggressively switching names when a nearby gallery entry has a slightly
+            // different distance. This reduces wrong-name flips during real gate scans.
             const matchObj = resolveMatch(detection.descriptor);
-            const locked = lastConfirmedMatchRef.current;
-            const lockedGallery = locked
-              ? galleryRef.current.find(entry => entry.label === locked.student.id)
-              : undefined;
-            const stillLockedPerson = Boolean(
-              locked &&
-              lockedGallery &&
-              isSameEnrolledPerson(detection.descriptor, lockedGallery.descriptors)
-            );
 
-            if (locked && stillLockedPerson) {
-              // Keep the confirmed identity when the frame still matches it,
-              // even if another gallery entry is briefly ranked first.
-              stabilityRef.current = { studentId: locked.student.id, count: STABILITY_FRAMES_REQUIRED };
-              unmatchedCountRef.current = 0;
-              setMatchedStudent(locked.student);
-              setIsAnalyzing(false);
-              setIsLive(true);
-              isLiveRef.current = true;
-            } else if (matchObj) {
-              const requiredStabilityFrames = locked && matchObj.id !== locked.student.id
-                ? MATCH_SWITCH_STABILITY_FRAMES
-                : STABILITY_FRAMES_REQUIRED;
-              stabilityRef.current = {
-                studentId: matchObj.id,
-                count: (stabilityRef.current.studentId === matchObj.id ? stabilityRef.current.count + 1 : 1),
-              };
+            if (matchObj) {
+              if (stabilityRef.current.studentId === matchObj.id) {
+                stabilityRef.current.count += 1;
+              } else {
+                stabilityRef.current = { studentId: matchObj.id, count: 1 };
+              }
 
-              if (stabilityRef.current.count >= requiredStabilityFrames) {
+              if (stabilityRef.current.count >= STABILITY_FRAMES_REQUIRED) {
                 unmatchedCountRef.current = 0;
                 setIsAnalyzing(false);
                 lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
@@ -489,9 +472,18 @@ export function useFaceRecognition(
             } else {
               stabilityRef.current = { studentId: '', count: 0 };
               unmatchedCountRef.current += 1;
-              lastConfirmedMatchRef.current = null;
-              setMatchedStudent(null);
-              setIsAnalyzing(true);
+
+              const recentMatch = lastConfirmedMatchRef.current;
+              if (recentMatch && (Date.now() - recentMatch.timestamp < 600) && unmatchedCountRef.current <= 2) {
+                setMatchedStudent(recentMatch.student);
+                setIsAnalyzing(false);
+                setIsLive(true);
+                isLiveRef.current = true;
+              } else {
+                lastConfirmedMatchRef.current = null;
+                setMatchedStudent(null);
+                setIsAnalyzing(unmatchedCountRef.current <= 6);
+              }
             }
           } finally {
             processingRef.current = false;
