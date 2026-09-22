@@ -2,7 +2,7 @@ import { Student, Section, FaceRegistrationPayload, FaceRegistrationResult } fro
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { FACE_DESCRIPTOR_VERSION } from '@/features/attendance/lib/faceNetMatcher';
 
-const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
+export const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
 const LOCAL_STORAGE_KEY_SECTIONS = 'srnhs_face_registration_sections_v1';
 
 export function isValidUUID(id?: string | null): boolean {
@@ -112,7 +112,7 @@ async function resizeBlobToDataUrl(blob: Blob, maxDim = 720): Promise<string> {
   });
 }
 
-const CANDIDATE_STUDENT_KEYS = [
+export const CANDIDATE_STUDENT_KEYS = [
   'srnhs_face_registration_students_v1',
   'srnhs_face_registration_students',
   'srnhs_students',
