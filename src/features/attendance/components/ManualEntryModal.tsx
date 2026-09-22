@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { EventType } from '@/types/domain.types';
-import { mockRecognitionAdapter } from '../services/MockRecognitionAdapter';
+import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 
 interface ManualEntryModalProps {
   isOpen: boolean;
@@ -34,7 +34,7 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ isOpen, onCl
       return;
     }
 
-    await mockRecognitionAdapter.logManualEvent({
+    await supabaseRecognitionAdapter.logManualEvent({
       student_id: `std-man-${Date.now()}`,
       student_name: cleanName,
       student_lrn: cleanLrn,

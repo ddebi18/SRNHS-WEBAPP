@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mockRecognitionAdapter } from '@/features/attendance/services/MockRecognitionAdapter';
+import { supabaseRecognitionAdapter } from '@/features/attendance/services/SupabaseRecognitionAdapter';
 import { getRecognitionStatusText } from '@/features/attendance/lib/recognitionStatus';
 
 describe('MockRecognitionAdapter', () => {
@@ -161,5 +162,50 @@ describe('MockRecognitionAdapter', () => {
 
     expect(studentEntries.length).toBe(1);
     expect(studentExits.length).toBe(1);
+  });
+
+  it('supabaseRecognitionAdapter returns local gate scan logs seamlessly', async () => {
+    const uniqueId = `std-sb-test-${Date.now()}`;
+    const entryEvt = await supabaseRecognitionAdapter.logRecognitionEvent({
+      student_id: uniqueId,
+      student_name: 'Supabase Fallback Test',
+      student_lrn: '109855555555',
+      event_type: 'entry',
+      camera_id: 'cam-01',
+      gate_id: 'gate-01',
+      confidence_score: 0.94,
+    });
+
+    expect(entryEvt).toBeDefined();
+    expect(entryEvt.student_name).toBe('Supabase Fallback Test');
+    expect(entryEvt.event_type).toBe('entry');
+
+    // Retrieve via supabaseRecognitionAdapter.getEvents()
+    const events = await supabaseRecognitionAdapter.getEvents({ studentId: uniqueId });
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    const found = events.find(e => e.student_id === uniqueId && e.event_type === 'entry');
+    expect(found).toBeDefined();
+    expect(found?.student_name).toBe('Supabase Fallback Test');
+
+    // Now log an exit for the same student
+    const exitEvt = await supabaseRecognitionAdapter.logRecognitionEvent({
+      student_id: uniqueId,
+      student_name: 'Supabase Fallback Test',
+      student_lrn: '109855555555',
+      event_type: 'exit',
+      camera_id: 'cam-01',
+      gate_id: 'gate-01',
+      confidence_score: 0.92,
+    });
+
+    expect(exitEvt).toBeDefined();
+    expect(exitEvt.event_type).toBe('exit');
+
+    // Both entry and exit should be in the log list
+    const updatedEvents = await supabaseRecognitionAdapter.getEvents({ studentId: uniqueId });
+    const hasEntry = updatedEvents.some(e => e.event_type === 'entry');
+    const hasExit = updatedEvents.some(e => e.event_type === 'exit');
+    expect(hasEntry).toBe(true);
+    expect(hasExit).toBe(true);
   });
 });

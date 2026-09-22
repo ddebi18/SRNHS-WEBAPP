@@ -22,7 +22,10 @@ import { getRecognitionStatusText } from '../lib/recognitionStatus';
 import { MIN_ATTENDANCE_LOG_CONFIDENCE } from '../lib/faceNetMatcher';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
+import { getStoredStudents } from '@/features/faceRegistration/api';
 import type { EventType } from '@/types/domain.types';
+
+export type TurnstileScanMode = 'auto' | 'entry' | 'exit';
 
 interface LiveCameraFeedCardProps {
   className?: string;
@@ -30,7 +33,7 @@ interface LiveCameraFeedCardProps {
 
 export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ className }) => {
   const [selectedCamera, setSelectedCamera] = useState('cam-01');
-  const [scanMode, setScanMode] = useState<EventType>('entry');
+  const [scanMode, setScanMode] = useState<TurnstileScanMode>('auto');
   const [lastScanNotice, setLastScanNotice] = useState<{
     studentName: string;
     type: EventType;
@@ -161,35 +164,69 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   useEffect(() => {
     if (!isLive || !matchedStudent || matchedStudent.confidence < MIN_ATTENDANCE_LOG_CONFIDENCE) return;
 
-    const logKey = `${matchedStudent.id}_${scanMode}`;
-    const alreadyLoggedTime = dailyCompletedMap.get(logKey);
+    const idKey = matchedStudent.id;
+    const lrnKey = matchedStudent.studentNumber;
+    const hasEntryTime = dailyCompletedMap.get(`${idKey}_entry`) || (lrnKey ? dailyCompletedMap.get(`${lrnKey}_entry`) : undefined);
+    const hasExitTime = dailyCompletedMap.get(`${idKey}_exit`) || (lrnKey ? dailyCompletedMap.get(`${lrnKey}_exit`) : undefined);
 
-    if (alreadyLoggedTime) {
-      // Student already completed this event today: enforce 1 Time-In and 1 Time-Out per day
-      const lastNoticeCooldown = loggedMatchesRef.current.get(`${matchedStudent.id}_already_${scanMode}`) || 0;
-      if (Date.now() - lastNoticeCooldown > 15_000) {
-        loggedMatchesRef.current.set(`${matchedStudent.id}_already_${scanMode}`, Date.now());
-        setLastScanNotice({
-          studentName: matchedStudent.name,
-          type: scanMode,
-          time: alreadyLoggedTime,
-          alreadyLogged: true,
-        });
-        setTimeout(() => setLastScanNotice(null), 4000);
+    let targetEventType: EventType;
+    if (scanMode === 'auto') {
+      if (!hasEntryTime) {
+        targetEventType = 'entry';
+      } else if (!hasExitTime) {
+        targetEventType = 'exit';
+      } else {
+        // Both entry and exit completed today
+        const lastNoticeCooldown = loggedMatchesRef.current.get(`${idKey}_already_both`) || 0;
+        if (Date.now() - lastNoticeCooldown > 15_000) {
+          loggedMatchesRef.current.set(`${idKey}_already_both`, Date.now());
+          setLastScanNotice({
+            studentName: matchedStudent.name,
+            type: 'exit',
+            time: `${hasEntryTime} · ${hasExitTime}`,
+            alreadyLogged: true,
+          });
+          setTimeout(() => setLastScanNotice(null), 4000);
+        }
+        return;
       }
-      return;
+    } else {
+      targetEventType = scanMode;
+      const alreadyLoggedTime = targetEventType === 'entry' ? hasEntryTime : hasExitTime;
+      if (alreadyLoggedTime) {
+        const lastNoticeCooldown = loggedMatchesRef.current.get(`${idKey}_already_${targetEventType}`) || 0;
+        if (Date.now() - lastNoticeCooldown > 15_000) {
+          loggedMatchesRef.current.set(`${idKey}_already_${targetEventType}`, Date.now());
+          setLastScanNotice({
+            studentName: matchedStudent.name,
+            type: targetEventType,
+            time: alreadyLoggedTime,
+            alreadyLogged: true,
+          });
+          setTimeout(() => setLastScanNotice(null), 4000);
+        }
+        return;
+      }
     }
 
+    const logKey = `${idKey}_${targetEventType}`;
     const lastLoggedAt = loggedMatchesRef.current.get(logKey) || 0;
     // 15 seconds cooldown to prevent rapid trigger during transition
     if (Date.now() - lastLoggedAt < 15_000) return;
 
     loggedMatchesRef.current.set(logKey, Date.now());
+
+    const storedStudent = getStoredStudents().find(
+      s => s.id === matchedStudent.id || (matchedStudent.studentNumber && s.studentNumber === matchedStudent.studentNumber)
+    );
+
     supabaseRecognitionAdapter.logRecognitionEvent({
       student_id: matchedStudent.id,
       student_name: matchedStudent.name,
       student_lrn: matchedStudent.studentNumber,
-      event_type: scanMode,
+      student_photo: storedStudent?.photoUrl || storedStudent?.registeredPhotos?.front,
+      section_name: storedStudent?.sectionName || currentCam.location,
+      event_type: targetEventType,
       camera_id: currentCam.id,
       gate_id: currentCam.id,
       room_name: currentCam.name,
@@ -198,16 +235,16 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
       const timeStr = new Date(evt?.captured_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       setLastScanNotice({
         studentName: matchedStudent.name,
-        type: scanMode,
+        type: targetEventType,
         time: timeStr,
         alreadyLogged: false,
       });
       setTimeout(() => setLastScanNotice(null), 4000);
     }).catch(error => {
       loggedMatchesRef.current.delete(logKey);
-      console.warn('Could not log recognized turnstile entry:', error);
+      console.warn('Could not log recognized turnstile scan:', error);
     });
-  }, [matchedStudent, isLive, scanMode, currentCam.id, currentCam.name, dailyCompletedMap]);
+  }, [matchedStudent, isLive, scanMode, currentCam.id, currentCam.name, currentCam.location, dailyCompletedMap]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -302,6 +339,20 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 rounded-xl p-1 border border-slate-200 dark:border-slate-700">
               <button
                 type="button"
+                onClick={() => setScanMode('auto')}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer',
+                  scanMode === 'auto'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                )}
+                title="Automatically logs Time-In on first scan, and Time-Out on second scan"
+              >
+                <span className={cn('w-2 h-2 rounded-full', scanMode === 'auto' ? 'bg-white' : 'bg-emerald-400')} />
+                Auto (In/Out)
+              </button>
+              <button
+                type="button"
                 onClick={() => setScanMode('entry')}
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer',
@@ -311,7 +362,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 )}
               >
                 <span className={cn('w-2 h-2 rounded-full', scanMode === 'entry' ? 'bg-white' : 'bg-emerald-500')} />
-                Time-In (Entry)
+                Time-In
               </button>
               <button
                 type="button"
@@ -324,7 +375,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 )}
               >
                 <span className={cn('w-2 h-2 rounded-full', scanMode === 'exit' ? 'bg-slate-950' : 'bg-amber-500')} />
-                Time-Out (Exit)
+                Time-Out
               </button>
             </div>
 
@@ -399,7 +450,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-emerald-400/90 drop-shadow">
               <div className="flex items-center gap-1.5 sm:gap-2 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-emerald-500/30">
                 <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
-                <span>{currentCam.id.toUpperCase()} · {currentCam.node} ({scanMode === 'entry' ? 'TIME-IN' : 'TIME-OUT'})</span>
+                <span>{currentCam.id.toUpperCase()} · {currentCam.node} ({scanMode === 'auto' ? 'AUTO IN/OUT' : scanMode === 'entry' ? 'TIME-IN' : 'TIME-OUT'})</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-slate-700/50 text-slate-300">

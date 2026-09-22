@@ -75,6 +75,7 @@ export const DashboardOverviewPage: React.FC = () => {
   const navigate = useNavigate();
   const [recentEvents, setRecentEvents] = useState<RecognitionEvent[]>([]);
   const [smsCount, setSmsCount] = useState(0);
+  const [todayScansCount, setTodayScansCount] = useState(0);
 
   const hour = new Date().getHours();
   const greeting =
@@ -82,10 +83,6 @@ export const DashboardOverviewPage: React.FC = () => {
 
   // Derived metrics from real stored data
   const enrolledCount = getStoredStudents().length;
-  const todayStr = new Date().toDateString();
-  const todayScansCount = recentEvents.filter(
-    e => new Date(e.captured_at).toDateString() === todayStr
-  ).length;
   const attendanceRate =
     enrolledCount > 0 && todayScansCount > 0
       ? `${Math.min(100, Math.round((todayScansCount / enrolledCount) * 100))}%`
@@ -93,10 +90,21 @@ export const DashboardOverviewPage: React.FC = () => {
 
   useEffect(() => {
     supabaseRecognitionAdapter.getEvents({ limit: 6 }).then(setRecentEvents);
+    supabaseRecognitionAdapter.getEvents().then(all => {
+      const today = new Date().toDateString();
+      setTodayScansCount(all.filter(e => new Date(e.captured_at).toDateString() === today).length);
+    });
     mockNotificationAdapter.getSmsLogs(100).then(logs => setSmsCount(logs.length));
 
     const unsub1 = supabaseRecognitionAdapter.subscribeToEvents(evt => {
-      setRecentEvents(prev => [evt, ...prev.slice(0, 5)]);
+      setRecentEvents(prev => {
+        if (prev.some(e => e.id === evt.id)) return prev;
+        return [evt, ...prev.slice(0, 5)];
+      });
+      const today = new Date().toDateString();
+      if (new Date(evt.captured_at).toDateString() === today) {
+        setTodayScansCount(c => c + 1);
+      }
     });
     const unsub2 = mockNotificationAdapter.subscribeToSms(() => {
       setSmsCount(c => c + 1);

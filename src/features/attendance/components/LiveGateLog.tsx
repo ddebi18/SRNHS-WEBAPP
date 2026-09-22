@@ -19,18 +19,18 @@ export const LiveGateLog: React.FC = () => {
 
   const loadEvents = async () => {
     setIsLoading(true);
-    // Fetch all turnstile gate scans (cloudOnly: read directly from Supabase so the admin
-    // sees scans from every scanning device, not just events stored on this machine).
-    const data = await supabaseRecognitionAdapter.getEvents({ cloudOnly: true });
+    const data = await supabaseRecognitionAdapter.getEvents();
     setEvents(data);
     setIsLoading(false);
   };
 
   useEffect(() => {
     loadEvents();
-    const unsubscribe = supabaseRecognitionAdapter.subscribeToEvents(_newEvent => {
-      // On any new event, re-fetch the full log so new scans appear instantly
-      supabaseRecognitionAdapter.getEvents({ cloudOnly: true }).then(setEvents);
+    const unsubscribe = supabaseRecognitionAdapter.subscribeToEvents(newEvent => {
+      setEvents(prev => {
+        if (prev.some(e => e.id === newEvent.id)) return prev;
+        return [newEvent, ...prev];
+      });
     });
     return () => unsubscribe();
   }, []);

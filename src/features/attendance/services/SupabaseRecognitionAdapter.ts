@@ -42,9 +42,7 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
   }
 
   async getEvents(filters?: { studentId?: string; type?: EventType; limit?: number; cloudOnly?: boolean }): Promise<RecognitionEvent[]> {
-    // cloudOnly=true: skip localStorage entirely and return all Supabase rows unfiltered.
-    // Used by the admin gate log so scans from every device are visible.
-    const localEvents = filters?.cloudOnly ? [] : await mockRecognitionAdapter.getEvents(filters);
+    const localEvents = await mockRecognitionAdapter.getEvents(filters);
     if (!supabase) return localEvents;
 
     try {
@@ -55,7 +53,11 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
         subjects ( title )
       `);
 
-      if (filters?.studentId) query = query.eq('student_id', filters.studentId);
+      if (filters?.studentId) {
+        if (isValidUUID(filters.studentId)) {
+          query = query.eq('student_id', filters.studentId);
+        }
+      }
       if (filters?.type) query = query.eq('event_type', filters.type);
 
       query = query.order('captured_at', { ascending: false });
@@ -83,21 +85,16 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
         captured_at: row.captured_at,
       }));
 
-      // cloudOnly: return raw Supabase rows sorted by time, no local merge or dedup.
-      if (filters?.cloudOnly) {
-        return dbEvents;
-      }
-
-      // Default: merge cloud events with local events, deduplicated by student + type + date
+      // Merge cloud events with local events, deduplicated by student + type + date or event ID
       const mergedMap = new Map<string, RecognitionEvent>();
       localEvents.forEach(e => {
         const dateStr = new Date(e.captured_at).toDateString();
-        const key = `${e.student_id}_${e.event_type}_${dateStr}`;
+        const key = `${e.student_id || e.student_lrn || e.id}_${e.event_type}_${dateStr}`;
         mergedMap.set(key, e);
       });
       dbEvents.forEach(e => {
         const dateStr = new Date(e.captured_at).toDateString();
-        const key = `${e.student_id}_${e.event_type}_${dateStr}`;
+        const key = `${e.student_id || e.student_lrn || e.id}_${e.event_type}_${dateStr}`;
         // If local already exists, prefer local (which has high-res photos and rich section names)
         if (!mergedMap.has(key)) {
           mergedMap.set(key, e);
