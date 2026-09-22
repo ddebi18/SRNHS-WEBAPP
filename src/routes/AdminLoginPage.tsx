@@ -6,7 +6,7 @@ export const AdminLoginPage: React.FC = () => {
     <PortalLoginForm
       portal="admin"
       portalTitle="Administrator Sign-In"
-      portalSubtitle="Enter your administrative credentials to access system controls."
+      portalSubtitle="Sign in to manage students, staff schedules, entry logs, and school-wide reports."
       identifierLabel="Username or Email"
       identifierPlaceholder="admin"
       switchUrl="/teacher/login"

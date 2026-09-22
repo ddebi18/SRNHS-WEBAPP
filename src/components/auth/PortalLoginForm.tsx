@@ -125,12 +125,12 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
               {portal === 'admin' ? (
                 <>
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Administrative Security Boundary</span>
+                  <span>Admin Portal</span>
                 </>
               ) : (
                 <>
                   <School className="w-3.5 h-3.5" />
-                  <span>Faculty & Classroom Scope</span>
+                  <span>Teacher Portal</span>
                 </>
               )}
             </div>
@@ -138,7 +138,7 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
               {portalTitle}
             </h1>
             <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mt-3 max-w-sm">
-              {SITE_CONFIG.schoolName} — Secure facial recognition attendance and records management system for DepEd personnel.
+              {SITE_CONFIG.schoolName} — Log in to mark attendance, view student records, and send guardian alerts, all from one place.
             </p>
           </div>
 
@@ -251,16 +251,16 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
               disabled={isFormDisabled}
               whileHover={{ scale: isFormDisabled ? 1 : 1.02 }}
               whileTap={{ scale: isFormDisabled ? 1 : 0.98 }}
-              className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#1B4332] via-[#2D6A4F] to-[#D4A373] text-white text-sm font-black
+              className="w-full py-3.5 px-4 rounded-2xl bg-[#1B4332] text-white text-sm font-black
                 flex items-center justify-center gap-2 shadow-card mt-2
-                hover:brightness-105 disabled:opacity-50 transition-all"
+                hover:bg-[#22553f] disabled:opacity-50 transition-colors"
             >
               {loading ? (
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <LogIn className="w-4 h-4" />
               )}
-              {loading ? 'Verifying Credentials…' : lockoutRemaining > 0 ? `Locked (${lockoutRemaining}s)` : 'Authenticate Session'}
+              {loading ? 'Signing in…' : lockoutRemaining > 0 ? `Locked (${lockoutRemaining}s)` : 'Sign In'}
             </motion.button>
           </form>
 

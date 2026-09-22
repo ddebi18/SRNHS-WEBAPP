@@ -6,7 +6,7 @@ export const TeacherLoginPage: React.FC = () => {
     <PortalLoginForm
       portal="teacher"
       portalTitle="Faculty Sign-In"
-      portalSubtitle="Enter your institutional email to access your classroom roster."
+      portalSubtitle="Sign in to take attendance, update student records, and send SMS alerts to guardians."
       identifierLabel="Institutional Email"
       identifierPlaceholder="user@srnhs.edu.ph"
       switchUrl="/admin/login"
