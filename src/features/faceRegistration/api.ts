@@ -341,14 +341,15 @@ export async function syncFromSupabase(): Promise<{ students: number; sections: 
     const dbStudents: Student[] = (studentRows || []).map(r => dbRowToStudent(r, mergedSections));
     const studentMap = new Map<string, Student>();
 
-    // Seed with local students
+    // Local students lookup for cached local properties (like faceDescriptors)
+    const localStudentMap = new Map<string, Student>();
     localStudents.forEach(s => {
-      if (isValidUUID(s.id)) studentMap.set(s.id, s);
+      if (isValidUUID(s.id)) localStudentMap.set(s.id, s);
     });
 
-    // Overlay cloud students
+    // Supabase is the primary database. Cloud students form the authoritative roster.
     dbStudents.forEach(dbStu => {
-      const local = studentMap.get(dbStu.id);
+      const local = localStudentMap.get(dbStu.id);
       studentMap.set(dbStu.id, {
         ...dbStu,
         faceDescriptors: local?.faceDescriptors ?? dbStu.faceDescriptors,
@@ -366,44 +367,6 @@ export async function syncFromSupabase(): Promise<{ students: number; sections: 
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(mergedStudents));
     } catch {}
-
-    // Cloud push: if local has students not in Supabase, push them
-    const dbStudentIdSet = new Set(dbStudents.map(s => s.id));
-    const studentsToPush = localStudents.filter(s => isValidUUID(s.id) && !dbStudentIdSet.has(s.id));
-    for (const stu of studentsToPush) {
-      if (isValidUUID(stu.sectionId)) {
-        const nameParts = stu.name.trim().split(/\s+/);
-        const firstName = nameParts.slice(0, -1).join(' ') || nameParts[0] || 'Student';
-        const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
-        const sec = mergedSections.find(s => s.id === stu.sectionId);
-        const gradeLevelNum = sec?.gradeLevel === 'Grade 12' ? 12
-          : sec?.gradeLevel === 'Grade 11' ? 11
-          : sec?.gradeLevel === 'Grade 10' ? 10
-          : 10;
-        
-        const photoUrls: string[] = [];
-        if (stu.registeredPhotos?.front) photoUrls.push(stu.registeredPhotos.front);
-        else if (stu.photoUrl) photoUrls.push(stu.photoUrl);
-        if (stu.registeredPhotos?.left) photoUrls.push(stu.registeredPhotos.left);
-        if (stu.registeredPhotos?.right) photoUrls.push(stu.registeredPhotos.right);
-
-        supabase.from('students').upsert({
-          id: stu.id,
-          lrn: stu.studentNumber,
-          first_name: firstName,
-          last_name: lastName,
-          gender: 'Not Specified',
-          grade_level: gradeLevelNum,
-          section_id: stu.sectionId,
-          parent_consent: true,
-          consent_date: new Date().toISOString().split('T')[0],
-          photo_urls: photoUrls,
-        }, { onConflict: 'id' }).then(({ error }) => {
-          if (error) console.warn('[Supabase] Error uploading local student:', error.message);
-          else console.log(`[Supabase] ✓ Pushed local student ${stu.name} to cloud`);
-        });
-      }
-    }
 
     // Notify all components to re-render with fresh data
     window.dispatchEvent(new Event('storage'));
