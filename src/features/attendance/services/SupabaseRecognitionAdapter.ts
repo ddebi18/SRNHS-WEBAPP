@@ -75,6 +75,7 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
         student_name: row.students ? `${row.students.first_name} ${row.students.last_name}` : 'Student',
         student_lrn: row.students?.lrn || '',
         student_photo: row.students?.photo_urls?.[0],
+        section_name: row.sections?.name || row.students?.section_name || '',
         event_type: row.event_type,
         camera_id: 'cam-01',
         gate_id: 'gate-01',
@@ -85,19 +86,20 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
         captured_at: row.captured_at,
       }));
 
-      // Merge cloud events with local events, deduplicated by student + type + date or event ID
+      // ── Merge strategy: cloud (Supabase) is the source of truth ──────────
+      // 1. Fill the map with all cloud records keyed by their UUID
+      const cloudIdSet = new Set<string>();
       const mergedMap = new Map<string, RecognitionEvent>();
-      localEvents.forEach(e => {
-        const dateStr = new Date(e.captured_at).toDateString();
-        const key = `${e.student_id || e.student_lrn || e.id}_${e.event_type}_${dateStr}`;
-        mergedMap.set(key, e);
-      });
       dbEvents.forEach(e => {
-        const dateStr = new Date(e.captured_at).toDateString();
-        const key = `${e.student_id || e.student_lrn || e.id}_${e.event_type}_${dateStr}`;
-        // If local already exists, prefer local (which has high-res photos and rich section names)
-        if (!mergedMap.has(key)) {
-          mergedMap.set(key, e);
+        mergedMap.set(e.id, e);
+        cloudIdSet.add(e.id);
+      });
+
+      // 2. Append local-only records that have NOT been synced to Supabase yet
+      //    (i.e. their ID is not already in the cloud result set)
+      localEvents.forEach(e => {
+        if (!cloudIdSet.has(e.id)) {
+          mergedMap.set(e.id, e);
         }
       });
 
