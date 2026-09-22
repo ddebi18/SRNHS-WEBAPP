@@ -21,33 +21,20 @@ import {
   saveStoredSections,
   getStoredStudents,
   generateUUID,
+  isValidUUID,
 } from '@/features/faceRegistration/api';
 import { Section as FRSection } from '@/features/faceRegistration/types';
-
-// ─── LocalStorage keys for rooms & subjects ───────────────────────────────────
-const LS_ROOMS = 'srnhs_academics_rooms_v1';
-const LS_SUBJECTS = 'srnhs_academics_subjects_v1';
-
-function getStoredRooms(): Room[] {
-  try {
-    const raw = localStorage.getItem(LS_ROOMS);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return [];
-}
-function saveRooms(rooms: Room[]) {
-  try { localStorage.setItem(LS_ROOMS, JSON.stringify(rooms)); } catch {}
-}
-function getStoredSubjects(): Subject[] {
-  try {
-    const raw = localStorage.getItem(LS_SUBJECTS);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return [];
-}
-function saveSubjects(subjects: Subject[]) {
-  try { localStorage.setItem(LS_SUBJECTS, JSON.stringify(subjects)); } catch {}
-}
+import {
+  fetchRooms,
+  createRoom,
+  updateRoom,
+  deleteRoom,
+  fetchSubjects,
+  createSubject,
+  updateSubject,
+  deleteSubject,
+} from '@/features/academics/api';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 // Convert domain Section ↔ faceRegistration Section
 function toFRSection(sec: Section): FRSection {
@@ -74,16 +61,21 @@ const inputCls =
 export const AcademicsManager: React.FC = () => {
   const { isAdmin } = useRole();
   const [activeTab, setActiveTab] = useState<'sections' | 'subjects' | 'rooms'>('sections');
+  const [isLoading, setIsLoading] = useState(false);
 
   // ── Persisted state ──────────────────────────────────────────────────────────
   const [rooms, setRooms] = useState<Room[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
 
-  // Load from localStorage on mount
+  // Load from API / Supabase on mount
   useEffect(() => {
-    setRooms(getStoredRooms());
-    setSubjects(getStoredSubjects());
+    setIsLoading(true);
+    Promise.all([fetchRooms(), fetchSubjects()]).then(([r, s]) => {
+      setRooms(r);
+      setSubjects(s);
+      setIsLoading(false);
+    }).catch(() => setIsLoading(false));
 
     // Map faceRegistration sections → domain Section shape
     const frSections = getStoredSections();
@@ -102,11 +94,20 @@ export const AcademicsManager: React.FC = () => {
   // ── Persist helpers ──────────────────────────────────────────────────────────
   const persistSections = (next: Section[]) => {
     setSections(next);
-    // Also save to faceRegistration store so student enrollment dropdown sees them
     saveStoredSections(next.map(toFRSection));
+
+    if (supabase && isSupabaseConfigured) {
+      const rows = next.map(sec => ({
+        id: isValidUUID(sec.id) ? sec.id : generateUUID(),
+        grade_level: sec.grade_level,
+        name: sec.name,
+        adviser_id: (sec.adviser_id && isValidUUID(sec.adviser_id)) ? sec.adviser_id : null,
+      }));
+      supabase.from('sections').upsert(rows, { onConflict: 'id' }).then(({ error }) => {
+        if (error) console.warn('[Academics] Supabase sections sync note:', error.message);
+      });
+    }
   };
-  const persistRooms = (next: Room[]) => { setRooms(next); saveRooms(next); };
-  const persistSubjects = (next: Subject[]) => { setSubjects(next); saveSubjects(next); };
 
   // ── Modal state ──────────────────────────────────────────────────────────────
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -187,45 +188,33 @@ export const AcademicsManager: React.FC = () => {
       }
     } else if (activeTab === 'rooms') {
       if (editingItem) {
-        persistRooms(
-          rooms.map(r =>
-            r.id === editingItem.id
-              ? { ...r, name: roomName.trim(), building: roomBuilding.trim(), capacity: Number(roomCapacity) || 40 }
-              : r
-          )
-        );
+        const updated: Room = { ...editingItem, name: roomName.trim(), building: roomBuilding.trim(), capacity: Number(roomCapacity) || 40 };
+        updateRoom(updated).then(() => {
+          setRooms(prev => prev.map(r => r.id === updated.id ? updated : r));
+        });
       } else {
-        persistRooms([
-          ...rooms,
-          {
-            id: `rm-${Date.now()}`,
-            name: roomName.trim(),
-            building: roomBuilding.trim(),
-            capacity: Number(roomCapacity) || 40,
-            created_at: new Date().toISOString(),
-          },
-        ]);
+        createRoom({
+          name: roomName.trim(),
+          building: roomBuilding.trim(),
+          capacity: Number(roomCapacity) || 40,
+        }).then(created => {
+          setRooms(prev => [created, ...prev]);
+        });
       }
     } else {
       if (editingItem) {
-        persistSubjects(
-          subjects.map(s =>
-            s.id === editingItem.id
-              ? { ...s, code: subCode.trim(), title: subTitle.trim(), description: subDesc.trim() }
-              : s
-          )
-        );
+        const updated: Subject = { ...editingItem, code: subCode.trim(), title: subTitle.trim(), description: subDesc.trim() };
+        updateSubject(updated).then(() => {
+          setSubjects(prev => prev.map(s => s.id === updated.id ? updated : s));
+        });
       } else {
-        persistSubjects([
-          ...subjects,
-          {
-            id: `sub-${Date.now()}`,
-            code: subCode.trim(),
-            title: subTitle.trim(),
-            description: subDesc.trim(),
-            created_at: new Date().toISOString(),
-          },
-        ]);
+        createSubject({
+          code: subCode.trim(),
+          title: subTitle.trim(),
+          description: subDesc.trim(),
+        }).then(created => {
+          setSubjects(prev => [created, ...prev]);
+        });
       }
     }
     setIsModalOpen(false);
@@ -235,8 +224,14 @@ export const AcademicsManager: React.FC = () => {
   const confirmDelete = () => {
     if (!deleteTarget) return;
     if (activeTab === 'sections') persistSections(sections.filter(s => s.id !== deleteTarget.id));
-    if (activeTab === 'rooms') persistRooms(rooms.filter(r => r.id !== deleteTarget.id));
-    if (activeTab === 'subjects') persistSubjects(subjects.filter(s => s.id !== deleteTarget.id));
+    if (activeTab === 'rooms') {
+      deleteRoom(deleteTarget.id);
+      setRooms(prev => prev.filter(r => r.id !== deleteTarget.id));
+    }
+    if (activeTab === 'subjects') {
+      deleteSubject(deleteTarget.id);
+      setSubjects(prev => prev.filter(s => s.id !== deleteTarget.id));
+    }
     setDeleteTarget(null);
   };
 
@@ -268,15 +263,18 @@ export const AcademicsManager: React.FC = () => {
             Configure grade sections, subjects, and rooms for SRNHS.
           </p>
         </div>
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.97 }}
-          onClick={openAdd}
-          className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-2xl bg-sidebar text-white hover:bg-black/80 dark:hover:bg-slate-700 shadow-card transition-colors self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          {addLabel}
-        </motion.button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {isLoading && <span className="text-xs text-slate-400 animate-pulse font-semibold">Syncing cloud...</span>}
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={openAdd}
+            className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-2xl bg-sidebar text-white hover:bg-black/80 dark:hover:bg-slate-700 shadow-card transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            {addLabel}
+          </motion.button>
+        </div>
       </div>
 
       {/* Tabs */}

@@ -4,21 +4,13 @@ import { AttendanceStatus, RecognitionEvent } from '@/types/domain.types';
 import { AttendanceBadge } from '@/components/ui/StatusBadge';
 import { useRole } from '@/hooks/useRole';
 import { Check, Clock, X, AlertCircle, BookOpen, Users, RefreshCw } from 'lucide-react';
-import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
+import { classroomAttendanceService } from '../services/ClassroomAttendanceService';
 import { fetchSections, fetchSectionRoster } from '@/features/faceRegistration/api';
 import { Section, Student } from '@/features/faceRegistration/types';
 import { Subject } from '@/types/domain.types';
+import { fetchSubjects } from '@/features/academics/api';
 import { cn } from '@/lib/utils';
-
-const LS_SUBJECTS = 'srnhs_academics_subjects_v1';
-function getStoredSubjects(): Subject[] {
-  try {
-    const raw = localStorage.getItem(LS_SUBJECTS);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return [];
-}
 
 interface StudentAttendanceRow {
   student_id: string;
@@ -61,6 +53,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
   const [selectedSection, setSelectedSection] = useState('');
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedSubject, setSelectedSubject] = useState('');
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]!);
   const [roster, setRoster] = useState<Student[]>([]);
   const [scanEvents, setScanEvents] = useState<RecognitionEvent[]>([]);
   const [manualOverrides, setManualOverrides] = useState<Record<string, { status: AttendanceStatus; markedBy?: string }>>(loadStoredOverrides());
@@ -96,12 +89,30 @@ export const ClassroomAttendanceBoard: React.FC = () => {
         }
       }
     });
-    const stored = getStoredSubjects();
-    setSubjects(stored);
-    if (stored.length > 0) {
-      setSelectedSubject(stored[0]!.title);
-    }
+
+    fetchSubjects().then(subList => {
+      setSubjects(subList);
+      if (subList.length > 0) {
+        setSelectedSubject(subList[0]!.title);
+      }
+    });
   }, [isTeacher, user]);
+
+  // Sync attendance records from Supabase for the selected section, subject, and date
+  useEffect(() => {
+    if (selectedSection && selectedSection !== 'all') {
+      const subObj = subjects.find(s => s.title === selectedSubject || s.id === selectedSubject);
+      classroomAttendanceService.fetchAttendance(selectedSection, subObj?.id, selectedDate).then(records => {
+        if (records && records.length > 0) {
+          const loadedMap: Record<string, { status: AttendanceStatus; markedBy?: string }> = {};
+          records.forEach(r => {
+            loadedMap[r.student_id] = { status: r.status, markedBy: r.marked_by_name || 'Teacher' };
+          });
+          setManualOverrides(prev => ({ ...prev, ...loadedMap }));
+        }
+      });
+    }
+  }, [selectedSection, selectedSubject, selectedDate, subjects]);
 
 
   // Fetch roster when selected section changes
@@ -199,17 +210,22 @@ export const ClassroomAttendanceBoard: React.FC = () => {
     setManualOverrides(updated);
     saveStoredOverrides(updated);
 
-    if (newStatus === 'absent') {
-      const student = rows.find(s => s.student_id === studentId);
-      if (student) {
-        await mockNotificationAdapter.sendAlert({
-          student_id: student.student_id,
-          student_name: student.name,
-          guardian_phone: student.guardianPhone,
-          message: `[SRNHS Alert] ${student.name} was marked Unexcused Absent for ${selectedSubject} on ${new Date().toLocaleDateString()}.`,
-          event_type: 'unexcused_absence',
-        });
-      }
+    const student = rows.find(s => s.student_id === studentId);
+    const subObj = subjects.find(s => s.title === selectedSubject || s.id === selectedSubject);
+
+    if (selectedSection && selectedSection !== 'all') {
+      await classroomAttendanceService.markAttendance({
+        section_id: selectedSection,
+        subject_id: subObj?.id,
+        student_id: studentId,
+        student_name: student?.name,
+        student_lrn: student?.lrn,
+        guardian_phone: student?.guardianPhone,
+        subject_title: subObj?.title || selectedSubject,
+        date: selectedDate,
+        status: newStatus,
+        marked_by: user?.id,
+      });
     }
   };
 
@@ -224,16 +240,27 @@ export const ClassroomAttendanceBoard: React.FC = () => {
             <h2 className="text-2xl font-black text-slate-900 dark:text-slate-100">Classroom Attendance Board</h2>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/50 dark:border-emerald-800/50 text-[11px] font-black">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Connected to Turnstiles
+              Connected to Turnstiles & Cloud DB
             </span>
           </div>
           <p className="text-sm text-slate-500 dark:text-slate-400 font-medium mt-1">
-            Pre-filled automatically from gate facial recognition time-ins. Your manual mark is always the source of truth.
+            Pre-filled automatically from gate facial recognition time-ins. Changes sync directly to the cloud and send parent SMS alerts.
           </p>
         </div>
 
-        {/* Section + Subject selectors & Sync button */}
+        {/* Section + Subject + Date selectors & Sync button */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Date Picker */}
+          <div className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-3 py-2 shadow-card-sm transition-colors">
+            <Clock className="w-4 h-4 text-slate-400 dark:text-slate-500" />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={e => setSelectedDate(e.target.value)}
+              className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
+            />
+          </div>
+
           <div className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-3 py-2 shadow-card-sm transition-colors">
             <Users className="w-4 h-4 text-slate-400 dark:text-slate-500" />
             {authorizedSections.length > 0 ? (
@@ -286,7 +313,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
           <button
             onClick={handleRefresh}
             className="p-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-card-sm"
-            title="Refresh attendance from camera scans"
+            title="Refresh attendance from camera scans & cloud"
           >
             <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
           </button>

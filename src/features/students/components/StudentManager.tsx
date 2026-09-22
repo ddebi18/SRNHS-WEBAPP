@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom';
 import { addNewStudent, getStoredStudents, getStoredSections, getPhotosFromDb, deleteStudent, generateUUID, syncFromSupabase } from '@/features/faceRegistration/api';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { Section as FRSection } from '@/features/faceRegistration/types';
+import { fetchViolations, createViolation } from '@/features/students/api';
 
 const INITIAL_VIOLATIONS: StudentViolation[] = [];
 
@@ -113,6 +114,9 @@ export const StudentManager: React.FC = () => {
       setStoredSections(secs);
       if (secs.length > 0) setSectionId(secs[0]!.id);
       refreshStudents(secs);
+
+      // Fetch persistent violations
+      fetchViolations().then(setViolations);
     }
     init();
   }, []);
@@ -179,24 +183,22 @@ export const StudentManager: React.FC = () => {
     }
   };
 
-  const handleCreateViolation = (e: React.FormEvent) => {
+  const handleCreateViolation = async (e: React.FormEvent) => {
     e.preventDefault();
     const student = students.find(s => s.id === violationStudentId);
 
-    const newV: StudentViolation = {
-      id: `v-${Date.now()}`,
+    const created = await createViolation({
       student_id: violationStudentId,
       student_name: student ? `${student.first_name} ${student.last_name}` : 'Student',
-      reported_by: user?.id || 'usr-staff',
+      reported_by: user?.id,
       reporter_name: user?.full_name || 'Faculty Member',
       title: violationTitle.trim(),
       description: violationDesc.trim(),
       severity: violationSeverity,
       incident_date: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    };
+    });
 
-    setViolations(prev => [newV, ...prev]);
+    setViolations(prev => [created, ...prev]);
     setViolationTitle('');
     setViolationDesc('');
     setViolationModalOpen(false);
