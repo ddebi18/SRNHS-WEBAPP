@@ -472,18 +472,13 @@ export function useFaceRecognition(
             } else {
               stabilityRef.current = { studentId: '', count: 0 };
               unmatchedCountRef.current += 1;
-
-              const recentMatch = lastConfirmedMatchRef.current;
-              if (recentMatch && (Date.now() - recentMatch.timestamp < 600) && unmatchedCountRef.current <= 2) {
-                setMatchedStudent(recentMatch.student);
-                setIsAnalyzing(false);
-                setIsLive(true);
-                isLiveRef.current = true;
-              } else {
-                lastConfirmedMatchRef.current = null;
-                setMatchedStudent(null);
-                setIsAnalyzing(unmatchedCountRef.current <= 6);
-              }
+              // Never keep a previously confirmed name on an unmatched face.
+              // Reusing it here can label a different person as that student.
+              lastConfirmedMatchRef.current = null;
+              setMatchedStudent(null);
+              setIsLive(false);
+              isLiveRef.current = false;
+              setIsAnalyzing(true);
             }
           } finally {
             processingRef.current = false;
