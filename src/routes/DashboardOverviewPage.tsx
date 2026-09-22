@@ -230,7 +230,10 @@ export const DashboardOverviewPage: React.FC = () => {
 
     const unsub2 = mockNotificationAdapter.subscribeToSms(() => setSmsCount(c => c + 1));
 
-    return () => { unsub1(); unsub2(); };
+    // Fallback: re-fetch every 60 s so missed Realtime events self-heal on laptop
+    const pollInterval = setInterval(() => { loadLiveData(); }, 60_000);
+
+    return () => { unsub1(); unsub2(); clearInterval(pollInterval); };
   }, [loadLiveData]);
 
   return (

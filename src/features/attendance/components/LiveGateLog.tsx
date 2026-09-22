@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { RecognitionEvent } from '@/types/domain.types';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
@@ -17,23 +17,45 @@ export const LiveGateLog: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [manualModalOpen, setManualModalOpen] = useState(false);
 
-  const loadEvents = async () => {
+  const eventsRef = useRef<RecognitionEvent[]>([]);
+
+  const loadEvents = useCallback(async () => {
     setIsLoading(true);
     const data = await supabaseRecognitionAdapter.getEvents();
-    setEvents(data);
+    // Merge with current state by UUID so we never lose Realtime-pushed records
+    setEvents(prev => {
+      const map = new Map<string, RecognitionEvent>();
+      prev.forEach(e => map.set(e.id, e));  // keep existing
+      data.forEach(e => map.set(e.id, e));  // cloud wins on conflict
+      const merged = Array.from(map.values());
+      merged.sort((a, b) => new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime());
+      eventsRef.current = merged;
+      return merged;
+    });
     setIsLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
     loadEvents();
+
+    // Primary: Supabase Realtime WebSocket
     const unsubscribe = supabaseRecognitionAdapter.subscribeToEvents(newEvent => {
       setEvents(prev => {
         if (prev.some(e => e.id === newEvent.id)) return prev;
-        return [newEvent, ...prev];
+        const next = [newEvent, ...prev];
+        eventsRef.current = next;
+        return next;
       });
     });
-    return () => unsubscribe();
-  }, []);
+
+    // Fallback: poll every 30 s so missed Realtime events self-heal
+    const pollInterval = setInterval(() => { loadEvents(); }, 30_000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(pollInterval);
+    };
+  }, [loadEvents]);
 
   if (!isAdmin) {
     return <ForbiddenState message="School-wide turnstile gate entry/exit logs are restricted to School Administrators only." />;
