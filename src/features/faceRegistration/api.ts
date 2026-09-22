@@ -364,8 +364,16 @@ export async function syncFromSupabase(): Promise<{ students: number; sections: 
     });
 
     const mergedStudents = Array.from(studentMap.values());
+
+    // Always overwrite ALL candidate localStorage keys with the cloud result.
+    // If Supabase has 0 students, this wipes every local cache so no device
+    // can resurrect deleted records on the next sync.
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(mergedStudents));
+      const serialized = JSON.stringify(mergedStudents);
+      for (const key of CANDIDATE_STUDENT_KEYS) {
+        try { localStorage.removeItem(key); } catch {}
+      }
+      localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, serialized);
     } catch {}
 
     // Notify all components to re-render with fresh data
