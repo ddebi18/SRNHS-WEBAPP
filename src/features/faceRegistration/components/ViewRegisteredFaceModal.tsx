@@ -203,24 +203,24 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
             </div>
           )}
 
-          {/* Biometric Metadata Card with Brown Gradient */}
-          <div className="p-4 rounded-2xl bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border border-[#d1b397] shadow-sm space-y-3">
+          {/* Biometric Metadata Card with Modern Glassmorphism */}
+          <div className="p-4.5 rounded-3xl bg-emerald-500/10 dark:bg-emerald-950/30 border border-emerald-500/20 dark:border-emerald-800/40 backdrop-blur-sm shadow-sm space-y-3 glow-emerald">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-widest text-amber-950/80 flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-amber-900" />
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                 DepEd Biometric Edge Turnstile Status
               </span>
-              <span className="px-2 py-0.5 rounded-md bg-amber-950/15 text-[10px] font-black uppercase text-amber-950">
+              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-[10px] font-black uppercase text-emerald-800 dark:text-emerald-300 border border-emerald-500/30">
                 Active
               </span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div className="flex items-start gap-2">
-                <Calendar className="w-4 h-4 text-amber-900 shrink-0 mt-0.5" />
+                <Calendar className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-semibold text-amber-950/70 block text-[11px]">Enrolled Timestamp</span>
-                  <span className="font-bold text-amber-950">
+                  <span className="font-semibold text-slate-500 dark:text-slate-400 block text-[11px]">Enrolled Timestamp</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100">
                     {student.lastRegisteredAt
                       ? new Date(student.lastRegisteredAt).toLocaleString()
                       : 'Initial School Enrollment'}
@@ -229,10 +229,10 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
               </div>
 
               <div className="flex items-start gap-2">
-                <UserCheck className="w-4 h-4 text-amber-900 shrink-0 mt-0.5" />
+                <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-semibold text-amber-950/70 block text-[11px]">Guardian Consent on File</span>
-                  <span className="font-bold text-amber-950">
+                  <span className="font-semibold text-slate-500 dark:text-slate-400 block text-[11px]">Guardian Consent on File</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100">
                     {student.guardianName || 'Authorized Guardian'} ({student.guardianPhone || '+639171234567'})
                   </span>
                 </div>
@@ -244,7 +244,7 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
           <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
             <button
               onClick={onClose}
-              className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
               Close
             </button>
@@ -255,7 +255,7 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
                   onClose();
                   onReRegister(student);
                 }}
-                className="px-5 py-2.5 rounded-xl text-xs font-black bg-[#1B4332] text-white hover:bg-[#2D6A4F] active:scale-95 transition-all shadow-sm flex items-center gap-2"
+                className="px-5 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white active:scale-95 transition-all shadow-sm shadow-emerald-900/20 flex items-center gap-2 cursor-pointer"
               >
                 <RefreshCw className="w-4 h-4" />
                 Re-capture Face Angles

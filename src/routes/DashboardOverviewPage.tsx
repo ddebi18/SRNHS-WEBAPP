@@ -7,6 +7,7 @@ import { SITE_CONFIG } from '@/config/siteConfig';
 import { RecognitionEvent } from '@/types/domain.types';
 import { supabaseRecognitionAdapter } from '@/features/attendance/services/SupabaseRecognitionAdapter';
 import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
+import { getStoredStudents } from '@/features/faceRegistration/api';
 import { LiveCameraFeedCard } from '@/features/attendance/components/LiveCameraFeedCard';
 import {
   ArrowRight,
@@ -36,34 +37,37 @@ interface MetricProps {
   title: string;
   value: string | number;
   sub: string;
-  accentColor: string;
+  accentDot: string;
   lightBg: string;
+  darkBg: string;
   iconBg: string;
+  iconColor: string;
+  glowClass: string;
+  borderColor: string;
   icon: React.ReactNode;
   onClick?: () => void;
 }
-const MetricCard: React.FC<MetricProps> = ({ title, value, sub, accentColor, lightBg, iconBg, icon, onClick }) => (
+const MetricCard: React.FC<MetricProps> = ({ title, value, sub, accentDot, lightBg, darkBg, iconBg, iconColor, glowClass, borderColor, icon, onClick }) => (
   <motion.div
     variants={item}
-    whileHover={{ y: -3, boxShadow: '6px 6px 0px 0px rgba(0,0,0,0.14)' }}
+    whileHover={{ y: -4, scale: 1.02 }}
     className={cn(
-      'rounded-3xl p-5 cursor-pointer shadow-card relative overflow-hidden transition-all border',
-      'dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100',
-      lightBg
+      'rounded-3xl p-5 cursor-pointer relative overflow-hidden transition-all border backdrop-blur-sm',
+      lightBg, darkBg, glowClass, borderColor
     )}
     onClick={onClick}
   >
     <div className="flex items-start justify-between">
       <div>
-        <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-2">{title}</div>
-        <div className="text-4xl font-black leading-none mb-1 text-slate-900 dark:text-slate-100">{value}</div>
-        <div className="text-xs font-medium text-slate-600 dark:text-slate-400 mt-2 flex items-center gap-1.5">
-          <span className={cn('w-2 h-2 rounded-full', accentColor)} />
+        <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400 mb-2">{title}</div>
+        <div className="text-4xl font-black leading-none mb-1 text-slate-900 dark:text-slate-50">{value}</div>
+        <div className="text-xs font-medium text-slate-600 dark:text-slate-400 mt-2.5 flex items-center gap-1.5">
+          <span className={cn('w-2 h-2 rounded-full', accentDot)} />
           {sub}
         </div>
       </div>
-      <div className={cn('p-2.5 rounded-2xl backdrop-blur-sm', iconBg)}>
-        {icon}
+      <div className={cn('p-3 rounded-2xl', iconBg)}>
+        <div className={iconColor}>{icon}</div>
       </div>
     </div>
   </motion.div>
@@ -73,11 +77,22 @@ export const DashboardOverviewPage: React.FC = () => {
   const { user, isAdmin } = useRole();
   const navigate = useNavigate();
   const [recentEvents, setRecentEvents] = useState<RecognitionEvent[]>([]);
-  const [smsCount, setSmsCount] = useState(3);
+  const [smsCount, setSmsCount] = useState(0);
 
   const hour = new Date().getHours();
   const greeting =
     hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  // Derived metrics from real stored data
+  const enrolledCount = getStoredStudents().length;
+  const todayStr = new Date().toDateString();
+  const todayScansCount = recentEvents.filter(
+    e => new Date(e.captured_at).toDateString() === todayStr
+  ).length;
+  const attendanceRate =
+    enrolledCount > 0 && todayScansCount > 0
+      ? `${Math.min(100, Math.round((todayScansCount / enrolledCount) * 100))}%`
+      : '—';
 
   useEffect(() => {
     supabaseRecognitionAdapter.getEvents({ limit: 6 }).then(setRecentEvents);
@@ -121,31 +136,43 @@ export const DashboardOverviewPage: React.FC = () => {
       >
         <MetricCard
           title="Enrolled Students"
-          value="1,248"
+          value={enrolledCount}
           sub="Biometric consent on file"
-          lightBg="bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]"
-          accentColor="bg-amber-950"
-          iconBg="bg-amber-950/20 text-amber-950 dark:text-amber-100"
+          lightBg="bg-white/80"
+          darkBg="dark:bg-emerald-950/30"
+          borderColor="border-emerald-200/60 dark:border-emerald-700/40"
+          glowClass="glow-emerald"
+          accentDot="bg-emerald-500"
+          iconBg="bg-emerald-100 dark:bg-emerald-900/50"
+          iconColor="text-emerald-600 dark:text-emerald-400"
           icon={<Users className="w-5 h-5" />}
           onClick={() => navigate('/students')}
         />
         <MetricCard
           title="Today's Gate Scans"
-          value="1,180"
+          value={todayScansCount}
           sub="Via face recognition turnstile"
-          lightBg="bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border-[#d1b397]"
-          accentColor="bg-amber-900"
-          iconBg="bg-amber-950/20 text-amber-950 dark:text-amber-100"
+          lightBg="bg-white/80"
+          darkBg="dark:bg-sky-950/30"
+          borderColor="border-sky-200/60 dark:border-sky-700/40"
+          glowClass="glow-sky"
+          accentDot="bg-sky-500"
+          iconBg="bg-sky-100 dark:bg-sky-900/50"
+          iconColor="text-sky-600 dark:text-sky-400"
           icon={<DoorOpen className="w-5 h-5" />}
           onClick={isAdmin ? () => navigate('/gate-log') : undefined}
         />
         <MetricCard
           title="Attendance Rate"
-          value="94.6%"
+          value={attendanceRate}
           sub="Classroom subject records"
-          lightBg="bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border-[#c28846]"
-          accentColor="bg-amber-900"
-          iconBg="bg-amber-950/20 text-amber-950 dark:text-amber-100"
+          lightBg="bg-white/80"
+          darkBg="dark:bg-violet-950/30"
+          borderColor="border-violet-200/60 dark:border-violet-700/40"
+          glowClass="glow-violet"
+          accentDot="bg-violet-500"
+          iconBg="bg-violet-100 dark:bg-violet-900/50"
+          iconColor="text-violet-600 dark:text-violet-400"
           icon={<ClipboardList className="w-5 h-5" />}
           onClick={() => navigate('/classroom')}
         />
@@ -153,9 +180,13 @@ export const DashboardOverviewPage: React.FC = () => {
           title="Parent SMS Sent"
           value={smsCount}
           sub="Entry · Exit · Absence alerts"
-          lightBg="bg-gradient-to-br from-[#C68B59] to-[#836452] text-amber-50 border-[#806143]"
-          accentColor="bg-amber-100"
-          iconBg="bg-white/20 text-amber-100"
+          lightBg="bg-white/80"
+          darkBg="dark:bg-amber-950/30"
+          borderColor="border-amber-200/60 dark:border-amber-700/40"
+          glowClass="glow-amber"
+          accentDot="bg-amber-500"
+          iconBg="bg-amber-100 dark:bg-amber-900/50"
+          iconColor="text-amber-600 dark:text-amber-400"
           icon={<MessageSquare className="w-5 h-5" />}
           onClick={isAdmin ? () => navigate('/sms-log') : undefined}
         />
@@ -167,21 +198,23 @@ export const DashboardOverviewPage: React.FC = () => {
         {/* Left 2 Cols: Live Camera Stream Viewfinder + Live Recognition Feed */}
         <div className="lg:col-span-2 space-y-6">
 
-          {/* 1. Live Turnstile Camera Feed Card (Empty/Standby placeholder ready for connection) */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.5 }}
-          >
-            <LiveCameraFeedCard />
-          </motion.div>
+          {/* 1. Live Turnstile Camera Feed Card (Admin only) */}
+          {isAdmin && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, duration: 0.5 }}
+            >
+              <LiveCameraFeedCard />
+            </motion.div>
+          )}
 
           {/* 2. Live Recognition Feed Log */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.4, duration: 0.5 }}
-            className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-card p-6 space-y-4 transition-colors"
+            className="bg-white/80 dark:bg-slate-900/80 rounded-3xl border border-slate-200/60 dark:border-slate-800 backdrop-blur-sm p-6 space-y-4 transition-all glow-sky"
           >
             <div className="flex items-center justify-between">
               <div>
@@ -258,30 +291,36 @@ export const DashboardOverviewPage: React.FC = () => {
           className="space-y-4"
         >
           {/* Today's snapshot */}
-          <div className="rounded-3xl p-5 border border-white/10 shadow-card space-y-4 text-white" style={{background: 'linear-gradient(165deg, #836452 0%, #987655 45%, #C68B59 80%, #D4A373 100%)'}}>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-white/80">Today's Snapshot</div>
-            <div className="space-y-3">
-              {[
-                { label: 'Gr. 10 – Sampaguita', present: 28, total: 30, color: 'bg-amber-200 text-amber-950' },
-                { label: 'Gr. 11 – STEM A',     present: 22, total: 24, color: 'bg-amber-300 text-amber-950' },
-                { label: 'Gr. 12 – ABM A',      present: 25, total: 27, color: 'bg-amber-100 text-amber-950' },
-              ].map(row => (
-                <div key={row.label} className="space-y-1.5">
+          <div className="rounded-3xl p-5 border border-white/10 shadow-card space-y-4 text-white backdrop-blur-sm" style={{background: 'linear-gradient(165deg, #1B4332 0%, #2D6A4F 50%, #40916C 100%)'}}>
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-200/80">Today's Snapshot</div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 text-[10px] font-bold text-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live
+              </div>
+            </div>
+            {todayScansCount === 0 ? (
+              <div className="py-6 text-center text-xs text-white/40 font-medium">
+                No attendance scans recorded today yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium text-white/70">{row.label}</span>
-                    <span className="font-bold text-white">{row.present}/{row.total}</span>
+                    <span className="font-medium text-white/70">Today's Scans</span>
+                    <span className="font-bold text-white">{todayScansCount}/{enrolledCount}</span>
                   </div>
-                  <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                  <div className="h-2 rounded-full bg-white/10 overflow-hidden">
                     <motion.div
                       initial={{ width: 0 }}
-                      animate={{ width: `${Math.round((row.present / row.total) * 100)}%` }}
+                      animate={{ width: enrolledCount > 0 ? `${Math.min(100, Math.round((todayScansCount / enrolledCount) * 100))}%` : '0%' }}
                       transition={{ delay: 0.6, duration: 0.8, ease: 'easeOut' }}
-                      className={cn('h-full rounded-full', row.color)}
+                      className="h-full rounded-full bg-gradient-to-r from-emerald-300 to-emerald-100"
                     />
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Quick nav buttons */}
@@ -290,33 +329,34 @@ export const DashboardOverviewPage: React.FC = () => {
               label: 'Take Classroom Attendance',
               sub: 'Mark present · late · excused',
               path: '/classroom',
-              dotColor: 'bg-amber-500',
-              className: 'bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800'
+              accentBorder: 'border-l-emerald-500',
+              dotColor: 'bg-emerald-500',
             },
             {
               label: 'Student & Guardian Directory',
               sub: 'Photos · LRN · contacts',
               path: '/students',
-              dotColor: 'bg-rose-500',
-              className: 'bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800'
+              accentBorder: 'border-l-sky-500',
+              dotColor: 'bg-sky-500',
             },
             isAdmin && {
               label: 'Parent SMS Audit Log',
               sub: 'Sent · queued · failed',
               path: '/sms-log',
-              dotColor: 'bg-purple-500',
-              className: 'bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800'
+              accentBorder: 'border-l-violet-500',
+              dotColor: 'bg-violet-500',
             },
           ].filter(Boolean).map((btn: any) => (
             <motion.button
               key={btn.path}
-              whileHover={{ scale: 1.02 }}
+              whileHover={{ x: 4, scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
               onClick={() => navigate(btn.path)}
               className={cn(
                 'w-full p-4 rounded-2xl text-left shadow-card-sm flex items-center justify-between group',
-                'hover:shadow-card transition-all',
-                btn.className
+                'bg-white dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800',
+                'border-l-[3px]', btn.accentBorder,
+                'hover:shadow-card hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-all backdrop-blur-sm'
               )}
             >
               <div className="flex items-center gap-3">
@@ -331,9 +371,9 @@ export const DashboardOverviewPage: React.FC = () => {
           ))}
 
           {/* System Boundary Banner */}
-          <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm space-y-2.5 transition-colors">
+          <div className="p-5 rounded-2xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 border-l-[3px] border-l-emerald-500/60 shadow-card-sm space-y-2.5 transition-colors backdrop-blur-sm">
             <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-slate-100">
-              <Camera className="w-4 h-4 text-slate-500" />
+              <Camera className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
               <span>Edge Camera Boundary</span>
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed font-medium">

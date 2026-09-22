@@ -11,18 +11,19 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { Student, Section, FaceRegistrationStatus } from '../types';
-import { fetchSections, fetchSectionRoster, addNewStudent } from '../api';
+import { fetchSections, fetchSectionRoster, addNewStudent, getStoredStudents } from '../api';
 import { StudentRosterRow } from './StudentRosterRow';
 import { FaceCaptureModal } from './FaceCaptureModal';
 import { ViewRegisteredFaceModal } from './ViewRegisteredFaceModal';
 import { Modal } from '@/components/ui/Modal';
 import { cn } from '@/lib/utils';
 
-export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = ({
-  initialSectionId = 'sec-101',
+export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; initialStudentId?: string }> = ({
+  initialSectionId,
+  initialStudentId,
 }) => {
   const [sections, setSections] = useState<Section[]>([]);
-  const [selectedSectionId, setSelectedSectionId] = useState<string>(initialSectionId);
+  const [selectedSectionId, setSelectedSectionId] = useState<string>(initialSectionId || '');
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -50,11 +51,22 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
   useEffect(() => {
     fetchSections().then(data => {
       setSections(data);
-      if (data.length > 0 && !selectedSectionId) {
-        setSelectedSectionId(data[0]!.id);
+      if (initialStudentId) {
+        const allStudents = getStoredStudents();
+        const target = allStudents.find(s => s.id === initialStudentId);
+        if (target && target.sectionId) {
+          setSelectedSectionId(target.sectionId);
+          return;
+        }
       }
+      if (initialSectionId) {
+        setSelectedSectionId(initialSectionId);
+        return;
+      }
+      // Default to 'all' so all enrolled students are visible immediately
+      setSelectedSectionId('all');
     });
-  }, []);
+  }, [initialSectionId, initialStudentId]);
 
   // Fetch roster whenever selected section changes
   useEffect(() => {
@@ -63,6 +75,14 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
     fetchSectionRoster(selectedSectionId).then(data => {
       setStudents(data);
       setLoading(false);
+      // Auto-open capture modal if a specific student was requested
+      if (initialStudentId) {
+        const target = data.find(s => s.id === initialStudentId);
+        if (target) {
+          setSelectedStudentForCapture(target);
+          setIsModalOpen(true);
+        }
+      }
     });
   }, [selectedSectionId]);
 
@@ -119,17 +139,17 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
 
     setIsSubmittingEnroll(true);
     try {
-      const targetSec = sections.find(s => s.id === enrollSectionId) || sections.find(s => s.id === selectedSectionId) || sections[0]!;
+      const targetSec = sections.find(s => s.id === enrollSectionId) || sections.find(s => s.id === selectedSectionId) || sections[0];
       const newStudent = await addNewStudent({
         name: `${cleanFirst} ${cleanLast}`,
         studentNumber: cleanLrn,
-        sectionId: targetSec.id,
-        sectionName: targetSec.name,
+        sectionId: targetSec ? targetSec.id : (enrollSectionId || ''),
+        sectionName: targetSec ? targetSec.name : 'General',
         guardianName: enrollGuardianName.trim() || 'Parent / Guardian',
         guardianPhone: cleanPhone,
       });
 
-      if (selectedSectionId !== targetSec.id) {
+      if (selectedSectionId !== 'all' && targetSec && selectedSectionId !== targetSec.id) {
         setSelectedSectionId(targetSec.id);
       } else {
         reloadRoster();
@@ -137,7 +157,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
 
       fetchSections().then(setSections);
 
-      setToastMessage(`${newStudent.name} enrolled in ${targetSec.name}. You can now register their face.`);
+      setToastMessage(`${newStudent.name} enrolled${targetSec ? ` in ${targetSec.name}` : ''}. You can now register their face.`);
       setTimeout(() => setToastMessage(null), 5000);
 
       setEnrollLrn('');
@@ -192,7 +212,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="px-3 py-1 rounded-full bg-[#1B4332] text-white text-[11px] font-black uppercase tracking-wider">
+            <span className="px-3 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200/50 dark:border-emerald-800/50 text-[11px] font-black uppercase tracking-wider">
               Teacher Assisted Enrollment
             </span>
             <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
@@ -209,13 +229,16 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
 
         {/* Section Selector Dropdown & Enroll Student Button */}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-[#2D6A4F]" />
+          <div className="p-3 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/60 dark:border-slate-800 shadow-card-sm flex items-center gap-2">
+            <BookOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             <select
               value={selectedSectionId}
               onChange={e => setSelectedSectionId(e.target.value)}
               className="bg-transparent text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
             >
+              <option value="all" className="dark:bg-slate-900">
+                All Sections ({sections.reduce((acc, s) => acc + (s.totalStudents || 0), 0)} Students)
+              </option>
               {sections.map(sec => (
                 <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
                   {sec.name} ({sec.gradeLevel})
@@ -226,13 +249,13 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
 
           <button
             onClick={() => {
-              setEnrollSectionId(selectedSectionId);
+              setEnrollSectionId(selectedSectionId === 'all' ? (sections[0]?.id || '') : selectedSectionId);
               setEnrollError(null);
               setIsEnrollModalOpen(true);
             }}
-            className="px-4 py-3 rounded-2xl bg-[#1B4332] hover:bg-[#2D6A4F] text-white text-xs font-bold flex items-center gap-2 shadow-card-sm transition-all"
+            className="px-4.5 py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold flex items-center gap-2 shadow-sm shadow-emerald-900/20 transition-all cursor-pointer"
           >
-            <UserPlus className="w-4 h-4 text-emerald-300" />
+            <UserPlus className="w-4 h-4 text-emerald-200" />
             <span>Enroll Student</span>
           </button>
         </div>
@@ -240,53 +263,53 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
 
       {/* Roster Overview Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-3xl p-5 bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border border-[#ba8b5b] shadow-card flex items-center justify-between">
+        <div className="rounded-3xl p-5 bg-emerald-500/10 dark:bg-emerald-950/30 border border-emerald-500/20 dark:border-emerald-800/40 backdrop-blur-sm shadow-card flex items-center justify-between transition-all glow-emerald">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-950/70 mb-1">Roster Registered</div>
-            <div className="text-3xl font-black text-amber-950">{registeredCount} / {totalCount}</div>
-            <div className="text-xs font-medium text-amber-900 mt-1">{completionRate}% section enrolled</div>
+            <div className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-300 mb-1">Roster Registered</div>
+            <div className="text-3xl font-black text-slate-900 dark:text-slate-100">{registeredCount} / {totalCount}</div>
+            <div className="text-xs font-medium text-emerald-700 dark:text-emerald-300 mt-1">{completionRate}% section enrolled</div>
           </div>
-          <div className="w-10 h-10 rounded-2xl bg-amber-950/20 flex items-center justify-center text-amber-950 shrink-0">
+          <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 shadow-[0_0_12px_rgba(16,185,129,0.3)]">
             <CheckCircle2 className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="rounded-3xl p-5 bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border border-[#d1b397] shadow-card flex items-center justify-between">
+        <div className="rounded-3xl p-5 bg-sky-500/10 dark:bg-sky-950/30 border border-sky-500/20 dark:border-sky-800/40 backdrop-blur-sm shadow-card flex items-center justify-between transition-all glow-sky">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-950/70 mb-1">Pending Enrollment</div>
-            <div className="text-3xl font-black text-amber-950">{unregisteredCount}</div>
-            <div className="text-xs font-medium text-amber-900 mt-1">Awaiting webcam scan</div>
+            <div className="text-[11px] font-extrabold uppercase tracking-wider text-sky-700 dark:text-sky-300 mb-1">Pending Enrollment</div>
+            <div className="text-3xl font-black text-slate-900 dark:text-slate-100">{unregisteredCount}</div>
+            <div className="text-xs font-medium text-sky-700 dark:text-sky-300 mt-1">Awaiting webcam scan</div>
           </div>
-          <div className="w-10 h-10 rounded-2xl bg-amber-950/20 flex items-center justify-center text-amber-950 shrink-0">
+          <div className="w-11 h-11 rounded-2xl bg-sky-500/20 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0 shadow-[0_0_12px_rgba(14,165,233,0.3)]">
             <Camera className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="rounded-3xl p-5 bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border border-[#c28846] shadow-card flex items-center justify-between">
+        <div className="rounded-3xl p-5 bg-amber-500/10 dark:bg-amber-950/30 border border-amber-500/20 dark:border-amber-800/40 backdrop-blur-sm shadow-card flex items-center justify-between transition-all glow-amber">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-950/70 mb-1">Needs Review</div>
-            <div className="text-3xl font-black text-amber-950">{needsReviewCount}</div>
-            <div className="text-xs font-medium text-amber-900 mt-1">Quality flag review</div>
+            <div className="text-[11px] font-extrabold uppercase tracking-wider text-amber-700 dark:text-amber-300 mb-1">Needs Review</div>
+            <div className="text-3xl font-black text-slate-900 dark:text-slate-100">{needsReviewCount}</div>
+            <div className="text-xs font-medium text-amber-700 dark:text-amber-300 mt-1">Quality flag review</div>
           </div>
-          <div className="w-10 h-10 rounded-2xl bg-amber-950/20 flex items-center justify-center text-amber-950 shrink-0">
+          <div className="w-11 h-11 rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 shadow-[0_0_12px_rgba(245,158,11,0.3)]">
             <AlertCircle className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="rounded-3xl p-5 bg-gradient-to-br from-[#C68B59] to-[#836452] text-amber-50 border border-[#806143] shadow-card flex items-center justify-between">
+        <div className="rounded-3xl p-5 bg-indigo-500/10 dark:bg-indigo-950/30 border border-indigo-500/20 dark:border-indigo-800/40 backdrop-blur-sm shadow-card flex items-center justify-between transition-all glow-indigo">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-100/80 mb-1">Guardian Consent</div>
-            <div className="text-3xl font-black text-white">100%</div>
-            <div className="text-xs font-medium text-amber-100 mt-1">Archived on file</div>
+            <div className="text-[11px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 mb-1">Guardian Consent</div>
+            <div className="text-3xl font-black text-slate-900 dark:text-slate-100">100%</div>
+            <div className="text-xs font-medium text-indigo-700 dark:text-indigo-300 mt-1">Archived on file</div>
           </div>
-          <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center text-white shrink-0">
+          <div className="w-11 h-11 rounded-2xl bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 shadow-[0_0_12px_rgba(99,102,241,0.3)]">
             <ShieldCheck className="w-5 h-5" />
           </div>
         </div>
       </div>
 
       {/* Search & Filter Toolbar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/60 dark:border-slate-800 shadow-card-sm">
         {/* Search Input */}
         <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -295,7 +318,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search student name or LRN..."
-            className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2D6A4F]"
+            className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           />
         </div>
 
@@ -311,9 +334,9 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
               key={tab.id}
               onClick={() => setStatusFilter(tab.id as any)}
               className={cn(
-                'px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap',
+                'px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer',
                 statusFilter === tab.id
-                  ? 'bg-[#1B4332] text-white shadow-sm'
+                  ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-900/20'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
               )}
             >
@@ -466,7 +489,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string }> = 
             <button
               type="submit"
               disabled={isSubmittingEnroll}
-              className="px-4 py-2 text-xs font-bold rounded-xl bg-[#1B4332] hover:bg-[#2D6A4F] text-white transition-colors"
+              className="px-4 py-2 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-sm shadow-emerald-900/20 transition-all cursor-pointer"
             >
               {isSubmittingEnroll ? 'Enrolling…' : 'Enroll Student'}
             </button>

@@ -31,22 +31,28 @@ export const CardHeader: React.FC<{
   </div>
 );
 
-// Brown Gradient Card Palette: Golden Sand, Light Cream Beige, Toffee, and Amber Brown Gradients
-const COLOR_MAP: Record<string, { light: string; dot: string; iconBg: string }> = {
-  yellow:     { light: 'bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border-[#c28846]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950 dark:text-amber-100' },
-  pink:       { light: 'bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  green:      { light: 'bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border-[#d1b397]', dot: 'bg-amber-800', iconBg: 'bg-amber-950/20 text-amber-950' },
-  lavender:   { light: 'bg-gradient-to-br from-[#E6CCB2] to-[#DDA15E] text-amber-950 border-[#d1b397]', dot: 'bg-amber-800', iconBg: 'bg-amber-950/20 text-amber-950' },
-  peach:      { light: 'bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  blue:       { light: 'bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border-[#c28846]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  cyan:       { light: 'bg-gradient-to-br from-[#C68B59] to-[#836452] text-amber-50 border-[#806143]',  dot: 'bg-amber-100', iconBg: 'bg-white/20 text-amber-100' },
-  sage:       { light: 'bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border-[#d1b397]', dot: 'bg-amber-800', iconBg: 'bg-amber-950/20 text-amber-950' },
-  teal:       { light: 'bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  forestGreen:{ light: 'bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border-[#c28846]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  darkGreen:  { light: 'bg-gradient-to-br from-[#C68B59] to-[#836452] text-amber-50 border-[#806143]',  dot: 'bg-amber-100', iconBg: 'bg-white/20 text-amber-100' },
-  lightBrown: { light: 'bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  creamBrown: { light: 'bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border-[#d1b397]', dot: 'bg-amber-800', iconBg: 'bg-amber-950/20 text-amber-950' },
-  dark:       { light: 'bg-gradient-to-br from-[#836452] to-[#6c503f] text-white border-[#6c503f]',     dot: 'bg-amber-200', iconBg: 'bg-white/10 text-white' },
+// Professional glassmorphic accent palette — harmonizes with green sidebar brand
+const COLOR_MAP: Record<string, { lightBg: string; darkBg: string; border: string; glow: string; dot: string; iconBg: string; iconColor: string }> = {
+  emerald:    { lightBg: 'bg-white/80', darkBg: 'dark:bg-emerald-950/30', border: 'border-emerald-200/60 dark:border-emerald-700/40', glow: 'glow-emerald', dot: 'bg-emerald-500', iconBg: 'bg-emerald-100 dark:bg-emerald-900/50', iconColor: 'text-emerald-600 dark:text-emerald-400' },
+  sky:        { lightBg: 'bg-white/80', darkBg: 'dark:bg-sky-950/30',     border: 'border-sky-200/60 dark:border-sky-700/40',     glow: 'glow-sky',     dot: 'bg-sky-500',     iconBg: 'bg-sky-100 dark:bg-sky-900/50',     iconColor: 'text-sky-600 dark:text-sky-400' },
+  violet:     { lightBg: 'bg-white/80', darkBg: 'dark:bg-violet-950/30',  border: 'border-violet-200/60 dark:border-violet-700/40', glow: 'glow-violet', dot: 'bg-violet-500', iconBg: 'bg-violet-100 dark:bg-violet-900/50', iconColor: 'text-violet-600 dark:text-violet-400' },
+  amber:      { lightBg: 'bg-white/80', darkBg: 'dark:bg-amber-950/30',   border: 'border-amber-200/60 dark:border-amber-700/40',   glow: 'glow-amber',  dot: 'bg-amber-500',  iconBg: 'bg-amber-100 dark:bg-amber-900/50',  iconColor: 'text-amber-600 dark:text-amber-400' },
+  rose:       { lightBg: 'bg-white/80', darkBg: 'dark:bg-rose-950/30',    border: 'border-rose-200/60 dark:border-rose-700/40',     glow: 'glow-emerald', dot: 'bg-rose-500',  iconBg: 'bg-rose-100 dark:bg-rose-900/50',    iconColor: 'text-rose-600 dark:text-rose-400' },
+  // Legacy aliases — map old names to the new accent system
+  yellow:     { lightBg: 'bg-white/80', darkBg: 'dark:bg-amber-950/30',   border: 'border-amber-200/60 dark:border-amber-700/40',   glow: 'glow-amber',  dot: 'bg-amber-500',  iconBg: 'bg-amber-100 dark:bg-amber-900/50',  iconColor: 'text-amber-600 dark:text-amber-400' },
+  pink:       { lightBg: 'bg-white/80', darkBg: 'dark:bg-rose-950/30',    border: 'border-rose-200/60 dark:border-rose-700/40',     glow: 'glow-emerald', dot: 'bg-rose-500',  iconBg: 'bg-rose-100 dark:bg-rose-900/50',    iconColor: 'text-rose-600 dark:text-rose-400' },
+  green:      { lightBg: 'bg-white/80', darkBg: 'dark:bg-emerald-950/30', border: 'border-emerald-200/60 dark:border-emerald-700/40', glow: 'glow-emerald', dot: 'bg-emerald-500', iconBg: 'bg-emerald-100 dark:bg-emerald-900/50', iconColor: 'text-emerald-600 dark:text-emerald-400' },
+  blue:       { lightBg: 'bg-white/80', darkBg: 'dark:bg-sky-950/30',     border: 'border-sky-200/60 dark:border-sky-700/40',     glow: 'glow-sky',     dot: 'bg-sky-500',     iconBg: 'bg-sky-100 dark:bg-sky-900/50',     iconColor: 'text-sky-600 dark:text-sky-400' },
+  cyan:       { lightBg: 'bg-white/80', darkBg: 'dark:bg-sky-950/30',     border: 'border-sky-200/60 dark:border-sky-700/40',     glow: 'glow-sky',     dot: 'bg-sky-500',     iconBg: 'bg-sky-100 dark:bg-sky-900/50',     iconColor: 'text-sky-600 dark:text-sky-400' },
+  lavender:   { lightBg: 'bg-white/80', darkBg: 'dark:bg-violet-950/30',  border: 'border-violet-200/60 dark:border-violet-700/40', glow: 'glow-violet', dot: 'bg-violet-500', iconBg: 'bg-violet-100 dark:bg-violet-900/50', iconColor: 'text-violet-600 dark:text-violet-400' },
+  peach:      { lightBg: 'bg-white/80', darkBg: 'dark:bg-amber-950/30',   border: 'border-amber-200/60 dark:border-amber-700/40',   glow: 'glow-amber',  dot: 'bg-amber-500',  iconBg: 'bg-amber-100 dark:bg-amber-900/50',  iconColor: 'text-amber-600 dark:text-amber-400' },
+  sage:       { lightBg: 'bg-white/80', darkBg: 'dark:bg-emerald-950/30', border: 'border-emerald-200/60 dark:border-emerald-700/40', glow: 'glow-emerald', dot: 'bg-emerald-500', iconBg: 'bg-emerald-100 dark:bg-emerald-900/50', iconColor: 'text-emerald-600 dark:text-emerald-400' },
+  teal:       { lightBg: 'bg-white/80', darkBg: 'dark:bg-sky-950/30',     border: 'border-sky-200/60 dark:border-sky-700/40',     glow: 'glow-sky',     dot: 'bg-sky-500',     iconBg: 'bg-sky-100 dark:bg-sky-900/50',     iconColor: 'text-sky-600 dark:text-sky-400' },
+  forestGreen:{ lightBg: 'bg-white/80', darkBg: 'dark:bg-emerald-950/30', border: 'border-emerald-200/60 dark:border-emerald-700/40', glow: 'glow-emerald', dot: 'bg-emerald-500', iconBg: 'bg-emerald-100 dark:bg-emerald-900/50', iconColor: 'text-emerald-600 dark:text-emerald-400' },
+  darkGreen:  { lightBg: 'bg-white/80', darkBg: 'dark:bg-emerald-950/30', border: 'border-emerald-200/60 dark:border-emerald-700/40', glow: 'glow-emerald', dot: 'bg-emerald-500', iconBg: 'bg-emerald-100 dark:bg-emerald-900/50', iconColor: 'text-emerald-600 dark:text-emerald-400' },
+  lightBrown: { lightBg: 'bg-white/80', darkBg: 'dark:bg-amber-950/30',   border: 'border-amber-200/60 dark:border-amber-700/40',   glow: 'glow-amber',  dot: 'bg-amber-500',  iconBg: 'bg-amber-100 dark:bg-amber-900/50',  iconColor: 'text-amber-600 dark:text-amber-400' },
+  creamBrown: { lightBg: 'bg-white/80', darkBg: 'dark:bg-amber-950/30',   border: 'border-amber-200/60 dark:border-amber-700/40',   glow: 'glow-amber',  dot: 'bg-amber-500',  iconBg: 'bg-amber-100 dark:bg-amber-900/50',  iconColor: 'text-amber-600 dark:text-amber-400' },
+  dark:       { lightBg: 'bg-white/80', darkBg: 'dark:bg-slate-950/40',    border: 'border-slate-200/60 dark:border-slate-700/40',    glow: '',            dot: 'bg-slate-500',  iconBg: 'bg-slate-100 dark:bg-slate-800',      iconColor: 'text-slate-600 dark:text-slate-400' },
 };
 
 export const MetricCard: React.FC<{
@@ -54,34 +60,33 @@ export const MetricCard: React.FC<{
   value: string | number;
   subtitle?: string;
   icon: LucideIcon;
-  color?: 'yellow' | 'pink' | 'green' | 'lavender' | 'peach' | 'blue' | 'cyan' | 'sage' | 'teal' | 'dark';
+  color?: keyof typeof COLOR_MAP;
   onClick?: () => void;
-}> = ({ title, value, subtitle, icon: Icon, color = 'yellow', onClick }) => {
-  const theme = COLOR_MAP[color] ?? COLOR_MAP['yellow']!;
+}> = ({ title, value, subtitle, icon: Icon, color = 'emerald', onClick }) => {
+  const theme = COLOR_MAP[color] ?? COLOR_MAP['emerald']!;
 
   return (
     <div
       onClick={onClick}
       className={cn(
-        'rounded-3xl p-5 shadow-card border transition-all',
-        'dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100',
-        theme.light,
-        onClick && 'cursor-pointer hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,0.14)] hover:-translate-y-0.5'
+        'rounded-3xl p-5 border transition-all backdrop-blur-sm',
+        theme.lightBg, theme.darkBg, theme.glow, theme.border,
+        onClick && 'cursor-pointer hover:-translate-y-1 hover:scale-[1.02]'
       )}
     >
       <div className="flex items-start justify-between">
         <div>
-          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-2">{title}</div>
-          <div className="text-3xl font-black leading-none text-slate-900 dark:text-slate-100">{value}</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400 mb-2">{title}</div>
+          <div className="text-3xl font-black leading-none text-slate-900 dark:text-slate-50">{value}</div>
           {subtitle && (
-            <div className="text-xs font-medium text-slate-600 dark:text-slate-400 mt-2 flex items-center gap-1.5">
+            <div className="text-xs font-medium text-slate-600 dark:text-slate-400 mt-2.5 flex items-center gap-1.5">
               <span className={cn('w-2 h-2 rounded-full', theme.dot)} />
               {subtitle}
             </div>
           )}
         </div>
-        <div className={cn('p-2.5 rounded-2xl backdrop-blur-sm', theme.iconBg)}>
-          <Icon className="w-5 h-5" />
+        <div className={cn('p-3 rounded-2xl', theme.iconBg)}>
+          <Icon className={cn('w-5 h-5', theme.iconColor)} />
         </div>
       </div>
     </div>

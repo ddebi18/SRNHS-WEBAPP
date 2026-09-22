@@ -80,8 +80,8 @@ export function DataTable<T>({
             onChange={e => { setQuery(e.target.value); setPage(1); }}
             placeholder={searchPlaceholder}
             className="w-full pl-10 pr-4 py-2.5 text-sm rounded-2xl font-medium
-              bg-white dark:bg-slate-900
-              border border-slate-200 dark:border-slate-800
+              bg-white/80 dark:bg-slate-900/80
+              border border-slate-200/60 dark:border-slate-800
               text-slate-900 dark:text-slate-100
               placeholder:text-slate-400 dark:placeholder:text-slate-500
               focus:outline-none focus:ring-2 focus:ring-brand-500/50 dark:focus:ring-brand-400/50 focus:border-brand-500 dark:focus:border-brand-400
@@ -91,7 +91,7 @@ export function DataTable<T>({
       )}
 
       {/* Table Card Container */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
+      <div className="bg-white/80 dark:bg-slate-900/80 rounded-3xl border border-slate-200/60 dark:border-slate-800 backdrop-blur-sm overflow-hidden transition-all">
         <div className="overflow-x-auto scrollbar-thin">
           <table className="w-full text-left border-collapse min-w-[600px] sm:min-w-[640px]">
             <thead className="bg-slate-50 dark:bg-slate-800/80">

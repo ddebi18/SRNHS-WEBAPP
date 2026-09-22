@@ -47,10 +47,10 @@ export const CaptureControls: React.FC<CaptureControlsProps> = ({
             onClick={onCapture}
             disabled={isCaptureDisabled || isSubmitting}
             className={cn(
-              'px-5 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 shadow-sm transition-all',
+              'px-5 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 shadow-sm transition-all cursor-pointer',
               isCaptureDisabled || isSubmitting
                 ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed border border-transparent'
-                : 'bg-[#2D6A4F] text-white hover:bg-[#1B4332] active:scale-95 border border-[#1B4332]'
+                : 'bg-emerald-600 text-white hover:bg-emerald-700 active:scale-95 shadow-sm shadow-emerald-900/20'
             )}
           >
             <Camera className="w-4 h-4" />
@@ -62,10 +62,10 @@ export const CaptureControls: React.FC<CaptureControlsProps> = ({
             onClick={onSubmit}
             disabled={!isAllCaptured || !consentConfirmed || isSubmitting}
             className={cn(
-              'px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 shadow-md transition-all',
+              'px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 shadow-md transition-all cursor-pointer',
               !isAllCaptured || !consentConfirmed || isSubmitting
                 ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
-                : 'bg-gradient-to-r from-[#1B4332] via-[#2D6A4F] to-[#D4A373] text-white hover:brightness-110 active:scale-95'
+                : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white hover:brightness-110 active:scale-95 shadow-md shadow-emerald-900/20'
             )}
           >
             {isSubmitting ? (

@@ -32,14 +32,14 @@ export const CapturedFrameThumbnails: React.FC<CapturedFrameThumbnailsProps> = (
             className={cn(
               'rounded-2xl p-2 border transition-all flex flex-col items-center gap-2 relative group overflow-hidden',
               isActive
-                ? 'border-[#2D6A4F] bg-[#1B4332]/5 dark:bg-[#1B4332]/20 ring-2 ring-[#2D6A4F]/30'
+                ? 'border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/30'
                 : frame
-                ? 'border-[#D4A373]/60 bg-white dark:bg-slate-900'
-                : 'border-dashed border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40'
+                ? 'border-emerald-500/40 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm'
+                : 'border-dashed border-slate-300 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40'
             )}
           >
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1">
-              {frame && <CheckCircle2 className="w-3 h-3 text-[#2D6A4F] dark:text-[#52B788]" />}
+              {frame && <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />}
               {label}
             </div>
 

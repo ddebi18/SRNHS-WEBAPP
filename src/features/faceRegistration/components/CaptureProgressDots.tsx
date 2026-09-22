@@ -35,17 +35,17 @@ export const CaptureProgressDots: React.FC<CaptureProgressDotsProps> = ({
               type="button"
               onClick={() => onStepClick(s.key)}
               className={cn(
-                'flex items-center justify-center gap-1 sm:gap-1.5 py-1.5 px-1 sm:px-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all border min-w-0',
+                'flex items-center justify-center gap-1 sm:gap-1.5 py-1.5 px-1 sm:px-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all border min-w-0 cursor-pointer',
                 isCurrent
-                  ? 'bg-[#2D6A4F] text-white border-[#1B4332] shadow-sm ring-2 ring-[#2D6A4F]/30'
+                  ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm ring-2 ring-emerald-500/30'
                   : isDone
-                  ? 'bg-[#E6CCB2] text-amber-950 border-[#D4A373]'
+                  ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
                   : 'bg-slate-100 dark:bg-slate-800/80 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700'
               )}
             >
               <span className={cn(
                 'w-4 h-4 rounded-full flex items-center justify-center text-[9px] sm:text-[10px] font-black shrink-0',
-                isCurrent ? 'bg-white text-[#2D6A4F]' : isDone ? 'bg-amber-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                isCurrent ? 'bg-white text-emerald-600' : isDone ? 'bg-emerald-600 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
               )}>
                 {isDone ? <Check className="w-2.5 h-2.5 stroke-[3]" /> : idx + 1}
               </span>

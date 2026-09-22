@@ -3,12 +3,22 @@ import { motion } from 'framer-motion';
 import { AttendanceStatus, RecognitionEvent } from '@/types/domain.types';
 import { AttendanceBadge } from '@/components/ui/StatusBadge';
 import { useRole } from '@/hooks/useRole';
-import { Check, Clock, X, AlertCircle, BookOpen, Users, RefreshCw, Camera } from 'lucide-react';
+import { Check, Clock, X, AlertCircle, BookOpen, Users, RefreshCw } from 'lucide-react';
 import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { fetchSections, fetchSectionRoster } from '@/features/faceRegistration/api';
 import { Section, Student } from '@/features/faceRegistration/types';
+import { Subject } from '@/types/domain.types';
 import { cn } from '@/lib/utils';
+
+const LS_SUBJECTS = 'srnhs_academics_subjects_v1';
+function getStoredSubjects(): Subject[] {
+  try {
+    const raw = localStorage.getItem(LS_SUBJECTS);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [];
+}
 
 interface StudentAttendanceRow {
   student_id: string;
@@ -46,26 +56,53 @@ const STATUS_ACTIONS: { status: AttendanceStatus; label: string; icon: React.Rea
 ];
 
 export const ClassroomAttendanceBoard: React.FC = () => {
-  const { user } = useRole();
+  const { user, isTeacher, isAdmin } = useRole();
   const [sections, setSections] = useState<Section[]>([]);
-  const [selectedSection, setSelectedSection] = useState('sec-101');
-  const [selectedSubject, setSelectedSubject] = useState('General Mathematics');
+  const [selectedSection, setSelectedSection] = useState('');
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [selectedSubject, setSelectedSubject] = useState('');
   const [roster, setRoster] = useState<Student[]>([]);
   const [scanEvents, setScanEvents] = useState<RecognitionEvent[]>([]);
   const [manualOverrides, setManualOverrides] = useState<Record<string, { status: AttendanceStatus; markedBy?: string }>>(loadStoredOverrides());
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load sections on mount
+  // Filter sections by teacher ownership (Requirement 4)
+  const authorizedSections = React.useMemo(() => {
+    if (isAdmin) return sections;
+    return sections.filter(sec => {
+      const sTeacherId = sec.teacherId || (sec as any).adviser_id;
+      const sTeacherName = sec.teacherName || (sec as any).adviser_name;
+      if (sTeacherId && user?.id && sTeacherId === user.id) return true;
+      if (sTeacherName && user?.full_name && sTeacherName.toLowerCase().includes(user.full_name.toLowerCase())) return true;
+      if (!sTeacherId && !sTeacherName) return true;
+      return false;
+    });
+  }, [sections, isAdmin, user]);
+
+  // Load sections and subjects on mount
   useEffect(() => {
     fetchSections().then(data => {
-      if (data && data.length > 0) {
-        setSections(data);
-        if (!selectedSection) {
-          setSelectedSection(data[0]!.id);
+      setSections(data);
+      if (!selectedSection) {
+        if (isTeacher) {
+          const firstAuthorized = data.find(s => {
+            const tId = s.teacherId || (s as any).adviser_id;
+            const tName = s.teacherName || (s as any).adviser_name;
+            return !tId || tId === user?.id || (user?.full_name && tName?.toLowerCase().includes(user.full_name.toLowerCase()));
+          });
+          setSelectedSection(firstAuthorized ? firstAuthorized.id : (data[0]?.id || ''));
+        } else {
+          setSelectedSection('all');
         }
       }
     });
-  }, []);
+    const stored = getStoredSubjects();
+    setSubjects(stored);
+    if (stored.length > 0) {
+      setSelectedSubject(stored[0]!.title);
+    }
+  }, [isTeacher, user]);
+
 
   // Fetch roster when selected section changes
   const loadRoster = useCallback(async (secId: string) => {
@@ -181,7 +218,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-2xl font-black text-slate-900 dark:text-slate-100">Classroom Attendance Board</h2>
@@ -196,47 +233,58 @@ export const ClassroomAttendanceBoard: React.FC = () => {
         </div>
 
         {/* Section + Subject selectors & Sync button */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-3 py-2 shadow-card-sm transition-colors">
-            <Users className="w-4 h-4 text-slate-400 dark:text-slate-500" />
-            <select
-              value={selectedSection}
-              onChange={e => setSelectedSection(e.target.value)}
-              className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
-            >
-              {sections.length > 0 ? (
-                sections.map(sec => (
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm rounded-2xl border border-slate-200/60 dark:border-slate-800 px-3.5 py-2 shadow-card-sm transition-all">
+            <Users className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            {authorizedSections.length > 0 ? (
+              <select
+                value={selectedSection}
+                onChange={e => setSelectedSection(e.target.value)}
+                className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
+              >
+                {isAdmin && (
+                  <option value="all" className="dark:bg-slate-900">
+                    All Sections (All Students)
+                  </option>
+                )}
+                {authorizedSections.map(sec => (
                   <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
                     {sec.name}
                   </option>
-                ))
-              ) : (
-                <>
-                  <option value="sec-101" className="dark:bg-slate-900">Grade 10 – Sampaguita</option>
-                  <option value="sec-102" className="dark:bg-slate-900">Grade 11 – STEM A</option>
-                  <option value="sec-103" className="dark:bg-slate-900">Grade 12 – ABM A</option>
-                </>
-              )}
-            </select>
+                ))}
+              </select>
+            ) : (
+              <span className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
+                <Users className="w-3.5 h-3.5" />
+                {isTeacher ? 'No assigned sections' : 'All Enrolled Students'}
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 px-3 py-2 shadow-card-sm transition-colors">
-            <BookOpen className="w-4 h-4 text-slate-400 dark:text-slate-500" />
-            <select
-              value={selectedSubject}
-              onChange={e => setSelectedSubject(e.target.value)}
-              className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
-            >
-              <option value="General Mathematics" className="dark:bg-slate-900">General Mathematics</option>
-              <option value="Research 1" className="dark:bg-slate-900">Research 1</option>
-              <option value="Panitikang Pilipino" className="dark:bg-slate-900">Panitikang Pilipino</option>
-              <option value="Physical Science" className="dark:bg-slate-900">Physical Science</option>
-            </select>
+          <div className="flex items-center gap-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm rounded-2xl border border-slate-200/60 dark:border-slate-800 px-3.5 py-2 shadow-card-sm transition-all">
+            <BookOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            {subjects.length > 0 ? (
+              <select
+                value={selectedSubject}
+                onChange={e => setSelectedSubject(e.target.value)}
+                className="bg-transparent text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
+              >
+                {subjects.map(sub => (
+                  <option key={sub.id} value={sub.title} className="dark:bg-slate-900">
+                    {sub.title}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
+                No subjects assigned
+              </span>
+            )}
           </div>
 
           <button
             onClick={handleRefresh}
-            className="p-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-card-sm"
+            className="p-2.5 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/60 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100/70 dark:hover:bg-slate-800/80 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all shadow-card-sm cursor-pointer shrink-0"
             title="Refresh attendance from camera scans"
           >
             <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
@@ -245,45 +293,101 @@ export const ClassroomAttendanceBoard: React.FC = () => {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
         {[
-          { label: 'Present', count: summary.present, lightBg: 'bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]', dot: 'bg-amber-950' },
-          { label: 'Late',    count: summary.late,    lightBg: 'bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border-[#c28846]', dot: 'bg-amber-900' },
-          { label: 'Absent',  count: summary.absent,  lightBg: 'bg-gradient-to-br from-[#C68B59] to-[#836452] text-amber-50 border-[#806143]',   dot: 'bg-amber-100' },
-          { label: 'Excused', count: summary.excused, lightBg: 'bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border-[#d1b397]', dot: 'bg-amber-800' },
+          {
+            label: 'Present',
+            count: summary.present,
+            subtext: 'Turnstile verified on time',
+            icon: <Check className="w-5 h-5 text-emerald-600 dark:text-emerald-400 stroke-[2.5]" />,
+            iconBg: 'bg-emerald-500/15 dark:bg-emerald-500/20 border-emerald-500/20 shadow-[0_0_12px_rgba(16,185,129,0.25)]',
+            cardBg: 'bg-emerald-500/10 dark:bg-emerald-950/30 border-emerald-500/25 dark:border-emerald-800/40',
+            dot: 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)]',
+            tag: 'text-emerald-700 dark:text-emerald-300',
+            glow: 'glow-emerald',
+          },
+          {
+            label: 'Late',
+            count: summary.late,
+            subtext: 'Time-in after 8:00 AM',
+            icon: <Clock className="w-5 h-5 text-amber-600 dark:text-amber-400 stroke-[2.5]" />,
+            iconBg: 'bg-amber-500/15 dark:bg-amber-500/20 border-amber-500/20 shadow-[0_0_12px_rgba(245,158,11,0.25)]',
+            cardBg: 'bg-amber-500/10 dark:bg-amber-950/30 border-amber-500/25 dark:border-amber-800/40',
+            dot: 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.7)]',
+            tag: 'text-amber-700 dark:text-amber-300',
+            glow: 'glow-amber',
+          },
+          {
+            label: 'Absent',
+            count: summary.absent,
+            subtext: 'No entry scan detected',
+            icon: <X className="w-5 h-5 text-rose-600 dark:text-rose-400 stroke-[2.5]" />,
+            iconBg: 'bg-rose-500/15 dark:bg-rose-500/20 border-rose-500/20 shadow-[0_0_12px_rgba(244,63,94,0.25)]',
+            cardBg: 'bg-rose-500/10 dark:bg-rose-950/30 border-rose-500/25 dark:border-rose-800/40',
+            dot: 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.7)]',
+            tag: 'text-rose-700 dark:text-rose-300',
+            glow: 'glow-rose',
+          },
+          {
+            label: 'Excused',
+            count: summary.excused,
+            subtext: 'Authorized school leave',
+            icon: <AlertCircle className="w-5 h-5 text-sky-600 dark:text-sky-400 stroke-[2.5]" />,
+            iconBg: 'bg-sky-500/15 dark:bg-sky-500/20 border-sky-500/20 shadow-[0_0_12px_rgba(14,165,233,0.25)]',
+            cardBg: 'bg-sky-500/10 dark:bg-sky-950/30 border-sky-500/25 dark:border-sky-800/40',
+            dot: 'bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.7)]',
+            tag: 'text-sky-700 dark:text-sky-300',
+            glow: 'glow-sky',
+          },
         ].map(s => (
           <motion.div
             key={s.label}
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             className={cn(
-              'rounded-2xl p-4 shadow-card border transition-all',
-              'dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100',
-              s.lightBg
+              'rounded-3xl p-5 border backdrop-blur-sm transition-all flex items-center justify-between gap-3',
+              s.cardBg,
+              s.glow
             )}
           >
-            <div className="text-[11px] font-bold uppercase tracking-widest text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
-              <span className={cn('w-2 h-2 rounded-full', s.dot)} />
-              {s.label}
+            <div className="min-w-0 flex-1">
+              <div className={cn('text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1.5', s.tag)}>
+                <span className={cn('w-2 h-2 rounded-full shrink-0', s.dot)} />
+                <span className="truncate">{s.label}</span>
+              </div>
+              <div className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-slate-100 tracking-tight mt-1.5">
+                {s.count}
+              </div>
+              <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mt-1 truncate">
+                {s.subtext}
+              </div>
             </div>
-            <div className="text-3xl font-black text-slate-900 dark:text-slate-100 mt-1">{s.count}</div>
+
+            <div className={cn('w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border', s.iconBg)}>
+              {s.icon}
+            </div>
           </motion.div>
         ))}
       </div>
 
       {/* Attendance Roster Table */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-card overflow-hidden transition-colors">
-        <div className="px-6 py-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between">
+      <div className="bg-white/80 dark:bg-slate-900/80 rounded-3xl border border-slate-200/60 dark:border-slate-800 backdrop-blur-sm shadow-card overflow-hidden transition-all">
+        <div className="px-6 py-5 border-b border-slate-200/60 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 flex items-center justify-between">
           <div>
             <h3 className="text-base font-black text-slate-900 dark:text-slate-100">
-              {selectedSectionObj ? selectedSectionObj.name : 'Section'} · {selectedSubject}
+              {selectedSection === 'all'
+                ? 'All Sections'
+                : selectedSectionObj
+                ? selectedSectionObj.name
+                : 'Classroom Roster'}
+              {selectedSubject ? ` · ${selectedSubject}` : ''}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
               {new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} · {rows.length} Enrolled Students
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400">
-            <Camera className="w-4 h-4 text-emerald-500" />
+            <RefreshCw className="w-4 h-4 text-emerald-500" />
             <span>Turnstile Auto-Sync Active</span>
           </div>
         </div>
