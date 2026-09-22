@@ -63,7 +63,7 @@ describe('MockRecognitionAdapter', () => {
         isFaceDetected: true,
         isAnalyzing: false,
       })
-    ).toBe('Face detected: Unknown');
+    ).toBe('Face detected · Unregistered person');
   });
 
   it('shows detecting while a detected face is still being analyzed', () => {
@@ -75,7 +75,7 @@ describe('MockRecognitionAdapter', () => {
         isFaceDetected: true,
         isAnalyzing: true,
       })
-    ).toBe('Face detected: Detecting...');
+    ).toBe('Face detected · Analyzing identity…');
   });
 
   it('keeps waiting state until a face is detected', () => {
@@ -86,7 +86,7 @@ describe('MockRecognitionAdapter', () => {
         isReady: true,
         isFaceDetected: false,
       })
-    ).toBe('Face Detection: Waiting');
+    ).toBe('Ready · Waiting for face');
   });
 
   it('formats verified status text with student name and match percentage', () => {

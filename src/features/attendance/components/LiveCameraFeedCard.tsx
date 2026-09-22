@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Camera,
@@ -10,6 +11,8 @@ import {
   CheckCircle2,
   Info,
   Zap,
+  AlertCircle,
+  UserPlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcStream';
@@ -94,21 +97,12 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   );
   const { isLoading: isRecognitionLoading, isReady: isRecognitionReady, matchedStudent, error: recognitionError, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo } = useFaceRecognition(videoRef, hasVideoSource);
   const [isInstantScanning, setIsInstantScanning] = useState(false);
+  const isNoRegisteredFaces = Boolean(
+    recognitionError &&
+    (recognitionError.includes('No registered students') || recognitionError.includes('No FaceNet descriptors'))
+  );
   const activeBox = isFaceDetected ? (faceBox || recognitionBox) : recognitionBox;
   const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
-
-  // Keep scanning whenever a face is in the camera, including after Time-In.
-  useEffect(() => {
-    if (!isAnyFaceDetected || !isRecognitionReady || !hasVideoSource) return;
-
-    const runScan = () => {
-      triggerInstantScan().catch(() => {});
-    };
-
-    runScan();
-    const timer = setInterval(runScan, matchedStudent ? 2200 : 900);
-    return () => clearInterval(timer);
-  }, [isAnyFaceDetected, isRecognitionReady, matchedStudent, hasVideoSource, triggerInstantScan]);
 
   useEffect(() => {
     if (!useWebcam) {
@@ -254,15 +248,15 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     <>
       <div
         className={cn(
-          'bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-card overflow-hidden transition-colors flex flex-col',
+          'bg-white/80 dark:bg-slate-900/80 rounded-3xl border border-slate-200/60 dark:border-slate-800 backdrop-blur-sm overflow-hidden transition-all flex flex-col glow-emerald',
           className
         )}
       >
         {/* ── Card Header ─────────────────────────────────────────────────── */}
         <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-900/50">
           <div className="flex items-center gap-3">
-            <div className="p-2 sm:p-2.5 rounded-2xl bg-slate-900 text-white dark:bg-slate-800 shadow-card-sm border border-slate-700/50 shrink-0">
-              <Video className="w-4 h-4 text-emerald-400" />
+            <div className="p-2 sm:p-2.5 rounded-2xl bg-emerald-100 dark:bg-emerald-900/50 border border-emerald-200/60 dark:border-emerald-700/40 shrink-0">
+              <Video className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -353,79 +347,22 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
           <div
             ref={viewfinderRef}
             className={cn(
-              'bg-slate-950 overflow-hidden flex flex-col justify-between transition-all duration-200',
+              'bg-slate-950 overflow-hidden relative transition-all duration-200',
               isFullscreen
                 ? 'fixed inset-0 z-50 p-4 sm:p-6 bg-black/95 backdrop-blur-md rounded-none border-0'
-                : 'relative w-full aspect-[4/3] sm:aspect-video min-h-[250px] sm:min-h-[300px] rounded-2xl border border-slate-800 p-2.5 sm:p-4 shadow-inner group'
+                : 'w-full aspect-[4/3] sm:aspect-video min-h-[260px] sm:min-h-[320px] rounded-2xl border border-slate-800 shadow-inner group'
             )}
           >
             {/* Subtle Grid / Scanline Background */}
             <div className="absolute inset-0 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:20px_20px] opacity-20 pointer-events-none" />
 
             {/* Viewfinder Target Framing Reticles */}
-            <div className="absolute top-2.5 left-2.5 sm:top-3 sm:left-3 w-4 h-4 sm:w-5 sm:h-5 border-t-2 border-l-2 border-emerald-500/80 rounded-tl-sm pointer-events-none" />
-            <div className="absolute top-2.5 right-2.5 sm:top-3 sm:right-3 w-4 h-4 sm:w-5 sm:h-5 border-t-2 border-r-2 border-emerald-500/80 rounded-tr-sm pointer-events-none" />
-            <div className="absolute bottom-2.5 left-2.5 sm:bottom-3 sm:left-3 w-4 h-4 sm:w-5 sm:h-5 border-b-2 border-l-2 border-emerald-500/80 rounded-bl-sm pointer-events-none" />
-            <div className="absolute bottom-2.5 right-2.5 sm:bottom-3 sm:right-3 w-4 h-4 sm:w-5 sm:h-5 border-b-2 border-r-2 border-emerald-500/80 rounded-br-sm pointer-events-none" />
+            <div className="absolute top-2.5 left-2.5 sm:top-3 sm:left-3 w-4 h-4 sm:w-5 sm:h-5 border-t-2 border-l-2 border-emerald-500/80 rounded-tl-sm pointer-events-none z-20" />
+            <div className="absolute top-2.5 right-2.5 sm:top-3 sm:right-3 w-4 h-4 sm:w-5 sm:h-5 border-t-2 border-r-2 border-emerald-500/80 rounded-tr-sm pointer-events-none z-20" />
+            <div className="absolute bottom-2.5 left-2.5 sm:bottom-3 sm:left-3 w-4 h-4 sm:w-5 sm:h-5 border-b-2 border-l-2 border-emerald-500/80 rounded-bl-sm pointer-events-none z-20" />
+            <div className="absolute bottom-2.5 right-2.5 sm:bottom-3 sm:right-3 w-4 h-4 sm:w-5 sm:h-5 border-b-2 border-r-2 border-emerald-500/80 rounded-br-sm pointer-events-none z-20" />
 
-            {/* Top HUD Overlay */}
-            <div className="relative z-10 flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-emerald-400/90 drop-shadow">
-              <div className="flex items-center gap-1.5 sm:gap-2 bg-black/70 backdrop-blur-md px-2 sm:px-2.5 py-1 rounded-lg border border-emerald-500/30">
-                <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
-                <span>{currentCam.id.toUpperCase()} · {currentCam.node} ({scanMode === 'entry' ? 'TIME-IN' : 'TIME-OUT'})</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="bg-black/70 backdrop-blur-md px-2 sm:px-2.5 py-1 rounded-lg border border-slate-700/50 text-slate-300">
-                  {currentTime}
-                </div>
-                {isFullscreen && (
-                  <button
-                    onClick={() => setIsFullscreen(false)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 font-bold transition-colors cursor-pointer"
-                    title="Exit Fullscreen"
-                  >
-                    <Maximize2 className="w-3 h-3" />
-                    <span>Close</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Real-time Scan Confirmation Banner */}
-            <AnimatePresence>
-              {lastScanNotice && (
-                <motion.div
-                  initial={{ opacity: 0, y: -8, scale: 0.96 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -8, scale: 0.96 }}
-                  className={cn(
-                    'relative z-20 mx-auto max-w-md w-full px-4 py-2 rounded-xl text-center shadow-lg border backdrop-blur-md flex items-center justify-center gap-2 text-xs font-black',
-                    lastScanNotice.alreadyLogged
-                      ? 'bg-amber-500/90 text-slate-950 border-amber-400/60 shadow-amber-500/20'
-                      : lastScanNotice.type === 'entry'
-                      ? 'bg-emerald-500/90 text-white border-emerald-400/50'
-                      : 'bg-amber-500/90 text-slate-950 border-amber-400/50'
-                  )}
-                >
-                  {lastScanNotice.alreadyLogged ? (
-                    <>
-                      <Info className="w-4 h-4 shrink-0" />
-                      <span>
-                        Already {lastScanNotice.type === 'entry' ? 'Timed-In' : 'Timed-Out'} Today: {lastScanNotice.studentName} ({lastScanNotice.time})
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="w-4 h-4 shrink-0" />
-                      <span>
-                        {lastScanNotice.type === 'entry' ? 'Time-In Logged' : 'Time-Out Logged'}: {lastScanNotice.studentName} at {lastScanNotice.time}
-                      </span>
-                    </>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-
+            {/* Video Stream Element */}
             {((useWebcam && webcamStream) || (!useWebcam && (streamUrl || whepUrl))) && (
               <video
                 ref={(el) => {
@@ -458,10 +395,71 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               />
             )}
 
+            {/* Top HUD Overlay (Always pinned to top) */}
+            <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-emerald-400/90 drop-shadow">
+              <div className="flex items-center gap-1.5 sm:gap-2 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-emerald-500/30">
+                <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
+                <span>{currentCam.id.toUpperCase()} · {currentCam.node} ({scanMode === 'entry' ? 'TIME-IN' : 'TIME-OUT'})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-slate-700/50 text-slate-300">
+                  {currentTime}
+                </div>
+                {isFullscreen && (
+                  <button
+                    onClick={() => setIsFullscreen(false)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 font-bold transition-colors cursor-pointer"
+                    title="Exit Fullscreen"
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                    <span>Close</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Real-time Scan Confirmation Banner (Positioned cleanly under Top HUD) */}
+            <div className="absolute top-12 left-4 right-4 z-30 pointer-events-none flex justify-center">
+              <AnimatePresence>
+                {lastScanNotice && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -8, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -8, scale: 0.96 }}
+                    className={cn(
+                      'pointer-events-auto max-w-md w-full px-4 py-2 rounded-xl text-center shadow-xl border backdrop-blur-md flex items-center justify-center gap-2 text-xs font-black',
+                      lastScanNotice.alreadyLogged
+                        ? 'bg-amber-500/95 text-slate-950 border-amber-400/60 shadow-amber-500/25'
+                        : lastScanNotice.type === 'entry'
+                        ? 'bg-emerald-500/95 text-white border-emerald-400/50 shadow-emerald-500/25'
+                        : 'bg-amber-500/95 text-slate-950 border-amber-400/50 shadow-amber-500/25'
+                    )}
+                  >
+                    {lastScanNotice.alreadyLogged ? (
+                      <>
+                        <Info className="w-4 h-4 shrink-0" />
+                        <span>
+                          Already {lastScanNotice.type === 'entry' ? 'Timed-In' : 'Timed-Out'} Today: {lastScanNotice.studentName} ({lastScanNotice.time})
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        <span>
+                          {lastScanNotice.type === 'entry' ? 'Time-In Logged' : 'Time-Out Logged'}: {lastScanNotice.studentName} at {lastScanNotice.time}
+                        </span>
+                      </>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Bounding Box on Detected Face */}
             {activeBox && (() => {
               const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.50);
               const isRecognized = Boolean(matchedStudent);
-              const isDetecting = !isRecognized && (isAnalyzing || isInstantScanning || !isRecognitionReady);
+              const isDetecting = !isRecognized && !isNoRegisteredFaces && (isAnalyzing || isInstantScanning);
               const isSpoofWarning = isRecognized && !isLive;
 
               return (
@@ -469,14 +467,14 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                   className={cn(
                     'absolute z-10 border-2 rounded-lg pointer-events-none transition-all duration-150',
                     isSpoofWarning
-                      ? 'border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.4)]'
-                      : isHighConfidence
-                      ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
-                      : isRecognized
-                      ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
+                      ? 'border-amber-400 shadow-[0_0_14px_rgba(245,158,11,0.4)]'
+                      : isHighConfidence || isRecognized
+                      ? 'border-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.35)]'
+                      : isNoRegisteredFaces
+                      ? 'border-slate-400/80 shadow-[0_0_12px_rgba(148,163,184,0.2)]'
                       : isDetecting
-                      ? 'border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.3)]'
-                      : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)]'
+                      ? 'border-sky-400 shadow-[0_0_14px_rgba(56,189,248,0.35)]'
+                      : 'border-amber-400/80 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
                   )}
                   style={{
                     left: `${(activeBox.x / activeBox.videoWidth) * 100}%`,
@@ -487,16 +485,16 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 >
                   <span
                     className={cn(
-                      'absolute -top-6 sm:-top-7 left-0 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider whitespace-nowrap shadow-lg flex items-center gap-1 sm:gap-1.5',
+                      'absolute -top-6 sm:-top-7 left-0 px-2 py-0.5 sm:py-1 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider whitespace-nowrap shadow-lg flex items-center gap-1 sm:gap-1.5',
                       isSpoofWarning
                         ? 'bg-amber-500 text-slate-950'
-                        : isHighConfidence
+                        : isHighConfidence || isRecognized
                         ? 'bg-emerald-500 text-slate-950'
-                        : isRecognized
-                        ? 'bg-emerald-500 text-slate-950'
+                        : isNoRegisteredFaces
+                        ? 'bg-slate-800 text-slate-200 border border-slate-700 font-bold'
                         : isDetecting
-                        ? 'bg-sky-400 text-slate-950'
-                        : 'bg-rose-500 text-white'
+                        ? 'bg-sky-500 text-white'
+                        : 'bg-amber-500 text-slate-950 font-bold'
                     )}
                   >
                     {isSpoofWarning ? (
@@ -508,22 +506,30 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                       dailyCompletedMap.has(`${matchedStudent!.id}_${scanMode}`)
                         ? `${matchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
                         : `${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}% Match`
+                    ) : isNoRegisteredFaces ? (
+                      <>
+                        <Info className="w-3 h-3 text-slate-400" />
+                        Unregistered Face · No Roster
+                      </>
                     ) : isDetecting ? (
                       <>
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
                         Scanning Face…
                       </>
                     ) : (
-                      'Unknown Face'
+                      <>
+                        <Info className="w-3 h-3 text-slate-950" />
+                        Unregistered Face
+                      </>
                     )}
                   </span>
                 </div>
               );
             })()}
 
-            {/* Center Standby Viewfinder Placeholder */}
+            {/* Center Standby Viewfinder Placeholder (When Camera is Off) */}
             {!hasVideoSource && (
-              <div className="relative z-10 my-auto text-center space-y-2 sm:space-y-3 py-4 sm:py-6 px-4">
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center space-y-2 sm:space-y-3 py-4 sm:py-6 px-4">
                 <motion.div
                   animate={{ scale: [1, 1.05, 1] }}
                   transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
@@ -568,57 +574,86 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               </div>
             )}
 
-            {/* Bottom HUD Overlay */}
-            <div className="relative z-10 flex flex-col xs:flex-row items-start xs:items-center justify-between gap-1 sm:gap-2 text-[9px] sm:text-[10px] font-mono text-slate-400 bg-black/75 backdrop-blur-md px-2.5 py-1.5 rounded-lg border border-slate-800">
-              <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-                <span>RES: <strong className="text-slate-200">1080p</strong></span>
-                <span className="hidden sm:inline">FPS: <strong className="text-slate-200">30</strong></span>
-                <span>LATENCY: <strong className="text-emerald-400">&lt;50ms</strong></span>
-              </div>
-              <div className="flex items-center gap-1.5 text-slate-300 max-w-full truncate">
-                <ShieldCheck className={cn('w-3 h-3 shrink-0', recognitionError ? 'text-rose-400' : isLive ? 'text-emerald-400' : 'text-amber-400')} />
-                <span className="truncate">
-                  {recognitionError
-                    ? recognitionError
-                    : detectorError
-                    ? `Error: ${detectorError}`
-                    : getRecognitionStatusText({
-                    matchedStudent,
-                    isLoading: isRecognitionLoading,
-                    isReady: isRecognitionReady,
-                    isFaceDetected: isAnyFaceDetected,
-                    isAnalyzing,
-                  })}
-                </span>
-                {isAnyFaceDetected && (
-                  <span className={cn(
-                    'ml-1 px-1 py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase shrink-0',
-                    isLive
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                  )}>
-                    {isLive ? 'LIVE' : 'WAIT'}
+            {/* ── Bottom HUD Container (Firmly Pinned to Bottom Edge) ── */}
+            <div className="absolute bottom-3 left-3 right-3 z-20 flex flex-col gap-1.5">
+              {/* Critical recognition system error notice (Suppressed for normal empty roster) */}
+              {recognitionError && !isNoRegisteredFaces && (
+                <div className="px-3 py-1.5 rounded-xl bg-rose-950/90 backdrop-blur-md border border-rose-800/60 text-rose-200 text-[10px] sm:text-[11px] font-bold flex items-center justify-between gap-2 shadow-lg">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                    <span>Camera system note: {recognitionError}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Bottom HUD Stream Metrics & Live Status */}
+              <div className="flex flex-col xs:flex-row items-start xs:items-center justify-between gap-1 sm:gap-2 text-[9px] sm:text-[10px] font-mono text-slate-400 bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 shadow-lg">
+                <div className="flex items-center gap-2.5 sm:gap-3.5 flex-wrap">
+                  <span>RES: <strong className="text-slate-200">1080p</strong></span>
+                  <span className="hidden sm:inline">FPS: <strong className="text-slate-200">30</strong></span>
+                  <span>LATENCY: <strong className="text-emerald-400">&lt;50ms</strong></span>
+                </div>
+                <div className="flex items-center gap-1.5 text-slate-300 max-w-full truncate">
+                  <ShieldCheck className={cn(
+                    'w-3.5 h-3.5 shrink-0',
+                    (recognitionError && !isNoRegisteredFaces)
+                      ? 'text-rose-400'
+                      : isNoRegisteredFaces
+                      ? 'text-slate-400'
+                      : isLive
+                      ? 'text-emerald-400'
+                      : 'text-amber-400'
+                  )} />
+                  <span className="truncate">
+                    {isNoRegisteredFaces
+                      ? 'Camera Active · No student faces enrolled'
+                      : recognitionError
+                      ? recognitionError
+                      : detectorError
+                      ? `Error: ${detectorError}`
+                      : getRecognitionStatusText({
+                          matchedStudent,
+                          isLoading: isRecognitionLoading,
+                          isReady: isRecognitionReady,
+                          isFaceDetected: isAnyFaceDetected,
+                          isAnalyzing,
+                        })}
                   </span>
-                )}
+                  {isAnyFaceDetected && (
+                    <span className={cn(
+                      'ml-1 px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase shrink-0',
+                      isNoRegisteredFaces
+                        ? 'bg-slate-700/80 text-slate-300 border border-slate-600/50'
+                        : isLive
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    )}>
+                      {isNoRegisteredFaces ? 'UNREGISTERED' : isLive ? 'MATCH' : 'SCANNING'}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
-
-            {/* Recognition Error Banner */}
-            {recognitionError && (
-              <div className="relative z-10 mt-1 px-2.5 py-1.5 rounded-lg bg-rose-950/80 backdrop-blur-md border border-rose-800/60 text-rose-300 text-[10px] sm:text-[11px] font-bold flex flex-col gap-1.5">
-                <span>Recognition error: {recognitionError}</span>
-                <span className="text-amber-200 font-semibold">
-                  Register the correct student from Face Registration. Live camera faces are never auto-assigned to another person.
-                </span>
-              </div>
-            )}
           </div>
 
           {/* ── Stream Status & Action Bar ───────────────────────────────── */}
           <div className="mt-3 sm:mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs">
-            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-medium text-[11px] sm:text-xs">
+            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-medium text-[11px] sm:text-xs min-w-0">
               <Eye className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span className="truncate">{diagnosticInfo || 'Face recognition runs in <3s. Click Instant Scan for immediate snapshot match.'}</span>
+              {isNoRegisteredFaces ? (
+                <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-semibold truncate">
+                  <span>No registered students in roster.</span>
+                  <Link
+                    to="/dashboard/face-registration"
+                    className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 font-bold underline"
+                  >
+                    <UserPlus className="w-3 h-3" />
+                    <span>Enroll Students in Face Registration →</span>
+                  </Link>
+                </div>
+              ) : (
+                <span className="truncate">{diagnosticInfo || 'Face recognition runs in <3s. Click Instant Scan for immediate snapshot match.'}</span>
+              )}
             </div>
 
             <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
