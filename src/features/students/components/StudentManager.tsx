@@ -6,7 +6,8 @@ import { Modal } from '@/components/ui/Modal';
 import { ViolationSeverityBadge } from '@/components/ui/StatusBadge';
 import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Images, Eye, CheckCircle2, AlertCircle, Trash2, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { addNewStudent, getStoredStudents, getStoredSections, getPhotosFromDb, deleteStudent, generateUUID } from '@/features/faceRegistration/api';
+import { addNewStudent, getStoredStudents, getStoredSections, getPhotosFromDb, deleteStudent, generateUUID, syncFromSupabase } from '@/features/faceRegistration/api';
+import { isSupabaseConfigured } from '@/lib/supabase';
 import { Section as FRSection } from '@/features/faceRegistration/types';
 
 const INITIAL_VIOLATIONS: StudentViolation[] = [];
