@@ -643,7 +643,11 @@ export function saveStoredSections(sections: Section[]): void {
 }
 
 export async function fetchSections(): Promise<Section[]> {
-  await new Promise(r => setTimeout(r, 50));
+  if (isSupabaseConfigured) {
+    try {
+      await syncFromSupabase();
+    } catch {}
+  }
   const sections = getStoredSections();
   const students = getStoredStudents();
 
@@ -659,7 +663,11 @@ export async function fetchSections(): Promise<Section[]> {
 }
 
 export async function fetchSectionRoster(sectionId: string): Promise<Student[]> {
-  await new Promise(r => setTimeout(r, 150));
+  if (isSupabaseConfigured) {
+    try {
+      await syncFromSupabase();
+    } catch {}
+  }
   const students = getStoredStudents();
   const sectionStudents =
     sectionId === 'all' || !sectionId

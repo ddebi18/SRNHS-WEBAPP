@@ -102,10 +102,18 @@ export const StudentManager: React.FC = () => {
   };
 
   useEffect(() => {
-    const secs = getStoredSections();
-    setStoredSections(secs);
-    if (secs.length > 0) setSectionId(secs[0]!.id);
-    refreshStudents(secs);
+    async function init() {
+      if (isSupabaseConfigured) {
+        try {
+          await syncFromSupabase();
+        } catch {}
+      }
+      const secs = getStoredSections();
+      setStoredSections(secs);
+      if (secs.length > 0) setSectionId(secs[0]!.id);
+      refreshStudents(secs);
+    }
+    init();
   }, []);
 
   const handleCreateStudent = async (e: React.FormEvent) => {
