@@ -19,6 +19,7 @@ export const LiveGateLog: React.FC = () => {
 
   const loadEvents = async () => {
     setIsLoading(true);
+    // Fetch all turnstile gate scans (local and Supabase synchronized)
     const data = await supabaseRecognitionAdapter.getEvents();
     setEvents(data);
     setIsLoading(false);
@@ -26,8 +27,9 @@ export const LiveGateLog: React.FC = () => {
 
   useEffect(() => {
     loadEvents();
-    const unsubscribe = supabaseRecognitionAdapter.subscribeToEvents(newEvent => {
-      setEvents(prev => [newEvent, ...prev]);
+    const unsubscribe = supabaseRecognitionAdapter.subscribeToEvents(_newEvent => {
+      // On any new event, refresh the log so new scans appear instantly
+      supabaseRecognitionAdapter.getEvents().then(setEvents);
     });
     return () => unsubscribe();
   }, []);
@@ -106,11 +108,16 @@ export const LiveGateLog: React.FC = () => {
       cell: evt => <SourceBadge source={evt.source} />,
     },
     {
-      header: 'Time',
+      header: 'Date & Time',
       cell: evt => (
-        <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-          {new Date(evt.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-        </span>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+            {new Date(evt.captured_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+          </span>
+          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+            {new Date(evt.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </span>
+        </div>
       ),
     },
   ];
@@ -120,26 +127,26 @@ export const LiveGateLog: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-black text-slate-900 dark:text-slate-100">Today's Gate Entry / Exit Log</h2>
+          <h2 className="text-2xl font-black text-slate-900 dark:text-slate-50">Today's Gate Entry / Exit Log</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 font-medium mt-1">
             Real-time feed from facial recognition turnstile cameras at SRNHS main gates.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/50 dark:border-emerald-800/50 text-[11px] font-bold">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-700/40 text-[11px] font-bold">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             Live Realtime
           </div>
           <button
             onClick={loadEvents}
-            className="p-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-card-sm"
+            className="p-2.5 rounded-2xl bg-white/80 dark:bg-slate-900/80 border border-slate-200/60 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all backdrop-blur-sm"
             title="Refresh logs"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
           <button
             onClick={() => setManualModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-sidebar text-white text-sm font-bold hover:bg-black/80 dark:hover:bg-slate-800 transition-colors shadow-card"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-sidebar text-white text-sm font-bold hover:opacity-90 transition-all shadow-card-sm"
           >
             <Plus className="w-4 h-4" />
             Manual Entry
@@ -154,20 +161,19 @@ export const LiveGateLog: React.FC = () => {
         className="flex flex-wrap gap-3"
       >
         {[
-          { label: 'Total Scans', value: events.length, dot: 'bg-amber-950', lightBg: 'bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]' },
-          { label: 'Gate Entries', value: entries, dot: 'bg-amber-900', lightBg: 'bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border-[#d1b397]' },
-          { label: 'Gate Exits', value: exits, dot: 'bg-amber-900', lightBg: 'bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border-[#c28846]' },
-          { label: 'Class Check-ins', value: checkins, dot: 'bg-amber-100', lightBg: 'bg-gradient-to-br from-[#C68B59] to-[#836452] text-amber-50 border-[#806143]' },
+          { label: 'Total Scans', value: events.length, dot: 'bg-emerald-500', lightBg: 'bg-white/80', darkBg: 'dark:bg-emerald-950/30', border: 'border-emerald-200/60 dark:border-emerald-700/40', glow: 'glow-emerald' },
+          { label: 'Gate Entries', value: entries, dot: 'bg-sky-500', lightBg: 'bg-white/80', darkBg: 'dark:bg-sky-950/30', border: 'border-sky-200/60 dark:border-sky-700/40', glow: 'glow-sky' },
+          { label: 'Gate Exits', value: exits, dot: 'bg-amber-500', lightBg: 'bg-white/80', darkBg: 'dark:bg-amber-950/30', border: 'border-amber-200/60 dark:border-amber-700/40', glow: 'glow-amber' },
+          { label: 'Class Check-ins', value: checkins, dot: 'bg-violet-500', lightBg: 'bg-white/80', darkBg: 'dark:bg-violet-950/30', border: 'border-violet-200/60 dark:border-violet-700/40', glow: 'glow-violet' },
         ].map(chip => (
           <div
             key={chip.label}
             className={cn(
-              'px-4 py-2.5 rounded-2xl shadow-card-sm flex items-center gap-3 border transition-colors',
-              'dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100',
-              chip.lightBg
+              'px-4 py-2.5 rounded-2xl flex items-center gap-3 border transition-all backdrop-blur-sm',
+              chip.lightBg, chip.darkBg, chip.border, chip.glow
             )}
           >
-            <span className="text-xl font-black text-slate-900 dark:text-slate-100">{chip.value}</span>
+            <span className="text-xl font-black text-slate-900 dark:text-slate-50">{chip.value}</span>
             <span className="text-xs font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
               <span className={cn('w-2 h-2 rounded-full', chip.dot)} />
               {chip.label}
@@ -176,8 +182,8 @@ export const LiveGateLog: React.FC = () => {
         ))}
       </motion.div>
 
-      {/* Live Turnstile Camera Feed Viewfinder Card */}
-      <LiveCameraFeedCard />
+      {/* Live Turnstile Camera Feed Viewfinder Card (Admin only) */}
+      {isAdmin && <LiveCameraFeedCard />}
 
       {/* Table */}
       <DataTable
