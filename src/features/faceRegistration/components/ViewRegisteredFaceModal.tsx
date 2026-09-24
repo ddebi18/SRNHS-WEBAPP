@@ -48,9 +48,9 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
   };
 
   const angleLabels: Record<CaptureAngle, { title: string; desc: string }> = {
-    front: { title: 'Front View', desc: 'Primary facial recognition embedding' },
-    left: { title: 'Slight Left View', desc: 'Left profile geometric vector (+15°)' },
-    right: { title: 'Slight Right View', desc: 'Right profile geometric vector (-15°)' },
+    front: { title: 'Front View', desc: 'Primary registration photo' },
+    left: { title: 'Slight Left View', desc: 'Left-side reference photo' },
+    right: { title: 'Slight Right View', desc: 'Right-side reference photo' },
   };
 
   return (
@@ -61,7 +61,7 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black/75 backdrop-blur-sm"
+          className="fixed inset-0 bg-slate-950/60"
           onClick={onClose}
         />
 
@@ -73,7 +73,7 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
           transition={{ duration: 0.2, ease: 'easeOut' }}
           role="dialog"
           aria-modal="true"
-          className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-5 z-10 my-auto"
+          className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-slate-200 dark:border-slate-800 p-6 space-y-5 z-10 my-auto"
         >
           {/* Header */}
           <div className="flex items-start justify-between gap-4 pb-3 border-b border-slate-200 dark:border-slate-800">
@@ -81,7 +81,7 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
               <div className="flex items-center gap-2">
                 <span className="px-2.5 py-0.5 rounded-full bg-[#1B4332] text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
                   <Sparkles className="w-3 h-3 text-emerald-300" />
-                  Biometric Face Record
+                  Registered Face Photos
                 </span>
                 <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
                   LRN: {student.studentNumber}
@@ -187,15 +187,15 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
 
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60">
-                    <div className="text-[10px] text-slate-500 font-bold uppercase">Embedding Status</div>
+                    <div className="text-[10px] text-slate-500 font-semibold uppercase">Registration status</div>
                     <div className="font-bold text-slate-900 dark:text-slate-100 text-xs mt-0.5 flex items-center gap-1 text-[#2D6A4F] dark:text-[#52B788]">
-                      <CheckCircle2 className="w-3 h-3" /> 128-d Vector Sync
+                      <CheckCircle2 className="w-3 h-3" /> Face record saved
                     </div>
                   </div>
                   <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60">
-                    <div className="text-[10px] text-slate-500 font-bold uppercase">Liveness Score</div>
+                    <div className="text-[10px] text-slate-500 font-semibold uppercase">Capture status</div>
                     <div className="font-bold text-slate-900 dark:text-slate-100 text-xs mt-0.5 text-emerald-600 dark:text-emerald-400">
-                      99.6% Verified
+                      Verified photos
                     </div>
                   </div>
                 </div>
@@ -203,15 +203,15 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
             </div>
           )}
 
-          {/* Biometric Metadata Card with Modern Glassmorphism */}
-          <div className="p-4.5 rounded-3xl bg-emerald-500/10 dark:bg-emerald-950/30 border border-emerald-500/20 dark:border-emerald-800/40 backdrop-blur-sm shadow-sm space-y-3 glow-emerald">
+          {/* Registration details */}
+          <div className="p-4 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                DepEd Biometric Edge Turnstile Status
+                Registration record
               </span>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-[10px] font-black uppercase text-emerald-800 dark:text-emerald-300 border border-emerald-500/30">
-                Active
+              <span className="px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-[10px] font-semibold uppercase text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                Saved
               </span>
             </div>
 
@@ -255,7 +255,7 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
                   onClose();
                   onReRegister(student);
                 }}
-                className="px-5 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white active:scale-95 transition-all shadow-sm shadow-emerald-900/20 flex items-center gap-2 cursor-pointer"
+                className="px-5 py-2.5 rounded-md text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white transition-colors shadow-sm flex items-center gap-2 cursor-pointer"
               >
                 <RefreshCw className="w-4 h-4" />
                 Re-capture Face Angles

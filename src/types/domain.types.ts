@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'teacher';
+export type UserRole = 'admin' | 'teacher' | 'student';
 
 export type EventType = 'entry' | 'exit' | 'classroom_checkin';
 

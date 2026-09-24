@@ -4,6 +4,7 @@ import { FACE_DESCRIPTOR_VERSION } from '@/features/attendance/lib/faceNetMatche
 
 const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
 const LOCAL_STORAGE_KEY_SECTIONS = 'srnhs_face_registration_sections_v1';
+const SUPABASE_STUDENT_SELECT_BASE = 'id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at';
 
 export function isValidUUID(id?: string | null): boolean {
   if (!id || typeof id !== 'string') return false;
@@ -178,7 +179,7 @@ export async function fetchRegisteredStudents(): Promise<Student[]> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
       .from('students')
-      .select('id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at')
+      .select(SUPABASE_STUDENT_SELECT_BASE)
       .order('last_name');
 
     if (!error && data) {
@@ -187,17 +188,63 @@ export async function fetchRegisteredStudents(): Promise<Student[]> {
       students = data.map(row => {
         const cloudStudent = dbRowToStudent(row, sections);
         const localStudent = localById.get(cloudStudent.id);
+        const localHasFaceRecord = Boolean(
+          localStudent?.photoUrl ||
+          localStudent?.registeredPhotos?.front ||
+          (localStudent?.faceDescriptors && localStudent.faceDescriptors.length > 0)
+        );
         return {
           ...cloudStudent,
-          faceDescriptors: localStudent?.faceDescriptors,
-          faceDescriptorVersion: localStudent?.faceDescriptorVersion,
+          faceRegistrationStatus: cloudStudent.faceRegistrationStatus === 'registered' || localHasFaceRecord
+            ? 'registered' as const
+            : cloudStudent.faceRegistrationStatus,
+          photoUrl: cloudStudent.photoUrl || localStudent?.photoUrl,
+          registeredPhotos: cloudStudent.registeredPhotos || localStudent?.registeredPhotos,
+          lastRegisteredAt: localStudent?.lastRegisteredAt,
+          faceDescriptors: cloudStudent.faceDescriptors || localStudent?.faceDescriptors,
+          faceDescriptorVersion: cloudStudent.faceDescriptorVersion || localStudent?.faceDescriptorVersion,
           guardianName: localStudent?.guardianName,
           guardianPhone: localStudent?.guardianPhone,
         };
       });
       saveStoredStudents(students);
     } else if (error) {
-      console.warn('[Supabase] Registered student fetch note:', error.message);
+      // Some local/sandbox databases do not have the optional face descriptor columns yet.
+      // Fall back to the base student schema and keep using the local browser store.
+      const fallback = await supabase
+        .from('students')
+        .select(SUPABASE_STUDENT_SELECT_BASE)
+        .order('last_name');
+
+      if (!fallback.error && fallback.data) {
+        const sections = getStoredSections();
+        const localById = new Map(students.map(student => [student.id, student]));
+        students = fallback.data.map(row => {
+          const cloudStudent = dbRowToStudent(row, sections);
+          const localStudent = localById.get(cloudStudent.id);
+          const localHasFaceRecord = Boolean(
+            localStudent?.photoUrl ||
+            localStudent?.registeredPhotos?.front ||
+            (localStudent?.faceDescriptors && localStudent.faceDescriptors.length > 0)
+          );
+          return {
+            ...cloudStudent,
+            faceRegistrationStatus: cloudStudent.faceRegistrationStatus === 'registered' || localHasFaceRecord
+              ? 'registered' as const
+              : cloudStudent.faceRegistrationStatus,
+            photoUrl: cloudStudent.photoUrl || localStudent?.photoUrl,
+            registeredPhotos: cloudStudent.registeredPhotos || localStudent?.registeredPhotos,
+            lastRegisteredAt: localStudent?.lastRegisteredAt,
+            faceDescriptors: localStudent?.faceDescriptors,
+            faceDescriptorVersion: localStudent?.faceDescriptorVersion,
+            guardianName: localStudent?.guardianName,
+            guardianPhone: localStudent?.guardianPhone,
+          };
+        });
+        saveStoredStudents(students);
+      } else {
+        console.warn('[Supabase] Registered student fetch note:', error.message || fallback.error?.message);
+      }
     }
   }
 
@@ -279,7 +326,8 @@ function dbRowToStudent(row: any, sections: Section[]): Student {
     } : undefined,
     guardianName: undefined,
     guardianPhone: undefined,
-    faceDescriptors: undefined,
+    faceDescriptors: Array.isArray(row.face_descriptors) ? row.face_descriptors : undefined,
+    faceDescriptorVersion: row.face_descriptor_version || undefined,
   };
 }
 
@@ -360,7 +408,7 @@ export async function syncFromSupabase(): Promise<{ students: number; sections: 
     // 2. Fetch students from Supabase
     const { data: studentRows, error: stuErr } = await supabase
       .from('students')
-      .select('id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at')
+      .select(SUPABASE_STUDENT_SELECT_BASE)
       .order('last_name');
 
     if (stuErr) {
@@ -728,15 +776,30 @@ export async function submitFaceRegistration(
     try {
       const photosToSave = [photoMap.front, photoMap.left, photoMap.right].filter(Boolean) as string[];
       if (photosToSave.length > 0) {
+        const deserializedFields = payload.faceDescriptors && payload.faceDescriptors.length > 0
+          ? {
+              face_descriptors: payload.faceDescriptors,
+              face_descriptor_version: FACE_DESCRIPTOR_VERSION,
+            }
+          : {};
+
         const { error: photoErr } = await supabase
           .from('students')
           .update({
             photo_urls: photosToSave,
+            ...deserializedFields,
           })
           .eq('id', payload.studentId);
 
         if (photoErr) {
-          console.warn('[Supabase] Photo update note:', photoErr.message);
+          const fallback = await supabase
+            .from('students')
+            .update({ photo_urls: photosToSave })
+            .eq('id', payload.studentId);
+
+          if (fallback.error) {
+            console.warn('[Supabase] Photo update note:', photoErr.message || fallback.error.message);
+          }
         } else {
           console.log(`[Supabase] ✓ Updated ${photosToSave.length} face photo(s) for student in cloud`);
         }

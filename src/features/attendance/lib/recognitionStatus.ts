@@ -24,14 +24,14 @@ export function getRecognitionStatusText({
 
   if (isReady && isFaceDetected) {
     if (isAnalyzing) {
-      return 'Face detected · Analyzing identity…';
+      return 'Face detected: Detecting...';
     }
-    return 'Face detected · Unregistered person';
+    return 'Face detected: Unknown';
   }
 
   if (isFaceDetected) {
-    return 'Face detected · Ready';
+    return 'Face detected: Ready';
   }
 
-  return 'Ready · Waiting for face';
+  return 'Face Detection: Waiting';
 }

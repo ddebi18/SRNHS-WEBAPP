@@ -22,7 +22,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [theme, setThemeState] = useState<Theme>(() => {
     const saved = localStorage.getItem('srnhs-theme');
     if (saved === 'dark' || saved === 'light') return saved;
-    return getSystemTheme();
+    // School portals default to light mode for a clean, professional look
+    return 'light';
   });
 
   // Track whether the user has manually overridden the theme

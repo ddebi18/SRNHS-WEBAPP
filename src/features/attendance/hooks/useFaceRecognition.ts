@@ -10,6 +10,7 @@ import {
   scoreFaceNetMatch,
   findDuplicateStudentId,
   isSameEnrolledPerson,
+  deserializeFaceDescriptor,
   type LabeledDescriptors,
 } from '../lib/faceNetMatcher';
 import {
@@ -26,12 +27,7 @@ export { computeCosineSimilarity, computeCosineDistance } from '../lib/faceNetMa
 const SCAN_INTERVAL_MS = 200;
 const FACE_LEFT_MISS_FRAMES = 1;
 const ACCURATE_SCAN_EVERY = 8;
-
-const EAR_BLINK_THRESHOLD = 0.21;
-const EAR_DYNAMIC_DELTA = 0.035;
-const HISTORY_WINDOW_FRAMES = 8;
-const EYE_VARIANCE_THRESHOLD = 0.00020;
-const MIN_LANDMARK_MOTION = 0.8;
+const MATCH_SWITCH_STABILITY_FRAMES = 5;
 
 export interface RecognizedStudent {
   id: string;
@@ -54,7 +50,7 @@ export interface FaceRecognitionBox {
   videoHeight: number;
 }
 
-interface UseFaceRecognitionReturn {
+export interface UseFaceRecognitionReturn {
   isLoading: boolean;
   isReady: boolean;
   matchedStudent: RecognizedStudent | null;
@@ -66,27 +62,9 @@ interface UseFaceRecognitionReturn {
   triggerInstantScan: () => Promise<RecognizedStudent | null>;
   assignCameraFaceToStudent: (targetStudentId?: string) => Promise<boolean>;
   diagnosticInfo: string;
-}
-
-function computeEAR(
-  p0: faceapi.Point, p1: faceapi.Point, p2: faceapi.Point,
-  p3: faceapi.Point, p4: faceapi.Point, p5: faceapi.Point
-): number {
-  const dist = (a: faceapi.Point, b: faceapi.Point) =>
-    Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
-
-  const vertical1 = dist(p1, p5);
-  const vertical2 = dist(p2, p4);
-  const horizontal = dist(p0, p3);
-
-  if (horizontal < 1e-6) return 0;
-  return (vertical1 + vertical2) / (2 * horizontal);
-}
-
-function computeVariance(values: number[]): number {
-  if (values.length < 2) return 0;
-  const mean = values.reduce((s, v) => s + v, 0) / values.length;
-  return values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
+  nativeIOD: number;
+  qualityGuidance: string | null;
+  qualityPassed: boolean;
 }
 
 function toLabeledGallery(labeled: faceapi.LabeledFaceDescriptors[]): LabeledDescriptors[] {
@@ -109,15 +87,19 @@ export function useFaceRecognition(
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [recognitionBox, setRecognitionBox] = useState<FaceRecognitionBox | null>(null);
   const [diagnosticInfo, setDiagnosticInfo] = useState('Initializing…');
+  const [nativeIOD, setNativeIOD] = useState<number>(0);
+  const [qualityGuidance, setQualityGuidance] = useState<string | null>(null);
+  const [qualityPassed, setQualityPassed] = useState<boolean>(false);
 
   const galleryRef = useRef<LabeledDescriptors[]>([]);
   const processingRef = useRef(false);
   const stabilityRef = useRef<{ studentId: string; count: number }>({ studentId: '', count: 0 });
   const unmatchedCountRef = useRef(0);
+  const lastMatchResultRef = useRef<{ reason: string; distance: number } | null>(null);
   const consecutiveMissRef = useRef(0);
   const presenceCountRef = useRef(0);
   const scanTickRef = useRef(0);
-  const lastBoxRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const lastBoxRef = useRef<FaceRecognitionBox | null>(null);
 
   const landmarkHistoryRef = useRef<number[][]>([]);
   const earHistoryRef = useRef<number[]>([]);
@@ -132,14 +114,24 @@ export function useFaceRecognition(
     const vw = video.videoWidth || 640;
     const vh = video.videoHeight || 480;
     if (b) {
+      const previous = lastBoxRef.current;
+      const moveDelta = previous ? Math.hypot(b.x - previous.x, b.y - previous.y) : 0;
+      const alpha = !previous ? 1 : moveDelta > 30 ? 0.8 : moveDelta > 12 ? 0.65 : 0.45;
+      const smoothedBox = previous && previous.videoWidth === vw && previous.videoHeight === vh
+        ? {
+            x: previous.x * (1 - alpha) + b.x * alpha,
+            y: previous.y * (1 - alpha) + b.y * alpha,
+            width: previous.width * (1 - alpha) + b.width * alpha,
+            height: previous.height * (1 - alpha) + b.height * alpha,
+          }
+        : { x: b.x, y: b.y, width: b.width, height: b.height };
+
       setRecognitionBox({
-        x: b.x,
-        y: b.y,
-        width: b.width,
-        height: b.height,
+        ...smoothedBox,
         videoWidth: vw,
         videoHeight: vh,
       });
+      lastBoxRef.current = { ...smoothedBox, videoWidth: vw, videoHeight: vh };
     }
 
     const pts = detection.landmarks?.positions;
@@ -150,6 +142,7 @@ export function useFaceRecognition(
 
   const resolveMatch = useCallback((descriptor: Float32Array): RecognizedStudent | null => {
     const result = scoreFaceNetMatch(descriptor, galleryRef.current);
+    lastMatchResultRef.current = { reason: result.reason, distance: result.distance };
     if (!result.accepted) return null;
     const student = studentsRef.current.find((s: any) => s.id === result.label);
     if (!student) return null;
@@ -268,6 +261,9 @@ export function useFaceRecognition(
       setRecognitionBox(null);
       setIsLive(false);
       setIsAnalyzing(false);
+      setNativeIOD(0);
+      setQualityGuidance(null);
+      setQualityPassed(false);
       galleryRef.current = [];
       stabilityRef.current = { studentId: '', count: 0 };
       landmarkHistoryRef.current = [];
@@ -277,6 +273,7 @@ export function useFaceRecognition(
       isLiveRef.current = false;
       presenceCountRef.current = 0;
       unmatchedCountRef.current = 0;
+      lastMatchResultRef.current = null;
       consecutiveMissRef.current = 0;
       lastConfirmedMatchRef.current = null;
       scanTickRef.current = 0;
@@ -316,7 +313,10 @@ export function useFaceRecognition(
             student.faceDescriptors &&
             student.faceDescriptors.length > 0
           ) {
-            const floats = student.faceDescriptors.map((arr: number[]) => new Float32Array(arr));
+            const floats = student.faceDescriptors
+              .map(deserializeFaceDescriptor)
+              .filter((descriptor): descriptor is Float32Array => descriptor !== null);
+            if (floats.length === 0) return null;
             return new faceapi.LabeledFaceDescriptors(student.id, floats);
           }
 
@@ -386,6 +386,9 @@ export function useFaceRecognition(
                 setMatchedStudent(null);
                 setIsLive(false);
                 setIsAnalyzing(false);
+                setNativeIOD(0);
+                setQualityGuidance(null);
+                setQualityPassed(false);
                 unmatchedCountRef.current = 0;
               }
               return;
@@ -395,90 +398,76 @@ export function useFaceRecognition(
             presenceCountRef.current += 1;
             applyDetectionOverlay(detection, video);
 
-            const box = detection.detection?.box;
-            if (box) {
-              lastBoxRef.current = { x: box.x, y: box.y, width: box.width, height: box.height };
-            }
-
             const pts = detection.landmarks.positions;
-            const leftEAR = computeEAR(pts[36]!, pts[37]!, pts[38]!, pts[39]!, pts[40]!, pts[41]!);
-            const rightEAR = computeEAR(pts[42]!, pts[43]!, pts[44]!, pts[45]!, pts[46]!, pts[47]!);
-            const avgEAR = (leftEAR + rightEAR) / 2;
 
-            const earHistory = earHistoryRef.current;
-            earHistory.push(avgEAR);
-            if (earHistory.length > HISTORY_WINDOW_FRAMES) earHistory.shift();
+            // Facial landmarks remain part of detection, but TESDA pose, IOD,
+            // and liveness rules are not recognition gates.
+            setNativeIOD(Math.round(Math.hypot(
+              pts[45]!.x - pts[36]!.x,
+              pts[45]!.y - pts[36]!.y
+            )));
+            setQualityPassed(true);
+            setQualityGuidance('Facial landmarks detected. Matching...');
+            setIsLive(true);
+            isLiveRef.current = true;
 
-            const prevEAR = earHistory.length >= 2 ? earHistory[earHistory.length - 2]! : avgEAR;
-            const earDelta = Math.abs(avgEAR - prevEAR);
-            if (avgEAR < EAR_BLINK_THRESHOLD || earDelta >= EAR_DYNAMIC_DELTA) {
-              hasBlinkedRef.current = true;
-            }
-
-            const dist = (a: faceapi.Point, b: faceapi.Point) => Math.hypot(a.x - b.x, a.y - b.y);
-            const interEyeDist = Math.max(1, dist(pts[36]!, pts[45]!));
-            const noseToLeftEye = dist(pts[30]!, pts[36]!);
-            const perspectiveRatio = noseToLeftEye / interEyeDist;
-
-            const ratioHistory = ratioHistoryRef.current;
-            ratioHistory.push(perspectiveRatio);
-            if (ratioHistory.length > HISTORY_WINDOW_FRAMES) ratioHistory.shift();
-
-            const keyPoints = [30, 36, 45, 48, 54];
-            const currentKeyPositions = keyPoints.map(i => [pts[i]!.x, pts[i]!.y]).flat();
-            const movementHistory = landmarkHistoryRef.current;
-            movementHistory.push(currentKeyPositions);
-            if (movementHistory.length > HISTORY_WINDOW_FRAMES) movementHistory.shift();
-
-            let totalMovement = 0;
-            for (let i = 1; i < movementHistory.length; i++) {
-              for (let j = 0; j < movementHistory[i]!.length; j++) {
-                totalMovement += Math.abs(movementHistory[i]![j]! - movementHistory[i - 1]![j]!);
-              }
-            }
-
-            const earVariance = earHistory.length >= 3 ? computeVariance(earHistory) : 0;
-            const hasEyeDynamics = earVariance >= EYE_VARIANCE_THRESHOLD;
-            const hasNaturalMovement = totalMovement >= MIN_LANDMARK_MOTION;
-
-            if (presenceCountRef.current >= 2 || hasBlinkedRef.current || hasEyeDynamics || hasNaturalMovement) {
-              isLiveRef.current = true;
-              setIsLive(true);
-            }
-
-            // Restore the simpler older behavior: once a live face matches a student,
-            // we hold the current identity through a brief stability window instead of
-            // aggressively switching names when a nearby gallery entry has a slightly
-            // different distance. This reduces wrong-name flips during real gate scans.
+            // Feature extraction and gallery matching use the face descriptor.
             const matchObj = resolveMatch(detection.descriptor);
+            const locked = lastConfirmedMatchRef.current;
+            const lockedGallery = locked
+              ? galleryRef.current.find(entry => entry.label === locked.student.id)
+              : undefined;
+            const stillLockedPerson = Boolean(
+              locked &&
+              lockedGallery &&
+              matchObj &&
+              matchObj.id === locked.student.id &&
+              isSameEnrolledPerson(detection.descriptor, lockedGallery.descriptors)
+            );
 
-            if (matchObj) {
-              if (stabilityRef.current.studentId === matchObj.id) {
-                stabilityRef.current.count += 1;
-              } else {
-                stabilityRef.current = { studentId: matchObj.id, count: 1 };
-              }
+            if (locked && stillLockedPerson) {
+              stabilityRef.current = { studentId: locked.student.id, count: STABILITY_FRAMES_REQUIRED };
+              unmatchedCountRef.current = 0;
+              setMatchedStudent(locked.student);
+              setQualityGuidance(`Verified: ${locked.student.name}`);
+              setDiagnosticInfo(`Verified: ${locked.student.name}`);
+              setIsAnalyzing(false);
+              setIsLive(true);
+              isLiveRef.current = true;
+            } else if (matchObj) {
+              const requiredStabilityFrames = locked && matchObj.id !== locked.student.id
+                ? MATCH_SWITCH_STABILITY_FRAMES
+                : STABILITY_FRAMES_REQUIRED;
+              stabilityRef.current = {
+                studentId: matchObj.id,
+                count: (stabilityRef.current.studentId === matchObj.id ? stabilityRef.current.count + 1 : 1),
+              };
 
-              if (stabilityRef.current.count >= STABILITY_FRAMES_REQUIRED) {
+              if (stabilityRef.current.count >= requiredStabilityFrames) {
                 unmatchedCountRef.current = 0;
                 setIsAnalyzing(false);
                 lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
                 setMatchedStudent(matchObj);
+                setQualityGuidance(`Face Verified: ${matchObj.name}`);
+                setDiagnosticInfo(`Verified: ${matchObj.name} (${Math.round(matchObj.confidence * 100)}% match)`);
                 setIsLive(true);
                 isLiveRef.current = true;
               } else {
                 setIsAnalyzing(true);
+                setDiagnosticInfo(`Verifying student identity (${stabilityRef.current.count}/${requiredStabilityFrames})...`);
               }
             } else {
               stabilityRef.current = { studentId: '', count: 0 };
               unmatchedCountRef.current += 1;
-              // Never keep a previously confirmed name on an unmatched face.
-              // Reusing it here can label a different person as that student.
               lastConfirmedMatchRef.current = null;
               setMatchedStudent(null);
-              setIsLive(false);
-              isLiveRef.current = false;
-              setIsAnalyzing(true);
+              setIsAnalyzing(false);
+              const matchResult = lastMatchResultRef.current;
+              const distanceText = matchResult && Number.isFinite(matchResult.distance)
+                ? ` Distance: ${matchResult.distance.toFixed(3)}.`
+                : '';
+              setQualityGuidance('Face detected — no registered match found.');
+              setDiagnosticInfo(`Face detected, but no registered match was found.${distanceText}`);
             }
           } finally {
             processingRef.current = false;
@@ -510,6 +499,7 @@ export function useFaceRecognition(
       isLiveRef.current = false;
       presenceCountRef.current = 0;
       unmatchedCountRef.current = 0;
+      lastMatchResultRef.current = null;
       consecutiveMissRef.current = 0;
       lastConfirmedMatchRef.current = null;
       scanTickRef.current = 0;
@@ -517,5 +507,20 @@ export function useFaceRecognition(
     };
   }, [active, applyDetectionOverlay, resolveMatch, videoRef]);
 
-  return { isLoading, isReady, matchedStudent, error, landmarks, recognitionBox, isLive, isAnalyzing, triggerInstantScan, diagnosticInfo, assignCameraFaceToStudent };
+  return {
+    isLoading,
+    isReady,
+    matchedStudent,
+    error,
+    landmarks,
+    recognitionBox,
+    isLive,
+    isAnalyzing,
+    triggerInstantScan,
+    diagnosticInfo,
+    assignCameraFaceToStudent,
+    nativeIOD,
+    qualityGuidance,
+    qualityPassed,
+  };
 }

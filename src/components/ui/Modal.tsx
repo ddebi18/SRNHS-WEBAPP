@@ -45,35 +45,35 @@ export const Modal: React.FC<ModalProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 bg-black/50"
             onClick={onClose}
           />
 
           {/* Panel */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            initial={{ opacity: 0, scale: 0.98, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 16 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            exit={{ opacity: 0, scale: 0.98, y: 8 }}
+            transition={{ duration: 0.15 }}
             className={cn(
-              'relative w-full rounded-3xl overflow-hidden z-10 my-8',
-              'bg-white dark:bg-[#1E1E1E]',
-              'shadow-[8px_8px_0px_0px_rgba(0,0,0,0.12)] dark:shadow-[8px_8px_0px_0px_rgba(255,255,255,0.05)]',
+              'relative w-full rounded-xl overflow-hidden z-10 my-8',
+              'bg-white dark:bg-slate-900',
+              'shadow-xl border border-slate-200 dark:border-slate-800',
               maxWidthMap[maxWidth]
             )}
             role="dialog"
             aria-modal="true"
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-5 border-b border-black/5 dark:border-white/[0.07]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
               <div>
-                <h3 className="text-lg font-black text-black dark:text-white">{title}</h3>
-                {subtitle && <p className="text-xs text-black/40 dark:text-white/40 mt-0.5 font-medium">{subtitle}</p>}
+                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
+                {subtitle && <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{subtitle}</p>}
               </div>
               <button
                 onClick={onClose}
-                className="p-2 rounded-xl text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white
-                  hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200
+                  hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 aria-label="Close dialog"
               >
                 <X className="w-4 h-4" />

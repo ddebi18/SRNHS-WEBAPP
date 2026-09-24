@@ -124,7 +124,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black/75 backdrop-blur-sm"
+          className="fixed inset-0 bg-slate-950/60"
           onClick={isSubmitting ? undefined : handleClose}
         />
 
@@ -137,27 +137,27 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
           role="dialog"
           aria-modal="true"
           aria-labelledby="modal-student-title"
-          className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-3.5 sm:p-6 space-y-3.5 sm:space-y-5 z-10 my-auto max-h-[94vh] overflow-y-auto"
+          className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-slate-200 dark:border-slate-800 p-3.5 sm:p-6 space-y-3.5 sm:space-y-5 z-10 my-auto max-h-[94vh] overflow-y-auto"
         >
           {/* Header */}
           <div className="flex items-start justify-between gap-4 pb-3 border-b border-slate-200 dark:border-slate-800">
             <div>
               <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full bg-[#1B4332] text-white text-[10px] font-black uppercase tracking-wider">
-                  Teacher Assisted Enrollment
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                  Student Face Registration
                 </span>
                 <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
                   LRN: {student.studentNumber}
                 </span>
               </div>
-              <h2 id="modal-student-title" className="text-xl font-black text-slate-900 dark:text-slate-100 mt-1">
-                Face Registration — {student.name}
+              <h2 id="modal-student-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100 mt-1">
+                Register face — {student.name}
               </h2>
             </div>
             <button
               onClick={handleClose}
               disabled={isSubmitting}
-              className="p-2 rounded-2xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="p-2 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
