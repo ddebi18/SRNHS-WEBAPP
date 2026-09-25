@@ -50,15 +50,15 @@ The **SRNHS Automated Facial Recognition Attendance System** solves these challe
 |  [ MODULES ]              [ MIDDLEWARE ]               [ PIPELINES ]               [ DATABASES ]  |
 |  - Auth & RBAC            - Route Guard (Role)         - Gate Recognition Pipe     - PostgreSQL   |
 |  - Gate Log Monitoring    - Zod Schema Validator       - 3-Angle Face Capture      - IndexedDB    |
-|  - Classroom Board        - Rate Limiter (Token)       - Attendance Override Pipe  - LocalStorage |
+|  - Classroom Board        - Rate Limiter (LRN/Token)   - Attendance Override Pipe  - LocalStorage |
 |  - Face Biometrics        - Supabase RLS Engine        - SMS Parent Alert Pipe     - Cloud Storage|
-|  - Student & Guardian     - Event Deduplication        - Cache Sync & Offline Pipe - In-Memory    |
+|  - Student & Guardian     - Event Deduplication        - QR Self-Service Portal    - In-Memory    |
 |  - Faculty Load & Sched   - Error Boundary                                                        |
 |  - Academics Master                                                                               |
 |  - SMS Notification Log   [ APIS & CONTRACTS ]                                                    |
 |  - Disciplinary Conduct   - Recognition Adapter API     - PostgREST RESTful APIs                  |
-|                           - Notification Adapter API    - Supabase Realtime WSS                   |
-|                           - Face Registration API       - MediaMTX WHEP WebRTC Streaming          |
+|  - QR Temp Access Portal  - Notification Adapter API    - Supabase Realtime WSS                   |
+|                           - TempAccess API (grants)     - MediaMTX WHEP WebRTC Streaming          |
 +===================================================================================================+
 ```
 
@@ -71,7 +71,7 @@ The application is engineered around **Domain-Driven Design (DDD)** and **Featur
 ```mermaid
 graph TD
     subgraph Core Modules
-        M1[Module 1: Authentication & RBAC]
+        M1["Module 1: Authentication & RBAC (Admin/Teacher only)"]
         M2[Module 2: School Gate Monitoring]
         M3[Module 3: Classroom Attendance Board]
         M4[Module 4: Face Biometric Enrollment]
@@ -81,6 +81,7 @@ graph TD
         M8[Module 8: Parent SMS Audit & Communication]
         M9[Module 9: Student Conduct & Violation Log]
         M10[Module 10: Turnstile Camera Viewfinder & Health]
+        M11["Module 11: QR-Based Student Temp Access Portal (Public, Token-Gated)"]
     end
 
     M1 --> M2
@@ -92,13 +93,15 @@ graph TD
     M1 --> M8
     M1 --> M9
     M1 --> M10
+    M5 -->|"Staff generates QR"| M11
+    M11 -->|"Student scans → face reg + guardian update"| M4
 ```
 
 ### Module 1: Authentication & Role-Based Access Control (RBAC) Module
-* **Location:** `src/context/AuthContext.tsx`, `src/routes/LoginPage.tsx`, `src/hooks/useRole.ts`
-* **Layout:** Enforces strict dual-tier access: **School Administrator** (`admin`) and **Faculty Teacher** (`teacher`). Authentication validates against institutional emails (`@srnhs.edu.ph`) and Supabase GoTrue Auth tokens.
+* **Location:** `src/context/AuthContext.tsx`, `src/routes/AdminLoginPage.tsx`, `src/routes/TeacherLoginPage.tsx`, `src/hooks/useRole.ts`
+* **Layout:** Enforces strict dual-tier access: **School Administrator** (`admin`) and **Faculty Teacher** (`teacher`). Authentication validates against institutional emails (`@srnhs.edu.ph`) and Supabase GoTrue Auth tokens. **Students have no login credentials and no Supabase Auth accounts** — access is granted exclusively via time-limited QR tokens (Module 11).
 * **Presentation:**
-  - Login modal with input sanitation, rate limiting feedback, role selection, and session persistence.
+  - Separate login pages for Admin (`/admin/login`) and Teacher (`/teacher/login`); `/login` redirects to teacher login.
   - Role hook `useRole()` exposing `{ role, user, isAdmin, isTeacher, isStaff }`.
 * **Discussion:**
   Students and parents never log into this system. All permissions stem from the user's role:
@@ -195,6 +198,15 @@ graph TD
 * **Discussion:**
   Provides turnstile operators and school principals with real-time operational feedback. If a camera lens is occluded or disconnected, the status badge updates to `Disconnected` or `Reconnecting` to trigger maintenance.
 
+### Module 11: QR-Based Student Temporary Access Portal
+* **Location:** `src/features/tempAccess/`, `src/routes/TempAccessPage.tsx`, `src/features/tempAccess/components/GenerateAccessQrModal.tsx`
+* **Layout:** A two-part module: (a) a staff-side QR generation modal and (b) a public student-facing self-service portal reachable at `/temp-access/:token`.
+* **Presentation:**
+  - **Staff side (GenerateAccessQrModal):** LRN text input with Zod 12-digit validation, confirm-before-generate student preview card (name, section, photo), purpose selector (`Face Registration` | `Guardian Update` | `Both`), TTL picker (15 / 30 / 60 min). Generates a scannable QR code + copyable URL, with Realtime status subscription showing live grant completion.
+  - **Student side (TempAccessPage):** Token validated on load (expired / already-used / revoked states shown). Countdown timer to expiry. Step 1 — live camera feed with liveness detection (head movement / blink tracking) and FaceNet 128D embedding capture. Step 2 — guardian details form (name, relationship, Philippine mobile regex, optional email). Single-use: upon submission, token is atomically marked `completed` and cannot be reused.
+* **Discussion:**
+  Eliminates all student username/password authentication while still enabling controlled biometric enrollment and guardian data self-service. A teacher generates a scoped, time-limited token per student. The token URL is delivered via QR code display on a shared kiosk or printed slip. The student completes the portal on their own phone or a school device. After completion, the grant is permanently invalidated — scanning the same QR a second time renders a "Token already used" error page. This satisfies the principle of **minimum necessary access** under RA 10173.
+
 ---
 
 ## 1.2 All Databases & Persistence Engines
@@ -241,6 +253,8 @@ The core source of relational truth. Configured with strict Foreign Key constrai
 | `face_registrations`| `id (TEXT/UUID)` | `student_id -> students(id)` | Biometric registration metadata, captured angles (`front`, `left`, `right`), storage URIs. |
 | `sms_audit_logs` | `id (TEXT/UUID)` | `student_id -> students(id)` | Outbound parent notification records, delivery statuses, and provider response codes. |
 | `student_violations`| `id (TEXT/UUID)` | `student_id`, `reported_by -> staff_profiles(id)` | Disciplinary logs, severity categorizations, incident timestamp, and resolutions. |
+| `student_access_grants` | `id (UUID)` | `student_id -> students(id) CASCADE`, `created_by -> auth.users(id)` | Single-use scoped token grants for the student self-service portal. Holds token, purpose (`face_registration` \| `guardian_update` \| `both`), TTL `expires_at`, and lifecycle status (`pending` \| `completed` \| `expired` \| `revoked`). |
+| `access_grant_events` | `id (UUID)` | `grant_id -> student_access_grants(id) CASCADE` | Immutable audit trail of all grant lifecycle events (`created`, `validated`, `face_captured`, `guardian_updated`, `completed`, `revoked`). |
 
 ### 2. Client-Side High-Speed Storage: IndexedDB (`srnhs_face_biometrics_db_v1`)
 * **Object Store:** `face_photos`
@@ -297,10 +311,11 @@ graph TD
   - `names`: Non-empty, sanitized against script tags, trimmed of trailing whitespace.
 
 ### 3. Rate Limiting Middleware (`RateLimiter`)
-* **Implementation:** `src/lib/validation.ts`
+* **Implementation:** `src/lib/validation.ts`, `src/features/tempAccess/api.ts`
 * **Mechanism:** Token-bucket sliding window algorithm tracking client IP and session actions.
 * **Enforcement:**
   - Login attempts: Capped at 5 attempts per 60-second window. Exceeding triggers a temporary lock to prevent brute-force attacks on faculty accounts.
+  - LRN lookups (temp access portal): Capped at 6 lookups per 60-second window to defend against LRN enumeration attacks. Enforced in `checkLrnLookupRateLimit()` in the client and should be mirrored server-side.
   - Face capture submissions: Capped at 1 submission every 3 seconds to prevent camera buffer memory leaks.
 
 ### 4. Event Ingestion Deduplication Middleware
@@ -312,7 +327,7 @@ graph TD
 ### 5. PostgreSQL Row-Level Security (RLS) Database Middleware
 * **Implementation:** PostgreSQL security policies in Supabase.
 * **Mechanism:** Evaluates Postgres session variables `auth.uid()` and `auth.role()` on every SQL query.
-* **Policies:**
+* **Policies (representative examples):**
   ```sql
   -- Admin has unrestricted visibility
   CREATE POLICY "Admin Full Access" ON students
@@ -328,6 +343,16 @@ graph TD
       JOIN staff_profiles sp ON sp.id = auth.uid()
       WHERE fa.teacher_id = sp.id AND fa.section_id = students.section_id
     )
+  );
+
+  -- Anon (student portal) can only read the one grant matching their token
+  CREATE POLICY "Anon token self-read" ON student_access_grants
+  FOR SELECT USING (auth.role() = 'anon');
+
+  -- Staff can read and create grants
+  CREATE POLICY "Staff can manage access grants" ON student_access_grants
+  FOR ALL USING (
+    EXISTS (SELECT 1 FROM staff_profiles WHERE id = auth.uid() AND is_active = true)
   );
   ```
 
@@ -406,7 +431,7 @@ flowchart TD
 ```mermaid
 flowchart LR
     Event[Event: Entry / Exit / Absence] --> Adapter{Notification Adapter}
-    Adapter -->|Production| Gateway[Semaphore / Twilio REST API]
+    Adapter -->|Production| Gateway[PhilSMS REST API]
     Adapter -->|Development| Mock[MockNotificationAdapter Memory Queue]
     Gateway --> Status{HTTP 200 OK?}
     Status -->|Yes| Delivered[Mark status: 'delivered']
@@ -414,6 +439,38 @@ flowchart LR
     Retry --> Failed[Exhausted: Mark status: 'failed' in SMS Audit Log]
     Delivered --> AuditTable[(sms_audit_logs)]
     Failed --> AuditTable
+```
+
+### Pipeline 5: QR-Based Student Self-Service Portal
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Staff as Teacher / Admin
+    participant Modal as GenerateAccessQrModal
+    participant DB as Supabase (student_access_grants)
+    participant QR as QR Code Display
+    participant Student as Student Device (Browser)
+    participant Portal as TempAccessPage (/temp-access/:token)
+
+    Staff->>Modal: Enter 12-digit LRN + select purpose + TTL
+    Modal->>DB: lookupStudentByLrn() — validate & confirm identity
+    DB-->>Modal: Student name, section, photo
+    Staff->>Modal: Confirm & click Generate
+    Modal->>DB: createAccessGrant(lrn, purpose, ttlMinutes)
+    DB-->>Modal: { token, expires_at, grant_id }
+    Modal->>QR: Render QRCodeSVG (URL = /temp-access/:token)
+    Staff->>Student: Show QR on screen or print slip
+    Student->>Portal: Scan QR → browser opens /temp-access/:token
+    Portal->>DB: validateAccessToken(token)
+    DB-->>Portal: { valid: true, purpose, student, expires_at }
+    Portal->>Student: Show face capture viewfinder (if purpose includes face_registration)
+    Student->>Portal: Pass liveness check → capture FaceNet 128D embedding
+    Portal->>Student: Show guardian details form (if purpose includes guardian_update)
+    Student->>Portal: Submit guardian name, relationship, phone
+    Portal->>DB: completeAccessGrant({ token, faceDescriptors, guardianDetails })
+    DB-->>Portal: { success: true, status: 'completed' }
+    Portal->>Student: Display success confirmation — QR is now permanently invalidated
+    DB-->>Modal: Realtime push: grant status → 'completed'
 ```
 
 ---
@@ -452,6 +509,35 @@ export interface NotificationAdapter {
 * `submitFaceRegistration(payload: FaceRegistrationPayload): Promise<FaceRegistrationResult>`: Validates consent, commits 3-angle frames to IndexedDB and cloud storage.
 * `addNewStudent(studentData: NewStudentInput): Promise<Student>`: Validates LRN, registers student profile, updates local/cloud rosters.
 * `deleteStudent(studentId: string): Promise<void>`: Cascades deletion across IndexedDB, LocalStorage, and Supabase.
+
+### 4. Temporary Access API (`src/features/tempAccess/api.ts`)
+```typescript
+// LRN validation schema
+export const lrnSchema = z.string().regex(/^\d{12}$/, 'LRN must be exactly 12 digits');
+
+// Rate-limiting guard (6 lookups / 60s window, client-side)
+export function checkLrnLookupRateLimit(): { allowed: boolean; retryAfterSeconds: number }
+
+// Look up a student by DepEd 12-digit LRN
+export async function lookupStudentByLrn(lrn: string): Promise<StudentSummary | null>
+
+// Generate a single-use time-limited access grant
+export async function createAccessGrant(params: {
+  lrn: string;
+  purpose: 'face_registration' | 'guardian_update' | 'both';
+  ttlMinutes?: number; // default 60
+}): Promise<StudentAccessGrant>
+
+// Validate an access token from /temp-access/:token URL
+export async function validateAccessToken(token: string): Promise<ValidateTokenResponse>
+
+// Atomically complete the grant — updates face/guardian, marks token 'completed'
+export async function completeAccessGrant(payload: CompleteGrantPayload): Promise<CompleteGrantResponse>
+
+// Subscribe to Realtime grant status changes (for staff modal)
+export function subscribeToGrantStatus(grantId: string, onStatusChange: (status) => void): () => void
+```
+**Supabase RPC equivalents:** `create_student_access_grant`, `validate_student_access_token`, `complete_student_access_grant` (with direct table fallbacks for progressive deployment).
 
 ### 4. External RESTful API Endpoints (PostgREST & Cloud Webhooks)
 
