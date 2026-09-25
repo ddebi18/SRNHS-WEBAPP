@@ -6,8 +6,10 @@ import { Modal } from '@/components/ui/Modal';
 import { ViolationSeverityBadge } from '@/components/ui/StatusBadge';
 import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Images, Eye, CheckCircle2, AlertCircle, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { addNewStudent, getStoredStudents, getStoredSections, getPhotosFromDb, deleteStudent, generateUUID } from '@/features/faceRegistration/api';
+import { addNewStudent, getStoredStudents, getStoredSections, getPhotosFromDb, deleteStudent, generateUUID, syncFromSupabase } from '@/features/faceRegistration/api';
+import { isSupabaseConfigured } from '@/lib/supabase';
 import { Section as FRSection } from '@/features/faceRegistration/types';
+import { fetchViolations, createViolation } from '@/features/students/api';
 
 const INITIAL_VIOLATIONS: StudentViolation[] = [];
 
@@ -102,10 +104,19 @@ export const StudentManager: React.FC = () => {
   };
 
   useEffect(() => {
-    const secs = getStoredSections();
-    setStoredSections(secs);
-    if (secs.length > 0) setSectionId(secs[0]!.id);
-    refreshStudents(secs);
+    async function init() {
+      if (isSupabaseConfigured) {
+        try {
+          await syncFromSupabase();
+        } catch {}
+      }
+      const secs = getStoredSections();
+      setStoredSections(secs);
+      if (secs.length > 0) setSectionId(secs[0]!.id);
+      refreshStudents(secs);
+      fetchViolations().then(setViolations);
+    }
+    init();
   }, []);
 
   const handleCreateStudent = async (e: React.FormEvent) => {
@@ -170,24 +181,22 @@ export const StudentManager: React.FC = () => {
     }
   };
 
-  const handleCreateViolation = (e: React.FormEvent) => {
+  const handleCreateViolation = async (e: React.FormEvent) => {
     e.preventDefault();
     const student = students.find(s => s.id === violationStudentId);
 
-    const newV: StudentViolation = {
-      id: `v-${Date.now()}`,
+    const created = await createViolation({
       student_id: violationStudentId,
       student_name: student ? `${student.first_name} ${student.last_name}` : 'Student',
-      reported_by: user?.id || 'usr-staff',
+      reported_by: user?.id,
       reporter_name: user?.full_name || 'Faculty Member',
       title: violationTitle.trim(),
       description: violationDesc.trim(),
       severity: violationSeverity,
       incident_date: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    };
+    });
 
-    setViolations(prev => [newV, ...prev]);
+    setViolations(prev => [created, ...prev]);
     setViolationTitle('');
     setViolationDesc('');
     setViolationModalOpen(false);
