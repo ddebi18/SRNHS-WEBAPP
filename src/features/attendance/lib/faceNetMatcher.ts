@@ -1,24 +1,57 @@
 /**
  * FaceNet 128D matching helpers.
- * face-api FaceMatcher uses Euclidean distance on L2-normalized embeddings.
- * Same-person webcam captures are typically 0.20–0.55; different people sit near 0.6+.
+ * Standards aligned with TESDA BSRS (MegaMatcher Face Engine) recommendations:
+ * - High-accuracy distance threshold (0.43 max Euclidean distance)
+ * - Ambiguity margin (0.10) to prevent false name mismatches
+ * - Stricter duplicate rejection and 3-frame stability requirement
  */
 
-export const FACENET_DISTANCE_THRESHOLD = 0.55;
-export const FACENET_AMBIGUITY_MARGIN = 0.08;
-export const FACENET_DUPLICATE_DISTANCE = 0.42;
-export const SAME_PERSON_RELOCK_THRESHOLD = 0.56;
+export {
+  TESDA_MIN_IOD_PX,
+  TESDA_RECOMMENDED_IOD_PX,
+  TESDA_LIVENESS_MIN_IOD_PX,
+  TESDA_LIVENESS_OPTIMAL_IOD_PX,
+  TESDA_MAX_ROLL_DEG,
+  TESDA_MAX_PITCH_DEG,
+  TESDA_MAX_YAW_DEG,
+  evaluateTesdaQuality,
+  computeNativeIOD,
+  computeHeadPose,
+  type TesdaQualityResult,
+  type TesdaQualityOptions,
+} from './tesdaQualityEngine';
+
+export const FACENET_DISTANCE_THRESHOLD = 0.43;
+export const FACENET_AMBIGUITY_MARGIN = 0.10;
+export const FACENET_DUPLICATE_DISTANCE = 0.38;
+export const SAME_PERSON_RELOCK_THRESHOLD = 0.46;
 export const MIN_FACE_SIZE_PX = 70;
-export const MIN_LIVE_DETECTION_SCORE = 0.32;
-export const MIN_REGISTER_DETECTION_SCORE = 0.38;
-export const MIN_PHOTO_DETECTION_SCORE = 0.28;
-export const STABILITY_FRAMES_REQUIRED = 2;
+export const MIN_LIVE_DETECTION_SCORE = 0.40;
+export const MIN_REGISTER_DETECTION_SCORE = 0.45;
+export const MIN_PHOTO_DETECTION_SCORE = 0.35;
+export const STABILITY_FRAMES_REQUIRED = 3;
 export const FACE_DESCRIPTOR_VERSION = 2;
-export const MIN_ATTENDANCE_LOG_CONFIDENCE = 0.45;
+export const MIN_ATTENDANCE_LOG_CONFIDENCE = 0.55;
 
 export interface LabeledDescriptors {
   label: string;
   descriptors: Array<Float32Array | number[]>;
+}
+
+export function deserializeFaceDescriptor(value: unknown): Float32Array | null {
+  let raw = value;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const numbers = raw.map(Number);
+  if (numbers.some(value => !Number.isFinite(value))) return null;
+  return new Float32Array(numbers);
 }
 
 export interface FaceNetMatchResult {
@@ -167,6 +200,69 @@ export function findDuplicateStudentId(
 
   if (bestLabel && bestDistance <= duplicateDistance) return bestLabel;
   return null;
+}
+
+export function evaluateFacePartConsistency(
+  landmarks: Array<{ x: number; y: number }> | Float32Array | number[] | null | undefined,
+  box?: { x: number; y: number; width: number; height: number }
+): boolean {
+  if (!landmarks || landmarks.length < 68) return false;
+
+  const getPoint = (index: number) => {
+    const point = (landmarks as Array<{ x: number; y: number }>)[index];
+    if (point && typeof point.x === 'number' && typeof point.y === 'number') return point;
+    const arr = landmarks as Float32Array | number[];
+    if (!arr || arr.length < index * 2 + 2) return null;
+    return { x: arr[index * 2] ?? 0, y: arr[index * 2 + 1] ?? 0 };
+  };
+
+  const leftEye = [36, 37, 38, 39, 40, 41].map(getPoint).filter(Boolean) as Array<{ x: number; y: number }>;
+  const rightEye = [42, 43, 44, 45, 46, 47].map(getPoint).filter(Boolean) as Array<{ x: number; y: number }>;
+  const nose = [27, 28, 29, 30, 31, 32, 33, 34, 35].map(getPoint).filter(Boolean) as Array<{ x: number; y: number }>;
+  const mouth = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67].map(getPoint).filter(Boolean) as Array<{ x: number; y: number }>;
+
+  if (leftEye.length < 3 || rightEye.length < 3 || nose.length < 3 || mouth.length < 6) return false;
+
+  const leftEyeCenter = leftEye.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), { x: 0, y: 0 });
+  const rightEyeCenter = rightEye.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), { x: 0, y: 0 });
+  const noseCenter = nose.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), { x: 0, y: 0 });
+  const mouthCenter = mouth.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), { x: 0, y: 0 });
+
+  const eyeDistance = Math.hypot(
+    rightEyeCenter.x / rightEye.length - leftEyeCenter.x / leftEye.length,
+    rightEyeCenter.y / rightEye.length - leftEyeCenter.y / leftEye.length
+  );
+  if (!(eyeDistance > 12 && eyeDistance < 260)) return false;
+
+  const faceWidth = box ? box.width : eyeDistance * 2.2;
+  const faceHeight = box ? box.height : Math.max(eyeDistance * 2.6, 110);
+  if (faceWidth <= 0 || faceHeight <= 0) return false;
+
+  const eyeMidX = (leftEyeCenter.x / leftEye.length + rightEyeCenter.x / rightEye.length) / 2;
+  const eyeMidY = (leftEyeCenter.y / leftEye.length + rightEyeCenter.y / rightEye.length) / 2;
+  const noseX = noseCenter.x / nose.length;
+  const noseY = noseCenter.y / nose.length;
+  const mouthX = mouthCenter.x / mouth.length;
+  const mouthY = mouthCenter.y / mouth.length;
+
+  const horizontalShift = Math.abs(noseX - eyeMidX) + Math.abs(mouthX - eyeMidX);
+  const verticalGap = Math.abs(noseY - eyeMidY) + Math.abs(mouthY - noseY);
+
+  if (horizontalShift > eyeDistance * 0.75) return false;
+  if (verticalGap < 12 || verticalGap > faceHeight * 0.9) return false;
+
+  if (box) {
+    const insideBox =
+      leftEyeCenter.x / leftEye.length >= box.x &&
+      rightEyeCenter.x / rightEye.length <= box.x + box.width &&
+      noseCenter.x / nose.length >= box.x &&
+      mouthCenter.x / mouth.length <= box.x + box.width &&
+      eyeMidY >= box.y &&
+      mouthCenter.y / mouth.length <= box.y + box.height;
+    if (!insideBox) return false;
+  }
+
+  return true;
 }
 
 export function isFaceBoxUsable(

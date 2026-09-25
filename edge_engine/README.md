@@ -42,6 +42,7 @@ A student is confirmed when cosine similarity is at least `0.47` **and** the nex
 - Windows 10 or 11 (64-bit)
 - Python 3.11 installed and added to PATH
 - USB 1080p Webcam connected
+- For cloud roster loading, set `SUPABASE_URL` and the server-only `SUPABASE_SERVICE_ROLE_KEY` in the edge-engine environment. Never expose the service-role key in the frontend.
 
 ### Steps
 
@@ -69,3 +70,5 @@ A student is confirmed when cosine similarity is at least `0.47` **and** the nex
 ### Key Controls
 - Press **`q`** to safely close the optical camera stream.
 - Press **`s`** to reload the student roster from Supabase or local cache.
+
+The browser registration flow stores descriptors in the Supabase `students.face_descriptors` column. The local JSON cache is only a fallback when Supabase is unavailable.

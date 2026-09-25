@@ -104,7 +104,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
   const handleRegistrationSuccess = (studentId: string) => {
     const s = students.find(item => item.id === studentId);
     const name = s ? s.name : 'Student';
-    setToastMessage(`Biometric face registration for ${name} was verified and saved.`);
+    setToastMessage(`Face registration for ${name} was verified and saved.`);
     setTimeout(() => setToastMessage(null), 4500);
     reloadRoster();
   };
@@ -190,17 +190,16 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
   const completionRate = totalCount > 0 ? Math.round((registeredCount / totalCount) * 100) : 0;
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Toast Notification */}
+    <div className="space-y-5 max-w-7xl mx-auto">
       <AnimatePresence>
         {toastMessage && (
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="fixed top-6 right-6 z-50 p-4 rounded-2xl bg-[#1B4332] text-white shadow-2xl border border-[#2D6A4F] flex items-center gap-3 text-xs font-bold"
+            className="fixed top-5 right-5 z-50 p-3 rounded-lg bg-[#1B4332] text-white shadow-lg border border-[#2D6A4F] flex items-center gap-3 text-xs font-semibold"
           >
-            <div className="w-7 h-7 rounded-xl bg-[#2D6A4F] flex items-center justify-center shrink-0">
+            <div className="w-7 h-7 rounded-md bg-[#2D6A4F] flex items-center justify-center shrink-0">
               <CheckCircle2 className="w-4 h-4 text-emerald-300" />
             </div>
             <span>{toastMessage}</span>
@@ -208,108 +207,106 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
         )}
       </AnimatePresence>
 
-      {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="px-3 py-1 rounded-full bg-[#1B4332] text-white text-[11px] font-black uppercase tracking-wider">
-              Teacher Assisted Enrollment
-            </span>
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-              Biometric Edge Turnstile System
-            </span>
-          </div>
-          <h1 className="text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight mt-1">
-            Section Face Registration
-          </h1>
-          <p className="text-xs font-medium text-slate-600 dark:text-slate-400 mt-1 max-w-xl">
-            Enroll students' facial recognition embeddings using your device camera while student is physically present.
-          </p>
-        </div>
+      <div className="bg-white dark:bg-[#0A2016] rounded-lg p-4 sm:p-5 border border-slate-200 dark:border-emerald-800/40 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="w-1 h-5 bg-primary rounded-sm" />
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-emerald-300">
+                Student Attendance System
+              </span>
+            </div>
 
-        {/* Section Selector Dropdown & Enroll Student Button */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-[#2D6A4F]" />
-            <select
-              value={selectedSectionId}
-              onChange={e => setSelectedSectionId(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
-            >
-              <option value="all" className="dark:bg-slate-900">
-                All Sections ({sections.reduce((acc, s) => acc + (s.totalStudents || 0), 0)} Students)
-              </option>
-              {sections.map(sec => (
-                <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
-                  {sec.name} ({sec.gradeLevel})
+            <h1 className="text-xl sm:text-2xl font-semibold text-slate-900 dark:text-emerald-50 leading-tight">
+              Face Registration
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-emerald-300/80 mt-1 max-w-2xl">
+              Register a student's face for attendance recognition.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#06180F] rounded-md border border-slate-200 dark:border-emerald-800/40 px-3 py-2">
+              <BookOpen className="w-4 h-4 text-primary dark:text-emerald-400" />
+              <select
+                value={selectedSectionId}
+                onChange={e => setSelectedSectionId(e.target.value)}
+                className="bg-transparent text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
+              >
+                <option value="all" className="dark:bg-slate-900">
+                  All Sections ({sections.reduce((acc, s) => acc + (s.totalStudents || 0), 0)} Students)
                 </option>
-              ))}
-            </select>
-          </div>
+                {sections.map(sec => (
+                  <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
+                    {sec.name} ({sec.gradeLevel})
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <button
-            onClick={() => {
-              setEnrollSectionId(selectedSectionId === 'all' ? (sections[0]?.id || '') : selectedSectionId);
-              setEnrollError(null);
-              setIsEnrollModalOpen(true);
-            }}
-            className="px-4 py-3 rounded-2xl bg-[#1B4332] hover:bg-[#2D6A4F] text-white text-xs font-bold flex items-center gap-2 shadow-card-sm transition-all"
-          >
-            <UserPlus className="w-4 h-4 text-emerald-300" />
-            <span>Enroll Student</span>
-          </button>
+            <button
+              onClick={() => {
+                setEnrollSectionId(selectedSectionId === 'all' ? (sections[0]?.id || '') : selectedSectionId);
+                setEnrollError(null);
+                setIsEnrollModalOpen(true);
+              }}
+              className="px-4 py-2.5 rounded-md bg-primary hover:bg-primary-light text-white text-xs font-semibold flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
+            >
+              <UserPlus className="w-4 h-4 text-emerald-100" />
+              <span>Enroll Student</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Roster Overview Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-3xl p-5 bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border border-[#ba8b5b] shadow-card flex items-center justify-between">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-slate-200 dark:bg-emerald-800/40 border border-slate-200 dark:border-emerald-800/40 rounded-lg overflow-hidden">
+        <div className="p-3.5 bg-white dark:bg-[#0A2016] flex items-center justify-between">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-950/70 mb-1">Roster Registered</div>
-            <div className="text-3xl font-black text-amber-950">{registeredCount} / {totalCount}</div>
-            <div className="text-xs font-medium text-amber-900 mt-1">{completionRate}% section enrolled</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-emerald-300 mb-1">Registered</div>
+            <div className="text-xl font-semibold text-slate-900 dark:text-slate-100">{registeredCount} / {totalCount}</div>
+            <div className="text-[11px] text-slate-500 mt-1">{completionRate}% complete</div>
           </div>
-          <div className="w-10 h-10 rounded-2xl bg-amber-950/20 flex items-center justify-center text-amber-950 shrink-0">
+          <div className="w-8 h-8 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
             <CheckCircle2 className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="rounded-3xl p-5 bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border border-[#d1b397] shadow-card flex items-center justify-between">
+        <div className="p-3.5 bg-white dark:bg-[#0A2016] flex items-center justify-between">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-950/70 mb-1">Pending Enrollment</div>
-            <div className="text-3xl font-black text-amber-950">{unregisteredCount}</div>
-            <div className="text-xs font-medium text-amber-900 mt-1">Awaiting webcam scan</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-emerald-300 mb-1">Pending</div>
+            <div className="text-xl font-semibold text-slate-900 dark:text-slate-100">{unregisteredCount}</div>
+            <div className="text-[11px] text-slate-500 mt-1">Awaiting registration</div>
           </div>
-          <div className="w-10 h-10 rounded-2xl bg-amber-950/20 flex items-center justify-center text-amber-950 shrink-0">
+          <div className="w-8 h-8 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center shrink-0">
             <Camera className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="rounded-3xl p-5 bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border border-[#c28846] shadow-card flex items-center justify-between">
+        <div className="p-3.5 bg-white dark:bg-[#0A2016] flex items-center justify-between">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-950/70 mb-1">Needs Review</div>
-            <div className="text-3xl font-black text-amber-950">{needsReviewCount}</div>
-            <div className="text-xs font-medium text-amber-900 mt-1">Quality flag review</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-emerald-300 mb-1">For Review</div>
+            <div className="text-xl font-semibold text-slate-900 dark:text-slate-100">{needsReviewCount}</div>
+            <div className="text-[11px] text-slate-500 mt-1">Needs staff review</div>
           </div>
-          <div className="w-10 h-10 rounded-2xl bg-amber-950/20 flex items-center justify-center text-amber-950 shrink-0">
+          <div className="w-8 h-8 rounded-md bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
             <AlertCircle className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="rounded-3xl p-5 bg-gradient-to-br from-[#C68B59] to-[#836452] text-amber-50 border border-[#806143] shadow-card flex items-center justify-between">
+        <div className="p-3.5 bg-white dark:bg-[#0A2016] flex items-center justify-between">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-100/80 mb-1">Guardian Consent</div>
-            <div className="text-3xl font-black text-white">100%</div>
-            <div className="text-xs font-medium text-amber-100 mt-1">Archived on file</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-emerald-300 mb-1">Consent</div>
+            <div className="text-xl font-semibold text-slate-900 dark:text-slate-100">Complete</div>
+            <div className="text-[11px] text-slate-500 mt-1">Guardian record on file</div>
           </div>
-          <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center text-white shrink-0">
+          <div className="w-8 h-8 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center shrink-0">
             <ShieldCheck className="w-5 h-5" />
           </div>
         </div>
       </div>
 
       {/* Search & Filter Toolbar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
         {/* Search Input */}
         <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -317,8 +314,8 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search student name or LRN..."
-            className="w-full pl-10 pr-4 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2D6A4F]"
+            placeholder="Search student..."
+            className="w-full pl-10 pr-4 py-2 text-xs rounded-md bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           />
         </div>
 
@@ -334,10 +331,10 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
               key={tab.id}
               onClick={() => setStatusFilter(tab.id as any)}
               className={cn(
-                'px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap',
+                'px-3 py-1.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer border',
                 statusFilter === tab.id
-                  ? 'bg-[#1B4332] text-white shadow-sm'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  ? 'bg-emerald-700 text-white border-emerald-700'
+                  : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'
               )}
             >
               {tab.label}
@@ -353,7 +350,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
             Loading section roster records...
           </div>
         ) : filteredStudents.length === 0 ? (
-          <div className="py-16 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-8 space-y-2">
+          <div className="py-12 text-center bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-8 space-y-2">
             <Users className="w-8 h-8 text-slate-400 mx-auto" />
             <div className="text-sm font-bold text-slate-900 dark:text-slate-100">No students match search or filter</div>
             <p className="text-xs text-slate-500">Try clearing your search query or switching section scope.</p>
@@ -489,7 +486,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
             <button
               type="submit"
               disabled={isSubmittingEnroll}
-              className="px-4 py-2 text-xs font-bold rounded-xl bg-[#1B4332] hover:bg-[#2D6A4F] text-white transition-colors"
+              className="px-4 py-2 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-sm shadow-emerald-900/20 transition-all cursor-pointer"
             >
               {isSubmittingEnroll ? 'Enrolling…' : 'Enroll Student'}
             </button>

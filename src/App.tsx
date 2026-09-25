@@ -5,23 +5,14 @@ import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { AppRouter } from '@/routes/AppRouter';
 import { checkAndApplyUrlSync } from '@/features/sync/syncService';
-import { syncFromSupabase, CANDIDATE_STUDENT_KEYS, LOCAL_STORAGE_KEY_STUDENTS } from '@/features/faceRegistration/api';
+import { syncFromSupabase } from '@/features/faceRegistration/api';
 import { Database } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [syncToast, setSyncToast] = useState<string | null>(null);
 
   useEffect(() => {
-    // 1. Aggressively wipe stale student caches from localStorage BEFORE any sync.
-    //    This prevents any device from ghost-uploading deleted students back to Supabase.
-    try {
-      for (const key of CANDIDATE_STUDENT_KEYS) {
-        localStorage.removeItem(key);
-      }
-      localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, '[]');
-    } catch {}
-
-    // 2. Check if opened via QR/sync URL (phone redirect)
+    // 1. Check if opened via QR/sync URL (phone redirect)
     const urlRes = checkAndApplyUrlSync();
     if (urlRes.synced) {
       setSyncToast(`Synced ${urlRes.studentCount ?? 1} student(s) and sections to this device.`);
@@ -29,7 +20,7 @@ export const App: React.FC = () => {
       return () => clearTimeout(timer);
     }
 
-    // 3. Pull live data from Supabase database silently in the background
+    // 2. Pull live data from Supabase database silently in the background
     syncFromSupabase();
   }, []);
 

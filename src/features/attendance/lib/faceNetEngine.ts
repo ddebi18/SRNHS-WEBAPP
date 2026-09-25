@@ -3,6 +3,7 @@ import {
   MIN_LIVE_DETECTION_SCORE,
   MIN_PHOTO_DETECTION_SCORE,
   MIN_REGISTER_DETECTION_SCORE,
+  evaluateFacePartConsistency,
   isFaceBoxUsable,
 } from './faceNetMatcher';
 
@@ -108,7 +109,17 @@ function isQualityDetection(
   if (!detection) return false;
   const box = detection.detection.box;
   const score = detection.detection.score;
-  return isFaceBoxUsable(box.width, box.height, score, minScore);
+  if (!isFaceBoxUsable(box.width, box.height, score, minScore)) return false;
+  if (!evaluateFacePartConsistency(detection.landmarks.positions, box)) return false;
+  return true;
+}
+
+async function hasExactlyOneFace(
+  input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
+  detector: faceapi.TinyFaceDetectorOptions | faceapi.SsdMobilenetv1Options
+): Promise<boolean> {
+  const detections = await faceapi.detectAllFaces(input, detector);
+  return detections.length === 1;
 }
 
 export async function detectLiveFace(
@@ -119,25 +130,26 @@ export async function detectLiveFace(
       ? renderVideoToCanvas(input, LOW_LIGHT_GAMMA)
       : null;
     try {
-      const detection = await faceapi
-        .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({
+      const options = new faceapi.TinyFaceDetectorOptions({
           inputSize: 320,
           scoreThreshold: MIN_LIVE_DETECTION_SCORE,
-        }))
+        });
+      if (await hasExactlyOneFace(input, options)) {
+        const detection = await faceapi
+          .detectSingleFace(input, options)
         .withFaceLandmarks()
         .withFaceDescriptor();
-      if (isQualityDetection(detection, MIN_LIVE_DETECTION_SCORE) && !enhancedInput) return detection;
+        if (isQualityDetection(detection, MIN_LIVE_DETECTION_SCORE) && !enhancedInput) return detection;
+      }
 
       if (enhancedInput) {
-        const enhancedDetection = await faceapi
-          .detectSingleFace(enhancedInput, new faceapi.TinyFaceDetectorOptions({
-            inputSize: 320,
-            scoreThreshold: MIN_LIVE_DETECTION_SCORE,
-          }))
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-        if (isQualityDetection(enhancedDetection, MIN_LIVE_DETECTION_SCORE)) return enhancedDetection;
-        if (isQualityDetection(detection, MIN_LIVE_DETECTION_SCORE)) return detection;
+        if (await hasExactlyOneFace(enhancedInput, options)) {
+          const enhancedDetection = await faceapi
+            .detectSingleFace(enhancedInput, options)
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+          if (isQualityDetection(enhancedDetection, MIN_LIVE_DETECTION_SCORE)) return enhancedDetection;
+        }
       }
     } catch {
       // Keep the camera loop moving if a single inference frame fails.
@@ -156,42 +168,47 @@ export async function detectAccurateFace(
 
   if (faceapi.nets.ssdMobilenetv1.isLoaded) {
     try {
-      const detection = await faceapi
-        .detectSingleFace(input, new faceapi.SsdMobilenetv1Options({ minConfidence: minScore }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-      if (isQualityDetection(detection, minScore) && !enhancedInput) return detection;
-      if (enhancedInput) {
-        const enhancedDetection = await faceapi
-          .detectSingleFace(enhancedInput, new faceapi.SsdMobilenetv1Options({ minConfidence: minScore }))
+      const options = new faceapi.SsdMobilenetv1Options({ minConfidence: minScore });
+      if (await hasExactlyOneFace(input, options)) {
+        const detection = await faceapi
+          .detectSingleFace(input, options)
           .withFaceLandmarks()
           .withFaceDescriptor();
-        if (isQualityDetection(enhancedDetection, minScore)) return enhancedDetection;
-        if (isQualityDetection(detection, minScore)) return detection;
+        if (isQualityDetection(detection, minScore) && !enhancedInput) return detection;
+      }
+      if (enhancedInput) {
+        if (await hasExactlyOneFace(enhancedInput, options)) {
+          const enhancedDetection = await faceapi
+            .detectSingleFace(enhancedInput, options)
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+          if (isQualityDetection(enhancedDetection, minScore)) return enhancedDetection;
+        }
       }
     } catch {}
   }
 
   if (faceapi.nets.tinyFaceDetector.isLoaded) {
     try {
-      const detection = await faceapi
-        .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({
+      const options = new faceapi.TinyFaceDetectorOptions({
           inputSize: 416,
           scoreThreshold: minScore,
-        }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-      if (isQualityDetection(detection, minScore) && !enhancedInput) return detection;
-      if (enhancedInput) {
-        const enhancedDetection = await faceapi
-          .detectSingleFace(enhancedInput, new faceapi.TinyFaceDetectorOptions({
-            inputSize: 416,
-            scoreThreshold: minScore,
-          }))
+        });
+      if (await hasExactlyOneFace(input, options)) {
+        const detection = await faceapi
+          .detectSingleFace(input, options)
           .withFaceLandmarks()
           .withFaceDescriptor();
-        if (isQualityDetection(enhancedDetection, minScore)) return enhancedDetection;
-        if (isQualityDetection(detection, minScore)) return detection;
+        if (isQualityDetection(detection, minScore) && !enhancedInput) return detection;
+      }
+      if (enhancedInput) {
+        if (await hasExactlyOneFace(enhancedInput, options)) {
+          const enhancedDetection = await faceapi
+            .detectSingleFace(enhancedInput, options)
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+          if (isQualityDetection(enhancedDetection, minScore)) return enhancedDetection;
+        }
       }
     } catch {}
   }

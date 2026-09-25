@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { StaffProfile, UserRole } from '@/types/domain.types';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
-export type LoginPortal = 'admin' | 'teacher';
+export type LoginPortal = 'admin' | 'teacher' | 'student';
 
 interface AuthContextType {
   user: StaffProfile | null;
@@ -18,6 +18,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 // Inactive session timeout thresholds (Requirement 5)
 const ADMIN_IDLE_TIMEOUT_MS = 15 * 60 * 1000;  // 15 minutes for admin
 const TEACHER_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes for teacher
+const STUDENT_IDLE_TIMEOUT_MS = 120 * 60 * 1000; // 120 minutes for student
 
 // Reference test accounts for offline/evaluation environments
 const TEST_ACCOUNTS: Record<string, { pass: string[]; profile: StaffProfile }> = {
@@ -71,6 +72,32 @@ const TEST_ACCOUNTS: Record<string, { pass: string[]; profile: StaffProfile }> =
       is_active: true,
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
+    },
+  },
+  student: {
+    pass: ['student123', 'student'],
+    profile: {
+      id: 'usr-student-201',
+      email: 'student@srnhs.edu.ph',
+      full_name: 'Ana Marie Garcia',
+      role: 'student' as const,
+      department: 'Grade 10 - Diamond',
+      is_active: true,
+      created_at: '2026-01-15T00:00:00Z',
+      updated_at: '2026-01-15T00:00:00Z',
+    },
+  },
+  'student@srnhs.edu.ph': {
+    pass: ['student123', 'student'],
+    profile: {
+      id: 'usr-student-201',
+      email: 'student@srnhs.edu.ph',
+      full_name: 'Ana Marie Garcia',
+      role: 'student' as const,
+      department: 'Grade 10 - Diamond',
+      is_active: true,
+      created_at: '2026-01-15T00:00:00Z',
+      updated_at: '2026-01-15T00:00:00Z',
     },
   },
 };
@@ -129,7 +156,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (!user) return;
 
-    const timeoutDuration = user.role === 'admin' ? ADMIN_IDLE_TIMEOUT_MS : TEACHER_IDLE_TIMEOUT_MS;
+    const timeoutDuration = user.role === 'admin' ? ADMIN_IDLE_TIMEOUT_MS : user.role === 'student' ? STUDENT_IDLE_TIMEOUT_MS : TEACHER_IDLE_TIMEOUT_MS;
 
     const handleUserActivity = () => {
       lastActivityRef.current = Date.now();

@@ -1,718 +1,648 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import type { Variants } from 'framer-motion';
 import { useRole } from '@/hooks/useRole';
 import { SITE_CONFIG } from '@/config/siteConfig';
+import { RecognitionEvent } from '@/types/domain.types';
 import { supabaseRecognitionAdapter } from '@/features/attendance/services/SupabaseRecognitionAdapter';
 import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
 import { getStoredStudents } from '@/features/faceRegistration/api';
-import { getLocalStaff } from '@/features/faculty/api';
-import { getLocalRooms, getLocalSubjects } from '@/features/academics/api';
-import { getLocalViolations } from '@/features/students/api';
-import { RecognitionEvent } from '@/types/domain.types';
+import { LiveCameraFeedCard } from '@/features/attendance/components/LiveCameraFeedCard';
 import {
-  ArrowRight,
-  DoorOpen,
   ClipboardList,
   MessageSquare,
   Users,
-  BookOpen,
-  School,
-  GraduationCap,
-  AlertTriangle,
-  TrendingUp,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  LayoutDashboard,
-  ShieldCheck,
-  Calendar,
   ChevronRight,
+  Calendar,
+  Clock,
+  CheckCircle2,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Radio,
+  Camera,
+  ShieldCheck,
+  UserCheck,
+  TrendingUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getDashboardGreeting } from '@/lib/dashboardLabels';
+import { LordIcon, LORD_ICONS } from '@/components/motion/LordIcon';
+import { fadeUp, staggerContainer } from '@/components/motion/PageFade';
 
-// ─── Animation helpers ────────────────────────────────────────────────────────
-const container: Variants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.07, delayChildren: 0.05 } },
-};
-const item: Variants = {
-  hidden: { opacity: 0, y: 18 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.38, ease: 'easeOut' as const } },
-};
+export const DashboardOverviewPage: React.FC = () => {
+  const { isAdmin, role } = useRole();
+  const navigate = useNavigate();
+  const [recentEvents, setRecentEvents] = useState<RecognitionEvent[]>([]);
+  const [smsCount, setSmsCount] = useState(0);
+  const [currentTimeStr, setCurrentTimeStr] = useState('');
 
-// ─── Shared sub-components ────────────────────────────────────────────────────
-interface StatCardProps {
-  title: string;
-  value: string | number;
-  sub: string;
-  icon: React.ReactNode;
-  color: 'green' | 'amber' | 'blue' | 'rose' | 'purple' | 'slate';
-  onClick?: () => void;
-}
+  const hour = new Date().getHours();
+  const greeting = getDashboardGreeting(hour, role);
 
-const colorMap = {
-  green:  { bg: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200/70 dark:border-emerald-800/50', icon: 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300', dot: 'bg-emerald-500' },
-  amber:  { bg: 'bg-amber-50 dark:bg-amber-950/30 border-amber-200/70 dark:border-amber-800/50',         icon: 'bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300',         dot: 'bg-amber-500'  },
-  blue:   { bg: 'bg-blue-50 dark:bg-blue-950/30 border-blue-200/70 dark:border-blue-800/50',             icon: 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300',             dot: 'bg-blue-500'   },
-  rose:   { bg: 'bg-rose-50 dark:bg-rose-950/30 border-rose-200/70 dark:border-rose-800/50',             icon: 'bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300',             dot: 'bg-rose-500'   },
-  purple: { bg: 'bg-violet-50 dark:bg-violet-950/30 border-violet-200/70 dark:border-violet-800/50',     icon: 'bg-violet-100 dark:bg-violet-900/60 text-violet-700 dark:text-violet-300',     dot: 'bg-violet-500' },
-  slate:  { bg: 'bg-slate-50 dark:bg-slate-900 border-slate-200/70 dark:border-slate-800',               icon: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400',           dot: 'bg-slate-400'  },
-};
+  // Live Philippine Standard Time clock
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setCurrentTimeStr(
+        now.toLocaleTimeString('en-PH', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        })
+      );
+    };
+    updateTime();
+    const timer = setInterval(updateTime, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-const StatCard: React.FC<StatCardProps> = ({ title, value, sub, icon, color, onClick }) => {
-  const c = colorMap[color];
+  // Derived metrics from real stored data
+  const enrolledCount = getStoredStudents().length;
+  const todayStr = new Date().toDateString();
+  const todayScans = recentEvents.filter(
+    e => new Date(e.captured_at).toDateString() === todayStr
+  );
+  const todayScansCount = todayScans.length;
+  const todayEntriesCount = todayScans.filter(e => e.event_type === 'entry').length;
+  const todayExitsCount = todayScans.filter(e => e.event_type === 'exit').length;
+
+  const attendancePercent =
+    enrolledCount > 0 && todayScansCount > 0
+      ? Math.min(100, Math.round((todayScansCount / enrolledCount) * 100))
+      : 0;
+  const attendanceRate = attendancePercent > 0 ? `${attendancePercent}%` : '—';
+
+  useEffect(() => {
+    supabaseRecognitionAdapter.getEvents({ limit: 8 }).then(setRecentEvents);
+    mockNotificationAdapter.getSmsLogs(100).then(logs => setSmsCount(logs.length));
+
+    const unsub1 = supabaseRecognitionAdapter.subscribeToEvents(evt => {
+      setRecentEvents(prev => [evt, ...prev.slice(0, 7)]);
+    });
+    const unsub2 = mockNotificationAdapter.subscribeToSms(() => {
+      setSmsCount(c => c + 1);
+    });
+    return () => { unsub1(); unsub2(); };
+  }, []);
+
+  // Determine school year (June–March)
+  const now = new Date();
+  const schoolYearStart = now.getMonth() >= 5 ? now.getFullYear() : now.getFullYear() - 1;
+  const schoolYear = `S.Y. ${schoolYearStart}–${schoolYearStart + 1}`;
+
+  const latestScan = recentEvents[0];
+
   return (
     <motion.div
-      variants={item}
-      whileHover={onClick ? { y: -2, boxShadow: '0 8px 24px 0 rgba(0,0,0,0.10)' } : {}}
-      className={cn(
-        'rounded-2xl p-5 border shadow-card-sm transition-all',
-        c.bg,
-        onClick && 'cursor-pointer'
-      )}
-      onClick={onClick}
+      className="space-y-5 max-w-7xl mx-auto"
+      variants={staggerContainer}
+      initial="hidden"
+      animate="show"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-2">{title}</div>
-          <div className="text-3xl font-black text-slate-900 dark:text-slate-100 leading-none tabular-nums">{value}</div>
-          <div className="flex items-center gap-1.5 mt-2">
-            <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', c.dot)} />
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400 truncate">{sub}</span>
+      {/* ── 1. Hero Institutional Header & Operational Bar ────────────────── */}
+      <motion.div variants={fadeUp} className="bg-white dark:bg-[#0A2016] rounded-lg p-4 sm:p-5 border border-slate-200 dark:border-emerald-800/40 shadow-sm relative overflow-hidden">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 relative z-10">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap mb-1.5">
+              <span className="w-1 h-5 bg-primary rounded-sm" />
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-emerald-300">
+                Student Attendance System
+              </span>
+              <span className="text-xs text-slate-400 dark:text-emerald-400/60 font-medium">
+                DepEd Antipolo · Cluster 2
+              </span>
+            </div>
+
+            <h1 className="text-xl sm:text-2xl font-semibold text-slate-900 dark:text-emerald-50 leading-tight">
+              {greeting}
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-emerald-300/80 mt-1 max-w-2xl">
+              {SITE_CONFIG.schoolName} — Real-time attendance and notification status
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 bg-emerald-50/40 dark:bg-[#06180F] p-2.5 sm:p-3 rounded-2xl border border-emerald-950/10 dark:border-emerald-800/30">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-[#0A2016] shadow-sm border border-emerald-950/5 dark:border-emerald-800/30">
+                <Clock className="w-4 h-4 text-primary dark:text-emerald-400" />
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-slate-400 dark:text-emerald-400/60 leading-none">PST Clock</div>
+                  <div className="text-xs font-mono font-bold text-slate-800 dark:text-emerald-100">{currentTimeStr || '12:00:00 PM'}</div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-[#0A2016] shadow-xs border border-emerald-950/5 dark:border-emerald-800/30">
+                <Calendar className="w-4 h-4 text-gold dark:text-gold-light" />
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-slate-400 dark:text-emerald-400/60 leading-none">Academic Year</div>
+                  <div className="text-xs font-semibold text-slate-800 dark:text-emerald-100">{schoolYear}</div>
+                </div>
+              </div>
+
+              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-bold shadow-xs">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>3 Gate Nodes Active</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div className={cn('p-2.5 rounded-xl shrink-0', c.icon)}>
-          {icon}
+      </motion.div>
+
+      {/* ── 2. The Integrated Command Center: Live Camera + Verification Kiosk ── */}
+      <motion.div variants={fadeUp} className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left Column (7 cols): The Live Camera Feed Viewfinder */}
+        <div className="lg:col-span-7 space-y-4">
+          <LiveCameraFeedCard />
         </div>
-      </div>
+
+        {/* Right Column (5 cols): Live Recognition Kiosk & Real-time Stream */}
+        <div className="lg:col-span-5 space-y-4">
+          {/* Spotlight: Latest Verified Student Scan */}
+          <div className="bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm relative overflow-hidden">
+            <div className="flex items-center justify-between gap-2 pb-3 mb-4 border-b border-emerald-950/5 dark:border-emerald-800/30">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/80 text-primary dark:text-emerald-300">
+                  <CheckCircle2 className="w-4 h-4" />
+                </span>
+                <h3 className="font-heading text-sm font-bold text-slate-900 dark:text-emerald-50">Latest Turnstile Scan</h3>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50">
+                Verified Match
+              </span>
+            </div>
+
+            {latestScan ? (
+              <div className="flex items-start gap-4">
+                <div className="relative shrink-0">
+                  {latestScan.student_photo ? (
+                    <img
+                      src={latestScan.student_photo}
+                      alt={latestScan.student_name}
+                      className="w-16 h-16 rounded-2xl object-cover border-2 border-emerald-500 shadow-md"
+                    />
+                  ) : (
+                    <div className="w-16 h-16 rounded-2xl bg-emerald-50 dark:bg-[#143828] border-2 border-emerald-500 flex items-center justify-center text-primary dark:text-emerald-200 font-heading font-bold text-xl shadow-md">
+                      {latestScan.student_name?.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <span className="absolute -bottom-1 -right-1 p-1 rounded-full bg-emerald-500 text-white shadow-xs">
+                    <CheckCircle2 className="w-3 h-3" />
+                  </span>
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-heading font-bold text-base text-slate-900 dark:text-emerald-50 truncate">
+                    {latestScan.student_name}
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-emerald-400/80 truncate mt-0.5 font-medium">
+                    {latestScan.section_name ? `${latestScan.section_name} • ` : ''}
+                    {latestScan.student_lrn ? `LRN: ${latestScan.student_lrn}` : latestScan.room_name}
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                    <span className={cn(
+                      'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-bold capitalize shadow-2xs',
+                      latestScan.event_type === 'entry'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
+                        : 'bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60'
+                    )}>
+                      {latestScan.event_type === 'entry' ? (
+                        <ArrowDownLeft className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpRight className="w-3 h-3" />
+                      )}
+                      {latestScan.event_type === 'entry' ? 'Time-In' : 'Time-Out'}
+                    </span>
+
+                    <span className="text-xs font-mono text-slate-500 dark:text-emerald-400/70 font-semibold">
+                      {new Date(latestScan.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+
+                    <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-900/60">
+                      SMS Sent
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="py-6 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-[#06180F] text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto mb-2 border border-emerald-100 dark:border-emerald-800/40">
+                  <Radio className="w-6 h-6 animate-pulse" />
+                </div>
+                <p className="text-xs font-semibold text-slate-700 dark:text-emerald-200">Awaiting Turnstile Scans</p>
+                <p className="text-[11px] text-slate-400 dark:text-emerald-400/60 mt-0.5">
+                  Live facial matches from Gate 01, 02, or 03 will highlight here immediately.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Real-time Recognition Scan Stream */}
+          <div className="bg-white dark:bg-[#0A2016] rounded-lg border border-slate-200 dark:border-emerald-800/40 shadow-sm overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-emerald-950/5 dark:border-emerald-800/30 flex items-center justify-between">
+              <div>
+                <h3 className="font-heading text-sm font-bold text-slate-900 dark:text-emerald-50">Recent Campus Scans</h3>
+                <p className="text-[11px] text-slate-500 dark:text-emerald-400/70">Edge gate activity feed</p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50 text-[11px] font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live
+              </span>
+            </div>
+
+            <div className="p-3 divide-y divide-emerald-950/5 dark:divide-emerald-800/20 max-h-[290px] overflow-y-auto">
+              {recentEvents.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400 dark:text-emerald-400/60">
+                  No scan events recorded today. Gate turnstiles are ready.
+                </div>
+              ) : (
+                recentEvents.slice(0, 5).map(evt => (
+                  <div
+                    key={evt.id}
+                    className="py-2.5 px-2 flex items-center justify-between gap-3 hover:bg-emerald-50/50 dark:hover:bg-[#0E2A1E] rounded-xl transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {evt.student_photo ? (
+                        <img
+                          src={evt.student_photo}
+                          alt={evt.student_name}
+                          className="w-8 h-8 rounded-full object-cover shrink-0 border border-emerald-200 dark:border-emerald-700"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-[#143828] text-primary dark:text-emerald-200 flex items-center justify-center text-xs font-bold shrink-0">
+                          {evt.student_name?.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-900 dark:text-emerald-50 truncate">
+                          {evt.student_name}
+                        </div>
+                        <div className="text-[10px] text-slate-400 dark:text-emerald-400/60 truncate">
+                          {evt.room_name || 'Main Gate Turnstile'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={cn(
+                        'px-2 py-0.5 rounded-md text-[10px] font-bold capitalize',
+                        evt.event_type === 'entry'
+                          ? 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300'
+                          : 'bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300'
+                      )}>
+                        {evt.event_type}
+                      </span>
+                      <span className="text-[11px] font-mono text-slate-400 dark:text-emerald-400/60">
+                        {new Date(evt.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="p-3 border-t border-emerald-950/5 dark:border-emerald-800/30 bg-emerald-50/20 dark:bg-[#071A11]">
+              <button
+                onClick={() => navigate(isAdmin ? '/gate-log' : '/classroom')}
+                className="w-full py-2 px-3 rounded-xl text-xs font-bold text-primary dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-[#143828] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>{isAdmin ? 'Open Full Gate Log & Filter' : 'Open Classroom Attendance'}</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ── 3. Redesigned High-Impact Statistics & Performance Section ─────── */}
+      <motion.div variants={fadeUp}>
+        <div className="flex items-center justify-between mb-3 px-1">
+          <div>
+            <h2 className="font-heading text-lg font-bold text-slate-900 dark:text-emerald-50 tracking-tight">
+              Attendance Overview
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-emerald-400/80">
+              Real-time attendance and notification status
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-primary dark:text-emerald-400 font-semibold">
+            <TrendingUp className="w-4 h-4" />
+            <span className="hidden sm:inline">Updated live</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Card 1: Attendance Rate with Progress Bar */}
+          <div
+            onClick={() => navigate('/classroom')}
+            className="group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 transition-colors cursor-pointer overflow-hidden flex flex-col justify-between"
+          >
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-emerald-500" />
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-emerald-400/90">
+                  Campus Attendance
+                </span>
+                <div className="p-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 group-hover:scale-105 transition-transform">
+                  <LordIcon src={LORD_ICONS.book} size={28} trigger="hover" />
+                </div>
+              </div>
+
+              <div className="flex items-baseline gap-2">
+                <div className="text-3xl font-extrabold text-slate-900 dark:text-emerald-50 tracking-tight font-sans">
+                  {attendanceRate}
+                </div>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50">
+                  {todayScansCount} present
+                </span>
+              </div>
+
+              {/* Real Progress Bar */}
+              <div className="mt-3 w-full h-2 rounded-full bg-slate-100 dark:bg-[#06180F] overflow-hidden border border-emerald-950/5 dark:border-emerald-800/30">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-500"
+                  style={{ width: `${attendancePercent}%` }}
+                />
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-3 flex items-center justify-between">
+              <span>{todayScansCount} of {enrolledCount} enrolled present</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-emerald-600 group-hover:translate-x-0.5 transition-transform" />
+            </p>
+          </div>
+
+          {/* Card 2: Today's Gate Scans & Flow Velocity */}
+          <div
+            onClick={isAdmin ? () => navigate('/gate-log') : undefined}
+            className={cn(
+              'group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 transition-colors overflow-hidden flex flex-col justify-between',
+              isAdmin && 'cursor-pointer'
+            )}
+          >
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-blue-500" />
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-emerald-400/90">
+                  Turnstile Scans
+                </span>
+                <div className="p-1 rounded-xl bg-blue-50 dark:bg-blue-950/60 group-hover:scale-105 transition-transform">
+                  <LordIcon src={LORD_ICONS.school} size={28} trigger="hover" />
+                </div>
+              </div>
+
+              <div className="flex items-baseline gap-2">
+                <div className="text-3xl font-extrabold text-slate-900 dark:text-emerald-50 tracking-tight font-sans">
+                  {todayScansCount}
+                </div>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/50">
+                  Today's Traffic
+                </span>
+              </div>
+
+              {/* Inflow vs Outflow directional breakdown chips */}
+              <div className="flex items-center gap-2 mt-3 text-[11px] font-semibold">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/40">
+                  <ArrowDownLeft className="w-3 h-3" />
+                  {todayEntriesCount} In
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/40">
+                  <ArrowUpRight className="w-3 h-3" />
+                  {todayExitsCount} Out
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-3 flex items-center justify-between">
+              <span>Main Turnstile Node-01</span>
+              {isAdmin && <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-emerald-600 group-hover:translate-x-0.5 transition-transform" />}
+            </p>
+          </div>
+
+          {/* Card 3: Enrolled Biometric Student Population */}
+          <div
+            onClick={() => navigate('/students')}
+            className="group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 transition-colors cursor-pointer overflow-hidden flex flex-col justify-between"
+          >
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-gold" />
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-emerald-400/90">
+                  Enrolled Students
+                </span>
+                <div className="p-1 rounded-xl bg-amber-100/60 dark:bg-amber-950/60 group-hover:scale-105 transition-transform">
+                  <LordIcon src={LORD_ICONS.users} size={28} trigger="hover" />
+                </div>
+              </div>
+
+              <div className="flex items-baseline gap-2">
+                <div className="text-3xl font-extrabold text-slate-900 dark:text-emerald-50 tracking-tight font-sans">
+                  {enrolledCount}
+                </div>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800/50">
+                  100% Registered
+                </span>
+              </div>
+
+              <div className="mt-3 flex items-center gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+                <span>Student records verified</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-3 flex items-center justify-between">
+              <span>View Student Directory</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-emerald-600 group-hover:translate-x-0.5 transition-transform" />
+            </p>
+          </div>
+
+          {/* Card 4: Parent SMS Dispatches */}
+          <div
+            onClick={isAdmin ? () => navigate('/sms-log') : undefined}
+            className={cn(
+              'group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 transition-colors overflow-hidden flex flex-col justify-between',
+              isAdmin && 'cursor-pointer'
+            )}
+          >
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-amber-500" />
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-emerald-400/90">
+                  Parent SMS Alerts
+                </span>
+                <div className="p-1 rounded-xl bg-amber-50 dark:bg-amber-950/60 group-hover:scale-105 transition-transform">
+                  <LordIcon src={LORD_ICONS.message} size={28} trigger="hover" />
+                </div>
+              </div>
+
+              <div className="flex items-baseline gap-2">
+                <div className="text-3xl font-extrabold text-slate-900 dark:text-emerald-50 tracking-tight font-sans">
+                  {smsCount}
+                </div>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50">
+                  Notifications Active
+                </span>
+              </div>
+
+              <p className="text-[11px] text-slate-500 dark:text-emerald-400/80 mt-3 leading-snug line-clamp-1">
+                Entry, exit & absence notices to guardians
+              </p>
+            </div>
+
+            <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-3 flex items-center justify-between">
+              <span>PhilSMS / Twilio Carrier</span>
+              {isAdmin && <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-emerald-600 group-hover:translate-x-0.5 transition-transform" />}
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ── 4. Humanized Quick Actions & San Roque NHS Heritage Module ─────── */}
+      <motion.div variants={fadeUp} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Quick Launch Terminal (2 Cols) */}
+        <div className="lg:col-span-2 bg-white dark:bg-[#0A2016] rounded-lg p-5 border border-slate-200 dark:border-emerald-800/40 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-heading text-base font-bold text-slate-900 dark:text-emerald-50">
+                Quick Actions
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-emerald-400/70">
+                Fast navigation for teachers and school administrators
+              </p>
+            </div>
+            <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-[#06180F] text-primary dark:text-emerald-300 border border-emerald-950/10 dark:border-emerald-800/40">
+              One-Click Launch
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {[
+              {
+                title: 'Classroom Attendance',
+                desc: 'Take period-by-period subject attendance',
+                icon: ClipboardList,
+                path: '/classroom',
+                badge: 'Faculty Daily',
+                color: 'text-emerald-600 dark:text-emerald-400',
+                bg: 'bg-emerald-50 dark:bg-emerald-950/60',
+              },
+              {
+                  title: 'Face Registration',
+                  desc: 'Register student faces for attendance',
+                icon: Camera,
+                path: '/face-registration',
+                  badge: 'Student Records',
+                color: 'text-blue-600 dark:text-blue-400',
+                bg: 'bg-blue-50 dark:bg-blue-950/60',
+              },
+              {
+                title: 'Students & Guardian Contacts',
+                desc: 'Browse student records and emergency details',
+                icon: Users,
+                path: '/students',
+                badge: 'Roster Master',
+                color: 'text-amber-600 dark:text-amber-400',
+                bg: 'bg-amber-50 dark:bg-amber-950/60',
+              },
+              isAdmin ? {
+                title: 'SMS Parent Audit Log',
+                desc: 'Inspect delivered and queued notification alerts',
+                icon: MessageSquare,
+                path: '/sms-log',
+                badge: 'DepEd Alerts',
+                color: 'text-purple-600 dark:text-purple-400',
+                bg: 'bg-purple-50 dark:bg-purple-950/60',
+              } : {
+                title: 'Faculty Schedules & Sections',
+                desc: 'View teaching loads, adviser assignments & rooms',
+                icon: UserCheck,
+                path: '/faculty',
+                badge: 'Adviser Portal',
+                color: 'text-emerald-600 dark:text-emerald-400',
+                bg: 'bg-emerald-50 dark:bg-emerald-950/60',
+              },
+            ].map(btn => {
+              const Icon = btn.icon;
+              return (
+                <button
+                  key={btn.path}
+                  onClick={() => navigate(btn.path)}
+                  className="p-4 rounded-lg text-left border border-emerald-950/10 dark:border-emerald-800/40 bg-emerald-50/20 dark:bg-[#071910] hover:bg-emerald-50 dark:hover:bg-[#143828] hover:border-primary/40 dark:hover:border-emerald-500/50 shadow-sm transition-colors flex items-start justify-between group cursor-pointer"
+                >
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className={cn('p-2.5 rounded-xl shrink-0 transition-transform group-hover:scale-105', btn.bg, btn.color)}>
+                      <Icon className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-heading font-bold text-sm text-slate-900 dark:text-emerald-50 group-hover:text-primary dark:group-hover:text-emerald-300 transition-colors">
+                          {btn.title}
+                        </span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-white dark:bg-[#06180F] text-slate-500 dark:text-emerald-400 border border-emerald-950/10 dark:border-emerald-800/40">
+                          {btn.badge}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-emerald-400/80 mt-1 line-clamp-1">
+                        {btn.desc}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-300 dark:text-emerald-600 group-hover:text-primary dark:group-hover:text-emerald-300 group-hover:translate-x-0.5 transition-all shrink-0 mt-1" />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Institutional Heritage Card (1 Col) */}
+        <div className="bg-white dark:bg-[#0A2016] rounded-lg p-5 border border-slate-200 dark:border-emerald-800/40 shadow-sm flex flex-col justify-between">
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <LordIcon src={LORD_ICONS.school} size={48} trigger="loop" />
+              <img
+                src={SITE_CONFIG.sealPath}
+                alt="SRNHS Seal"
+                className="w-12 h-12 rounded-full object-cover border-2 border-gold shadow-sm bg-white shrink-0"
+              />
+              <div className="min-w-0">
+                <div className="font-heading font-bold text-sm text-slate-900 dark:text-emerald-50 tracking-tight">
+                  {SITE_CONFIG.schoolName}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-emerald-400/80 font-medium">
+                  {SITE_CONFIG.division}
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-emerald-300/90 leading-relaxed">
+              #15 Marigman Street, Brgy. San Roque, Antipolo City, Rizal. Public secondary school committed to academic excellence and student safety.
+            </p>
+
+            <div>
+              <div className="text-[10px] font-bold text-slate-400 dark:text-emerald-400/70 uppercase tracking-widest mb-2">
+                DepEd Core Values
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {SITE_CONFIG.coreValues.map(cv => (
+                  <span
+                    key={cv.filipino}
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-[#06180F] text-primary dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60"
+                  >
+                    {cv.filipino}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-4 mt-4 border-t border-emerald-950/5 dark:border-emerald-800/30 flex items-center justify-between text-[11px] text-slate-400 dark:text-emerald-400/60">
+            <span>School ID: 301429</span>
+            <span className="font-semibold text-primary dark:text-emerald-400">DepEd Region IV-A</span>
+          </div>
+        </div>
+      </motion.div>
     </motion.div>
   );
 };
 
-interface NavButtonProps {
-  label: string;
-  sub: string;
-  path: string;
-  icon: React.ReactNode;
-  badge?: string | number;
-}
-const NavButton: React.FC<NavButtonProps & { navigate: (p: string) => void }> = ({ label, sub, path, icon, badge, navigate }) => (
-  <motion.button
-    variants={item}
-    whileHover={{ x: 3 }}
-    whileTap={{ scale: 0.98 }}
-    onClick={() => navigate(path)}
-    className="w-full flex items-center gap-3 p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm hover:shadow-card hover:border-slate-300 dark:hover:border-slate-700 transition-all text-left group"
-  >
-    <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400 shrink-0 group-hover:bg-emerald-100 dark:group-hover:bg-emerald-900/50 group-hover:text-emerald-700 dark:group-hover:text-emerald-300 transition-colors">
-      {icon}
-    </div>
-    <div className="flex-1 min-w-0">
-      <div className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">{label}</div>
-      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">{sub}</div>
-    </div>
-    {badge !== undefined && (
-      <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold shrink-0">
-        {badge}
-      </span>
-    )}
-    <ChevronRight className="w-4 h-4 text-slate-400 dark:text-slate-600 shrink-0 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-colors" />
-  </motion.button>
-);
-
-// ─── Gate event row ───────────────────────────────────────────────────────────
-const EventRow: React.FC<{ evt: RecognitionEvent; idx: number }> = ({ evt, idx }) => (
-  <motion.div
-    initial={{ opacity: 0, x: -10 }}
-    animate={{ opacity: 1, x: 0 }}
-    transition={{ delay: idx * 0.04 }}
-    className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50"
-  >
-    {evt.student_photo ? (
-      <img src={evt.student_photo} alt={evt.student_name} className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-200 dark:border-slate-700" />
-    ) : (
-      <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[11px] font-bold shrink-0 text-slate-600 dark:text-slate-300">
-        {(evt.student_name ?? '??').slice(0, 2).toUpperCase()}
-      </div>
-    )}
-    <div className="flex-1 min-w-0">
-      <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">{evt.student_name}</div>
-      <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{evt.section_name}</div>
-    </div>
-    <div className="flex items-center gap-2 shrink-0">
-      <span className={cn(
-        'px-2 py-0.5 rounded-full text-[10px] font-bold capitalize',
-        evt.event_type === 'entry' ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300' :
-        evt.event_type === 'exit'  ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300' :
-                                     'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
-      )}>
-        {evt.event_type}
-      </span>
-      <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
-        {new Date(evt.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-      </span>
-    </div>
-  </motion.div>
-);
-
-// ─── Main Page ────────────────────────────────────────────────────────────────
-export const DashboardOverviewPage: React.FC = () => {
-  const { user, isAdmin, isTeacher } = useRole();
-  const navigate = useNavigate();
-
-  // Live data state
-  const [recentEvents, setRecentEvents] = useState<RecognitionEvent[]>([]);
-  const [todayScansCount, setTodayScansCount] = useState(0);
-  const [smsCount, setSmsCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Synchronous local data
-  const students = getStoredStudents();
-  const staff = getLocalStaff();
-  const rooms = getLocalRooms();
-  const subjects = getLocalSubjects();
-  const violations = getLocalViolations();
-
-  const enrolledCount = students.length;
-  const activeStaff = staff.filter(s => s.is_active);
-  const teacherCount = activeStaff.filter(s => s.role === 'teacher').length;
-  const recentViolations = violations.slice(0, 3);
-  const todayViolations = violations.filter(
-    v => new Date(v.incident_date).toDateString() === new Date().toDateString()
-  ).length;
-
-  const attendanceRate =
-    enrolledCount > 0 && todayScansCount > 0
-      ? Math.min(100, Math.round((todayScansCount / enrolledCount) * 100))
-      : null;
-
-  // Time-of-day greeting
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const firstName = user?.full_name?.split(' ')[0] ?? user?.full_name ?? '';
-
-  const today = new Date().toLocaleDateString('en-PH', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-  });
-
-  const loadLiveData = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const [events, smsLogs] = await Promise.all([
-        supabaseRecognitionAdapter.getEvents({ limit: 8 }),
-        mockNotificationAdapter.getSmsLogs(200),
-      ]);
-
-      const todayStr = new Date().toDateString();
-      const todayEvents = events.filter(e => new Date(e.captured_at).toDateString() === todayStr);
-      setRecentEvents(events.slice(0, 6));
-      setTodayScansCount(todayEvents.length);
-      setSmsCount(smsLogs.length);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadLiveData();
-
-    const unsub1 = supabaseRecognitionAdapter.subscribeToEvents(evt => {
-      setRecentEvents(prev => {
-        if (prev.some(e => e.id === evt.id)) return prev;
-        return [evt, ...prev.slice(0, 5)];
-      });
-      if (new Date(evt.captured_at).toDateString() === new Date().toDateString()) {
-        setTodayScansCount(c => c + 1);
-      }
-    });
-
-    const unsub2 = mockNotificationAdapter.subscribeToSms(() => setSmsCount(c => c + 1));
-
-    // Fallback: re-fetch every 60 s so missed Realtime events self-heal on laptop
-    const pollInterval = setInterval(() => { loadLiveData(); }, 60_000);
-
-    return () => { unsub1(); unsub2(); clearInterval(pollInterval); };
-  }, [loadLiveData]);
-
-  return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <motion.div
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2"
-      >
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <div className={cn(
-              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold',
-              isAdmin
-                ? 'bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300'
-                : 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
-            )}>
-              {isAdmin ? <ShieldCheck className="w-3 h-3" /> : <GraduationCap className="w-3 h-3" />}
-              {isAdmin ? 'Administrator' : 'Teacher'}
-            </div>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-slate-100 leading-tight">
-            {greeting}, {firstName}
-          </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 font-medium mt-1">
-            {today} · {SITE_CONFIG.schoolName}
-          </p>
-        </div>
-
-        {/* Live indicator */}
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Dashboard live</span>
-        </div>
-      </motion.div>
-
-      {/* ══════════════════════════════════════════════════════════════════════
-          ADMIN DASHBOARD
-      ══════════════════════════════════════════════════════════════════════ */}
-      {isAdmin && (
-        <>
-          {/* Admin KPI row */}
-          <motion.div variants={container} initial="hidden" animate="show"
-            className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard
-              title="Enrolled Students"
-              value={enrolledCount}
-              sub="Biometric consent on file"
-              icon={<Users className="w-4 h-4" />}
-              color="green"
-              onClick={() => navigate('/students')}
-            />
-            <StatCard
-              title="Today's Gate Scans"
-              value={isLoading ? '…' : todayScansCount}
-              sub={attendanceRate !== null ? `${attendanceRate}% of enrolled` : 'No scans yet today'}
-              icon={<DoorOpen className="w-4 h-4" />}
-              color="amber"
-              onClick={() => navigate('/gate-log')}
-            />
-            <StatCard
-              title="Active Teaching Staff"
-              value={teacherCount}
-              sub={`${rooms.length} rooms · ${subjects.length} subjects`}
-              icon={<School className="w-4 h-4" />}
-              color="blue"
-              onClick={() => navigate('/faculty')}
-            />
-            <StatCard
-              title="SMS Alerts Sent"
-              value={isLoading ? '…' : smsCount}
-              sub="Entry · Exit · Absence"
-              icon={<MessageSquare className="w-4 h-4" />}
-              color="purple"
-              onClick={() => navigate('/sms-log')}
-            />
-          </motion.div>
-
-          {/* Admin main grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-            {/* Left 2-col: Recent Gate Events + Attendance Trend */}
-            <div className="lg:col-span-2 space-y-5">
-
-              {/* Recent Gate Events */}
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-                className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-card p-5 space-y-4"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-sm font-black text-slate-900 dark:text-slate-100">Recent Gate Events</h2>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Latest student entry & exit records</p>
-                  </div>
-                  <button
-                    onClick={() => navigate('/gate-log')}
-                    className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 flex items-center gap-1 transition-colors"
-                  >
-                    View all <ArrowRight className="w-3 h-3" />
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {recentEvents.length === 0 ? (
-                    <div className="py-10 text-center">
-                      <DoorOpen className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
-                      <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">No gate events recorded today yet.</p>
-                    </div>
-                  ) : (
-                    recentEvents.map((evt, i) => <EventRow key={evt.id} evt={evt} idx={i} />)
-                  )}
-                </div>
-              </motion.div>
-
-              {/* Today's Attendance Bar */}
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.28 }}
-                className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-card p-5 space-y-4"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-sm font-black text-slate-900 dark:text-slate-100">Today's Attendance Overview</h2>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Gate scans vs enrolled students</p>
-                  </div>
-                  <TrendingUp className="w-4 h-4 text-slate-400" />
-                </div>
-
-                <div className="space-y-3">
-                  {/* Present */}
-                  <div>
-                    <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                      <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />Scanned In</span>
-                      <span>{todayScansCount} / {enrolledCount}</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: enrolledCount > 0 ? `${Math.min(100, Math.round((todayScansCount / enrolledCount) * 100))}%` : '0%' }}
-                        transition={{ delay: 0.5, duration: 0.7, ease: 'easeOut' }}
-                        className="h-full rounded-full bg-emerald-500"
-                      />
-                    </div>
-                  </div>
-                  {/* Not yet scanned */}
-                  <div>
-                    <div className="flex justify-between text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                      <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-amber-500" />Not Yet Scanned</span>
-                      <span>{Math.max(0, enrolledCount - todayScansCount)} / {enrolledCount}</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: enrolledCount > 0 ? `${Math.min(100, Math.round((Math.max(0, enrolledCount - todayScansCount) / enrolledCount) * 100))}%` : '0%' }}
-                        transition={{ delay: 0.6, duration: 0.7, ease: 'easeOut' }}
-                        className="h-full rounded-full bg-amber-400"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Summary chips */}
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold">
-                    <CheckCircle2 className="w-3 h-3" />{todayScansCount} scanned
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-800/50 text-amber-700 dark:text-amber-300 text-[11px] font-bold">
-                    <Clock className="w-3 h-3" />{Math.max(0, enrolledCount - todayScansCount)} pending
-                  </span>
-                  {attendanceRate !== null && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 dark:bg-blue-950/40 border border-blue-200/60 dark:border-blue-800/50 text-blue-700 dark:text-blue-300 text-[11px] font-bold">
-                      <TrendingUp className="w-3 h-3" />{attendanceRate}% rate
-                    </span>
-                  )}
-                </div>
-              </motion.div>
-            </div>
-
-            {/* Right 1-col: Quick Actions + Violations snapshot */}
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.32 }}
-              className="space-y-4"
-            >
-              {/* Quick Nav */}
-              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-card p-5 space-y-3">
-                <h2 className="text-sm font-black text-slate-900 dark:text-slate-100 mb-1">Quick Actions</h2>
-                <motion.div variants={container} initial="hidden" animate="show" className="space-y-2">
-                  <NavButton navigate={navigate} label="Classroom Attendance" sub="Mark present · late · excused" path="/classroom" icon={<ClipboardList className="w-4 h-4" />} />
-                  <NavButton navigate={navigate} label="Gate Log" sub="Entry & exit records" path="/gate-log" icon={<DoorOpen className="w-4 h-4" />} badge={todayScansCount || undefined} />
-                  <NavButton navigate={navigate} label="Student Directory" sub="Profiles · LRN · guardians" path="/students" icon={<Users className="w-4 h-4" />} badge={enrolledCount} />
-                  <NavButton navigate={navigate} label="Faculty & Schedules" sub="Staff · assignments · timetable" path="/faculty" icon={<School className="w-4 h-4" />} badge={teacherCount} />
-                  <NavButton navigate={navigate} label="Rooms & Subjects" sub="Academic structure & rooms" path="/academics" icon={<BookOpen className="w-4 h-4" />} />
-                  <NavButton navigate={navigate} label="SMS Audit Log" sub="Sent · queued · failed" path="/sms-log" icon={<MessageSquare className="w-4 h-4" />} badge={smsCount || undefined} />
-                </motion.div>
-              </div>
-
-              {/* Recent Violations */}
-              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-card p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-black text-slate-900 dark:text-slate-100">Discipline Incidents</h2>
-                  {todayViolations > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-300 text-[11px] font-bold">
-                      {todayViolations} today
-                    </span>
-                  )}
-                </div>
-                {recentViolations.length === 0 ? (
-                  <div className="py-5 text-center">
-                    <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto mb-1" />
-                    <p className="text-[11px] text-slate-400 dark:text-slate-500 font-medium">No incidents on record.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {recentViolations.map(v => (
-                      <div key={v.id} className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
-                        <AlertTriangle className={cn('w-3.5 h-3.5 mt-0.5 shrink-0',
-                          v.severity === 'severe' ? 'text-rose-500' :
-                          v.severity === 'moderate' ? 'text-amber-500' : 'text-blue-500'
-                        )} />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">{v.student_name}</div>
-                          <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{v.title}</div>
-                          <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{new Date(v.incident_date).toLocaleDateString()}</div>
-                        </div>
-                        <span className={cn('shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full capitalize',
-                          v.severity === 'severe'   ? 'bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400' :
-                          v.severity === 'moderate' ? 'bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400' :
-                                                      'bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400'
-                        )}>
-                          {v.severity}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <button
-                  onClick={() => navigate('/students')}
-                  className="w-full text-[11px] font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 flex items-center justify-center gap-1 pt-1 transition-colors"
-                >
-                  View student profiles <ArrowRight className="w-3 h-3" />
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        </>
-      )}
-
-      {/* ══════════════════════════════════════════════════════════════════════
-          TEACHER DASHBOARD
-      ══════════════════════════════════════════════════════════════════════ */}
-      {isTeacher && (
-        <>
-          {/* Teacher KPI row */}
-          <motion.div variants={container} initial="hidden" animate="show"
-            className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatCard
-              title="My Students"
-              value={enrolledCount}
-              sub="Enrolled in your sections"
-              icon={<Users className="w-4 h-4" />}
-              color="green"
-              onClick={() => navigate('/students')}
-            />
-            <StatCard
-              title="Today's Scans"
-              value={isLoading ? '…' : todayScansCount}
-              sub={attendanceRate !== null ? `${attendanceRate}% attendance rate` : 'No gate scans yet'}
-              icon={<DoorOpen className="w-4 h-4" />}
-              color="amber"
-            />
-            <StatCard
-              title="Subjects"
-              value={subjects.length}
-              sub={`Across ${rooms.length} rooms`}
-              icon={<BookOpen className="w-4 h-4" />}
-              color="blue"
-              onClick={() => navigate('/academics')}
-            />
-            <StatCard
-              title="SMS Alerts"
-              value={isLoading ? '…' : smsCount}
-              sub="Auto-sent to guardians"
-              icon={<MessageSquare className="w-4 h-4" />}
-              color="purple"
-            />
-          </motion.div>
-
-          {/* Teacher main grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-            {/* Left 2-col: Today's actions + Gate events */}
-            <div className="lg:col-span-2 space-y-5">
-
-              {/* Today's class actions */}
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-                className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-card p-5 space-y-4"
-              >
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-slate-500" />
-                  <h2 className="text-sm font-black text-slate-900 dark:text-slate-100">Today's Checklist</h2>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {[
-                    {
-                      label: 'Take Classroom Attendance',
-                      desc: 'Mark students present, late, or absent for today',
-                      path: '/classroom',
-                      icon: <ClipboardList className="w-5 h-5" />,
-                      color: 'text-emerald-600 dark:text-emerald-400',
-                      bg: 'bg-emerald-50 dark:bg-emerald-950/40',
-                      action: 'Start',
-                    },
-                    {
-                      label: 'View Student Profiles',
-                      desc: 'Access LRN records, photos & guardian contacts',
-                      path: '/students',
-                      icon: <Users className="w-5 h-5" />,
-                      color: 'text-blue-600 dark:text-blue-400',
-                      bg: 'bg-blue-50 dark:bg-blue-950/40',
-                      action: 'Open',
-                    },
-                    {
-                      label: 'Register Student Face',
-                      desc: 'Capture biometric photos for new students',
-                      path: '/face-registration',
-                      icon: <GraduationCap className="w-5 h-5" />,
-                      color: 'text-violet-600 dark:text-violet-400',
-                      bg: 'bg-violet-50 dark:bg-violet-950/40',
-                      action: 'Open',
-                    },
-                    {
-                      label: 'Faculty & Schedules',
-                      desc: 'View timetable and subject assignments',
-                      path: '/faculty',
-                      icon: <School className="w-5 h-5" />,
-                      color: 'text-amber-600 dark:text-amber-400',
-                      bg: 'bg-amber-50 dark:bg-amber-950/40',
-                      action: 'View',
-                    },
-                  ].map(card => (
-                    <motion.button
-                      key={card.path}
-                      whileHover={{ y: -2, boxShadow: '0 6px 20px 0 rgba(0,0,0,0.09)' }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={() => navigate(card.path)}
-                      className="flex items-start gap-3 p-4 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 transition-all text-left shadow-card-sm"
-                    >
-                      <div className={cn('p-2 rounded-lg shrink-0', card.bg, card.color)}>
-                        {card.icon}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{card.label}</div>
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">{card.desc}</div>
-                      </div>
-                    </motion.button>
-                  ))}
-                </div>
-              </motion.div>
-
-              {/* Recent gate events (read-only for teachers) */}
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 }}
-                className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-card p-5 space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-sm font-black text-slate-900 dark:text-slate-100">School Gate Activity</h2>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Recent student entry & exit events</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    Live
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {recentEvents.length === 0 ? (
-                    <div className="py-8 text-center">
-                      <DoorOpen className="w-7 h-7 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
-                      <p className="text-xs text-slate-400 dark:text-slate-500 font-medium">No gate events yet today.</p>
-                    </div>
-                  ) : (
-                    recentEvents.slice(0, 5).map((evt, i) => <EventRow key={evt.id} evt={evt} idx={i} />)
-                  )}
-                </div>
-              </motion.div>
-            </div>
-
-            {/* Right 1-col: Attendance summary + SMS info */}
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.35 }}
-              className="space-y-4"
-            >
-              {/* Attendance rate card */}
-              <div className="rounded-2xl p-5 text-white space-y-4 shadow-card" style={{ background: 'linear-gradient(150deg, #1B4332 0%, #2D6A4F 55%, #52B788 100%)' }}>
-                <div className="flex items-center justify-between">
-                  <div className="text-[11px] font-bold uppercase tracking-widest text-white/70">Today's Summary</div>
-                  <LayoutDashboard className="w-4 h-4 text-white/50" />
-                </div>
-
-                <div className="text-4xl font-black leading-none">
-                  {attendanceRate !== null ? `${attendanceRate}%` : '—'}
-                </div>
-                <div className="text-xs font-medium text-white/70">Gate attendance rate today</div>
-
-                <div className="h-1.5 rounded-full bg-white/20 overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: attendanceRate !== null ? `${attendanceRate}%` : '0%' }}
-                    transition={{ delay: 0.6, duration: 0.8, ease: 'easeOut' }}
-                    className="h-full rounded-full bg-white"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <div className="p-3 rounded-xl bg-white/10">
-                    <div className="text-xl font-black">{todayScansCount}</div>
-                    <div className="text-[11px] text-white/60 font-medium">Scanned</div>
-                  </div>
-                  <div className="p-3 rounded-xl bg-white/10">
-                    <div className="text-xl font-black">{Math.max(0, enrolledCount - todayScansCount)}</div>
-                    <div className="text-[11px] text-white/60 font-medium">Pending</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Status chips */}
-              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-card p-5 space-y-3">
-                <h2 className="text-sm font-black text-slate-900 dark:text-slate-100">System Status</h2>
-                <div className="space-y-2">
-                  {[
-                    { label: 'Gate Turnstile', status: 'Online', ok: true },
-                    { label: 'SMS Gateway', status: `${smsCount} sent today`, ok: true },
-                    { label: 'Biometric Sync', status: `${enrolledCount} profiles`, ok: enrolledCount > 0 },
-                    { label: 'Supabase DB', status: 'Connected', ok: true },
-                  ].map(row => (
-                    <div key={row.label} className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-800 last:border-0">
-                      <span className="text-xs font-medium text-slate-600 dark:text-slate-400">{row.label}</span>
-                      <span className={cn(
-                        'flex items-center gap-1 text-[11px] font-bold',
-                        row.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-                      )}>
-                        {row.ok ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                        {row.status}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* SMS note */}
-              <div className="p-4 rounded-2xl bg-violet-50 dark:bg-violet-950/30 border border-violet-200/60 dark:border-violet-800/50">
-                <div className="flex items-center gap-2 text-xs font-bold text-violet-700 dark:text-violet-300 mb-1.5">
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  Auto SMS Alerts
-                </div>
-                <p className="text-[11px] text-violet-600 dark:text-violet-400 leading-relaxed font-medium">
-                  Guardian SMS alerts fire automatically when you mark a student <strong>absent</strong> or <strong>late</strong> in Classroom Attendance.
-                </p>
-              </div>
-            </motion.div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-};

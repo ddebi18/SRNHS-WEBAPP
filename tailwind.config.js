@@ -8,76 +8,62 @@ export default {
   theme: {
     extend: {
       colors: {
-        cream: '#FAF6F0',
-        sidebar: '#1B4332',
-        palette: {
-          darkGreen:   '#1B4332',
-          forestGreen: '#2D6A4F',
-          midGreen:    '#40916C',
-          lightBrown:  '#D4A373',
-          creamBrown:  '#E6CCB2',
-          amberTan:    '#DDA15E',
+        // Page & surface
+        page:    { DEFAULT: '#F5F6F8', dark: '#0D1F17' },
+        surface: { DEFAULT: '#FFFFFF', dark: '#132B20' },
+
+        // Sidebar — brighter institutional green
+        sidebar: {
+          DEFAULT: '#006937',
+          dark:    '#004D29',
         },
-        card: {
-          darkGreen:   '#1B4332',
-          forestGreen: '#2D6A4F',
-          midGreen:    '#40916C',
-          lightBrown:  '#D4A373',
-          creamBrown:  '#E6CCB2',
-          amberTan:    '#DDA15E',
-          peach:       '#D4A373',
-          cyan:        '#2D6A4F',
-          yellow:      '#DDA15E',
-          sage:        '#40916C',
-          teal:        '#2D6A4F',
-          lavender:    '#E6CCB2',
-          blue:        '#40916C',
+
+        // Primary accent — SRNHS bright green (inspired by DLSU)
+        primary: {
+          DEFAULT: '#006937',
+          light:   '#008C4A',
+          lighter: '#00A85A',
+          50:      '#E6F5ED',
+          100:     '#B3E0C7',
+          700:     '#004D29',
+          900:     '#002E18',
         },
-        brand: {
-          DEFAULT: '#2D6A4F',
-          50: '#F2F9F5',
-          100: '#E2F2E9',
-          200: '#52B788',
-          500: '#2D6A4F',
-          600: '#1B4332',
-          700: '#D4A373',
-          800: '#C68B59',
-          900: '#E6CCB2',
+
+        // Gold accent — for institutional branding (seal, badges)
+        gold: {
+          DEFAULT: '#C4962C',
+          light:   '#E8C54A',
+          50:      '#FBF5E5',
         },
-        brown: {
-          light: '#E6CCB2',
-          tan:   '#D4A373',
-          amber: '#DDA15E',
-          toffee:'#C68B59',
+
+        // Semantic status colors (brighter, cleaner)
+        success: { DEFAULT: '#16A34A', light: '#DCFCE7', dark: '#14532D' },
+        warning: { DEFAULT: '#D97706', light: '#FEF3C7', dark: '#78350F' },
+        danger:  { DEFAULT: '#DC2626', light: '#FEE2E2', dark: '#7F1D1D' },
+        info:    { DEFAULT: '#2563EB', light: '#DBEAFE', dark: '#1E3A5F' },
+        // Custom institutional slate blending deep pine with readable neutral tones
+        slate: {
+          800: '#143828',
+          850: '#0E2A1E',
+          900: '#092116',
+          950: '#05140D',
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        sans:    ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        heading: ['"Libre Baskerville"', 'Georgia', 'serif'],
       },
       borderRadius: {
+        'xl':  '0.75rem',
         '2xl': '1rem',
-        '3xl': '1.5rem',
-        '4xl': '2rem',
+        '3xl': '1.25rem',
       },
       boxShadow: {
-        'card': '4px 4px 0px 0px rgba(0,0,0,0.12)',
-        'card-sm': '2px 2px 0px 0px rgba(0,0,0,0.08)',
-        'inner-sm': 'inset 0 1px 2px 0 rgba(0,0,0,0.08)',
-      },
-      animation: {
-        'fade-in': 'fadeIn 0.3s ease-out',
-        'slide-up': 'slideUp 0.4s ease-out',
-        'pulse-slow': 'pulse 3s ease-in-out infinite',
-      },
-      keyframes: {
-        fadeIn: {
-          '0%': { opacity: '0' },
-          '100%': { opacity: '1' },
-        },
-        slideUp: {
-          '0%': { opacity: '0', transform: 'translateY(12px)' },
-          '100%': { opacity: '1', transform: 'translateY(0)' },
-        },
+        'xs':   '0 1px 2px 0 rgba(0,0,0,0.04)',
+        'sm':   '0 1px 3px 0 rgba(0,0,0,0.06), 0 1px 2px -1px rgba(0,0,0,0.06)',
+        'card': '0 2px 8px -2px rgba(0,0,0,0.08), 0 1px 3px -1px rgba(0,0,0,0.06)',
+        'md':   '0 4px 12px -4px rgba(0,0,0,0.1)',
+        'float': '0 12px 32px -4px rgba(0, 105, 55, 0.12), 0 4px 12px -2px rgba(0,0,0,0.08)',
       },
     },
   },

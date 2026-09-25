@@ -36,6 +36,7 @@ DETECT_WIDTH = int(os.getenv("DETECT_WIDTH", "640"))
 
 SUPABASE_URL = os.getenv("VITE_SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
 SUPABASE_ANON_KEY = os.getenv("VITE_SUPABASE_ANON_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
+SUPABASE_READ_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_ANON_KEY)
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 YUNET_PATH = os.path.join(MODELS_DIR, "face_detection_yunet_2023mar.onnx")
@@ -142,6 +143,9 @@ class OpenCvFaceNetEngine:
                         continue
                     face_row = det.copy()
                     face_row[:4] = [x, y, bw, bh]
+                    # YuNet landmarks are still in the downscaled frame. Map
+                    # them to the original frame before SFace alignCrop().
+                    face_row[4:14] = face_row[4:14] / scale
                     faces.append((x, y, bw, bh, face_row))
             return faces
 
@@ -188,7 +192,39 @@ class TurnstileGateClient:
         cache_path = os.path.join(os.path.dirname(__file__), "students_cache.json")
         self.enrolled_roster = {}
 
-        if os.path.exists(cache_path):
+        if SUPABASE_URL and SUPABASE_READ_KEY:
+            try:
+                response = requests.get(
+                    f"{SUPABASE_URL}/rest/v1/students",
+                    params={
+                        "select": "id,lrn,first_name,last_name,face_descriptors,face_descriptor_version",
+                        "face_descriptors": "not.is.null",
+                    },
+                    headers={
+                        "apikey": SUPABASE_READ_KEY,
+                        "Authorization": f"Bearer {SUPABASE_READ_KEY}",
+                    },
+                    timeout=5,
+                )
+                response.raise_for_status()
+                for item in response.json():
+                    descriptors = item.get("face_descriptors") or []
+                    if not descriptors or item.get("face_descriptor_version") != 2:
+                        continue
+                    vec = np.asarray(descriptors[0], dtype=np.float32).flatten()
+                    if vec.size < 32:
+                        continue
+                    vec = vec / (np.linalg.norm(vec) or 1.0)
+                    self.enrolled_roster[item["id"]] = {
+                        "name": f'{item.get("first_name", "")} {item.get("last_name", "")}'.strip() or "Unknown",
+                        "lrn": item.get("lrn", "N/A"),
+                        "vector": vec,
+                    }
+                print(f"[TurnstileNode] Loaded {len(self.enrolled_roster)} embedding(s) from Supabase.")
+            except Exception as exc:
+                print(f"[TurnstileNode] Supabase roster warning: {exc}")
+
+        if not self.enrolled_roster and os.path.exists(cache_path):
             try:
                 with open(cache_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -206,8 +242,8 @@ class TurnstileGateClient:
             except Exception as exc:
                 print(f"[TurnstileNode] Cache load warning: {exc}")
 
-        if SUPABASE_URL and SUPABASE_ANON_KEY and not self.enrolled_roster:
-            print("[TurnstileNode] No cached FaceNet embeddings. Matching stays idle until students_cache.json has vectors.")
+        if SUPABASE_URL and SUPABASE_READ_KEY and not self.enrolled_roster:
+            print("[TurnstileNode] No cloud FaceNet embeddings. Matching stays idle until a student is registered.")
 
     def match_face(self, live_vector: np.ndarray) -> Tuple[Optional[str], float]:
         ranked: List[Tuple[str, float]] = []

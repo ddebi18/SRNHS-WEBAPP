@@ -2,8 +2,9 @@ import { Student, Section, FaceRegistrationPayload, FaceRegistrationResult } fro
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { FACE_DESCRIPTOR_VERSION } from '@/features/attendance/lib/faceNetMatcher';
 
-export const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
+const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
 const LOCAL_STORAGE_KEY_SECTIONS = 'srnhs_face_registration_sections_v1';
+const SUPABASE_STUDENT_SELECT_BASE = 'id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at';
 
 export function isValidUUID(id?: string | null): boolean {
   if (!id || typeof id !== 'string') return false;
@@ -112,7 +113,7 @@ async function resizeBlobToDataUrl(blob: Blob, maxDim = 720): Promise<string> {
   });
 }
 
-export const CANDIDATE_STUDENT_KEYS = [
+const CANDIDATE_STUDENT_KEYS = [
   'srnhs_face_registration_students_v1',
   'srnhs_face_registration_students',
   'srnhs_students',
@@ -170,7 +171,83 @@ export function getStoredStudents(): Student[] {
 }
 
 export async function fetchRegisteredStudents(): Promise<Student[]> {
-  const students = getStoredStudents();
+  let students = getStoredStudents();
+
+  // Supabase is authoritative for enrollment. Local storage may contain a
+  // deleted student from an older device, so never use it to rebuild the
+  // current roster when the cloud roster is available.
+  if (isSupabaseConfigured && supabase) {
+    const { data, error } = await supabase
+      .from('students')
+      .select(SUPABASE_STUDENT_SELECT_BASE)
+      .order('last_name');
+
+    if (!error && data) {
+      const sections = getStoredSections();
+      const localById = new Map(students.map(student => [student.id, student]));
+      students = data.map(row => {
+        const cloudStudent = dbRowToStudent(row, sections);
+        const localStudent = localById.get(cloudStudent.id);
+        const localHasFaceRecord = Boolean(
+          localStudent?.photoUrl ||
+          localStudent?.registeredPhotos?.front ||
+          (localStudent?.faceDescriptors && localStudent.faceDescriptors.length > 0)
+        );
+        return {
+          ...cloudStudent,
+          faceRegistrationStatus: cloudStudent.faceRegistrationStatus === 'registered' || localHasFaceRecord
+            ? 'registered' as const
+            : cloudStudent.faceRegistrationStatus,
+          photoUrl: cloudStudent.photoUrl || localStudent?.photoUrl,
+          registeredPhotos: cloudStudent.registeredPhotos || localStudent?.registeredPhotos,
+          lastRegisteredAt: localStudent?.lastRegisteredAt,
+          faceDescriptors: cloudStudent.faceDescriptors || localStudent?.faceDescriptors,
+          faceDescriptorVersion: cloudStudent.faceDescriptorVersion || localStudent?.faceDescriptorVersion,
+          guardianName: localStudent?.guardianName,
+          guardianPhone: localStudent?.guardianPhone,
+        };
+      });
+      saveStoredStudents(students);
+    } else if (error) {
+      // Some local/sandbox databases do not have the optional face descriptor columns yet.
+      // Fall back to the base student schema and keep using the local browser store.
+      const fallback = await supabase
+        .from('students')
+        .select(SUPABASE_STUDENT_SELECT_BASE)
+        .order('last_name');
+
+      if (!fallback.error && fallback.data) {
+        const sections = getStoredSections();
+        const localById = new Map(students.map(student => [student.id, student]));
+        students = fallback.data.map(row => {
+          const cloudStudent = dbRowToStudent(row, sections);
+          const localStudent = localById.get(cloudStudent.id);
+          const localHasFaceRecord = Boolean(
+            localStudent?.photoUrl ||
+            localStudent?.registeredPhotos?.front ||
+            (localStudent?.faceDescriptors && localStudent.faceDescriptors.length > 0)
+          );
+          return {
+            ...cloudStudent,
+            faceRegistrationStatus: cloudStudent.faceRegistrationStatus === 'registered' || localHasFaceRecord
+              ? 'registered' as const
+              : cloudStudent.faceRegistrationStatus,
+            photoUrl: cloudStudent.photoUrl || localStudent?.photoUrl,
+            registeredPhotos: cloudStudent.registeredPhotos || localStudent?.registeredPhotos,
+            lastRegisteredAt: localStudent?.lastRegisteredAt,
+            faceDescriptors: localStudent?.faceDescriptors,
+            faceDescriptorVersion: localStudent?.faceDescriptorVersion,
+            guardianName: localStudent?.guardianName,
+            guardianPhone: localStudent?.guardianPhone,
+          };
+        });
+        saveStoredStudents(students);
+      } else {
+        console.warn('[Supabase] Registered student fetch note:', error.message || fallback.error?.message);
+      }
+    }
+  }
+
   // Hydrate all registered students with high-res photos from IndexedDB
   const hydrated = await Promise.all(
     students.map(async s => {
@@ -249,7 +326,8 @@ function dbRowToStudent(row: any, sections: Section[]): Student {
     } : undefined,
     guardianName: undefined,
     guardianPhone: undefined,
-    faceDescriptors: undefined,
+    faceDescriptors: Array.isArray(row.face_descriptors) ? row.face_descriptors : undefined,
+    faceDescriptorVersion: row.face_descriptor_version || undefined,
   };
 }
 
@@ -275,7 +353,6 @@ export async function syncFromSupabase(): Promise<{ students: number; sections: 
   if (!isSupabaseConfigured || !supabase) return null;
   try {
     const localSections = getStoredSections();
-    const localStudents = getStoredStudents();
 
     // 1. Fetch sections from Supabase
     const { data: sectionRows, error: secErr } = await supabase
@@ -331,7 +408,7 @@ export async function syncFromSupabase(): Promise<{ students: number; sections: 
     // 2. Fetch students from Supabase
     const { data: studentRows, error: stuErr } = await supabase
       .from('students')
-      .select('id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at')
+      .select(SUPABASE_STUDENT_SELECT_BASE)
       .order('last_name');
 
     if (stuErr) {
@@ -339,41 +416,12 @@ export async function syncFromSupabase(): Promise<{ students: number; sections: 
     }
 
     const dbStudents: Student[] = (studentRows || []).map(r => dbRowToStudent(r, mergedSections));
-    const studentMap = new Map<string, Student>();
-
-    // Local students lookup for cached local properties (like faceDescriptors)
-    const localStudentMap = new Map<string, Student>();
-    localStudents.forEach(s => {
-      if (isValidUUID(s.id)) localStudentMap.set(s.id, s);
-    });
-
-    // Supabase is the primary database. Cloud students form the authoritative roster.
-    dbStudents.forEach(dbStu => {
-      const local = localStudentMap.get(dbStu.id);
-      studentMap.set(dbStu.id, {
-        ...dbStu,
-        faceDescriptors: local?.faceDescriptors ?? dbStu.faceDescriptors,
-        photoUrl: dbStu.photoUrl || local?.photoUrl,
-        registeredPhotos: local?.registeredPhotos ?? dbStu.registeredPhotos,
-        faceRegistrationStatus: (local?.faceDescriptors?.length ?? 0) > 0
-          ? 'registered'
-          : dbStu.faceRegistrationStatus || local?.faceRegistrationStatus || 'unregistered',
-        guardianName: local?.guardianName,
-        guardianPhone: local?.guardianPhone,
-      });
-    });
-
-    const mergedStudents = Array.from(studentMap.values());
-
-    // Always overwrite ALL candidate localStorage keys with the cloud result.
-    // If Supabase has 0 students, this wipes every local cache so no device
-    // can resurrect deleted records on the next sync.
+    // The cloud roster is authoritative. Do not merge or push stale local
+    // students, otherwise a deletion on one device can be resurrected by
+    // another device during startup.
+    const mergedStudents = dbStudents;
     try {
-      const serialized = JSON.stringify(mergedStudents);
-      for (const key of CANDIDATE_STUDENT_KEYS) {
-        try { localStorage.removeItem(key); } catch {}
-      }
-      localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, serialized);
+      localStorage.setItem(LOCAL_STORAGE_KEY_STUDENTS, JSON.stringify(mergedStudents));
     } catch {}
 
     // Notify all components to re-render with fresh data
@@ -391,16 +439,17 @@ export async function syncFromSupabase(): Promise<{ students: number; sections: 
 }
 
 export async function deleteStudent(studentId: string): Promise<void> {
-  const students = getStoredStudents().filter(s => s.id !== studentId);
-  saveStoredStudents(students);
-  // Also delete from Supabase
   if (isSupabaseConfigured && supabase) {
-    try {
-      await supabase.from('students').delete().eq('id', studentId);
-    } catch (e) {
-      console.warn('Supabase delete student note:', e);
+    const { error } = await supabase.from('students').delete().eq('id', studentId);
+    if (error) {
+      console.error('[Supabase] Delete student failed:', error.message);
+      throw new Error(`Student was not deleted from Supabase: ${error.message}`);
     }
   }
+
+  const students = getStoredStudents().filter(s => s.id !== studentId);
+  saveStoredStudents(students);
+
   try {
     const db = await openFaceDb();
     if (db) {
@@ -651,11 +700,7 @@ export function saveStoredSections(sections: Section[]): void {
 }
 
 export async function fetchSections(): Promise<Section[]> {
-  if (isSupabaseConfigured) {
-    try {
-      await syncFromSupabase();
-    } catch {}
-  }
+  await new Promise(r => setTimeout(r, 50));
   const sections = getStoredSections();
   const students = getStoredStudents();
 
@@ -671,11 +716,7 @@ export async function fetchSections(): Promise<Section[]> {
 }
 
 export async function fetchSectionRoster(sectionId: string): Promise<Student[]> {
-  if (isSupabaseConfigured) {
-    try {
-      await syncFromSupabase();
-    } catch {}
-  }
+  await new Promise(r => setTimeout(r, 150));
   const students = getStoredStudents();
   const sectionStudents =
     sectionId === 'all' || !sectionId
@@ -735,15 +776,30 @@ export async function submitFaceRegistration(
     try {
       const photosToSave = [photoMap.front, photoMap.left, photoMap.right].filter(Boolean) as string[];
       if (photosToSave.length > 0) {
+        const deserializedFields = payload.faceDescriptors && payload.faceDescriptors.length > 0
+          ? {
+              face_descriptors: payload.faceDescriptors,
+              face_descriptor_version: FACE_DESCRIPTOR_VERSION,
+            }
+          : {};
+
         const { error: photoErr } = await supabase
           .from('students')
           .update({
             photo_urls: photosToSave,
+            ...deserializedFields,
           })
           .eq('id', payload.studentId);
 
         if (photoErr) {
-          console.warn('[Supabase] Photo update note:', photoErr.message);
+          const fallback = await supabase
+            .from('students')
+            .update({ photo_urls: photosToSave })
+            .eq('id', payload.studentId);
+
+          if (fallback.error) {
+            console.warn('[Supabase] Photo update note:', photoErr.message || fallback.error.message);
+          }
         } else {
           console.log(`[Supabase] ✓ Updated ${photosToSave.length} face photo(s) for student in cloud`);
         }
@@ -804,7 +860,17 @@ export async function submitFaceRegistration(
 }
 
 export async function deleteFaceRegistration(studentId: string): Promise<void> {
-  await new Promise(r => setTimeout(r, 300));
+  if (isSupabaseConfigured && supabase) {
+    const { error } = await supabase
+      .from('students')
+      .update({ photo_urls: [] })
+      .eq('id', studentId);
+    if (error) {
+      console.error('[Supabase] Delete face registration failed:', error.message);
+      throw new Error(`Face registration was not deleted from Supabase: ${error.message}`);
+    }
+  }
+
   const students = getStoredStudents();
   const index = students.findIndex(s => s.id === studentId);
   if (index !== -1) {
@@ -812,7 +878,24 @@ export async function deleteFaceRegistration(studentId: string): Promise<void> {
       ...students[index]!,
       faceRegistrationStatus: 'unregistered',
       lastRegisteredAt: undefined,
+      faceDescriptors: undefined,
+      faceDescriptorVersion: undefined,
+      photoUrl: undefined,
+      registeredPhotos: undefined,
     };
     saveStoredStudents(students);
   }
+
+  try {
+    const db = await openFaceDb();
+    if (db) {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).delete(studentId);
+    }
+  } catch (error) {
+    console.warn('[FaceRegistration] Local photo cleanup note:', error);
+  }
+
+  window.dispatchEvent(new Event('storage'));
+  window.dispatchEvent(new CustomEvent('srnhs_storage_sync'));
 }

@@ -1,56 +1,93 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Libre+Baskerville:wght@400;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --cream: #FAF6F0;
-    --sidebar-bg: #1B4332;
-    --color-dark-green: #1B4332;
-    --color-forest-green: #2D6A4F;
-    --color-mid-green: #40916C;
-    --color-light-brown: #D4A373;
-    --color-cream-brown: #E6CCB2;
-    --color-amber-tan: #DDA15E;
+    /* ── Page backgrounds ───────────────────────────── */
+    --page-bg: #F4F7F4;
+    --sidebar-bg: #006937;
+
+    /* ── Type scale ─────────────────────────────────── */
+    --text-xs:   0.75rem;   /* 12px — meta, timestamps */
+    --text-sm:   0.8125rem; /* 13px — body, labels */
+    --text-base: 0.9375rem; /* 15px — main content */
+    --text-lg:   1.125rem;  /* 18px — section headers */
+    --text-xl:   1.5rem;    /* 24px — page titles */
+
+    /* ── Spacing scale ──────────────────────────────── */
+    --space-xs:  0.25rem;
+    --space-sm:  0.5rem;
+    --space-md:  1rem;
+    --space-lg:  1.5rem;
+    --space-xl:  2rem;
   }
 
-  /* ── Dark Mode Overrides ──────────────────────────── */
+  /* ── Dark Mode ──────────────────────────────────── */
   .dark {
-    --cream: #0F1714;
-    --sidebar-bg: #09120F;
+    --page-bg: #05140D;
+    --sidebar-bg: #004D29;
   }
 
   body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    background-color: var(--cream);
-    transition: background-color 0.2s ease;
+    background-color: var(--page-bg);
+    min-width: 320px;
+    min-height: 100dvh;
+    overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  button, a, [role='button'], input, select, textarea {
+    touch-action: manipulation;
+  }
+
+  button, a, [role='button'] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Institutional serif headings */
+  .font-heading {
+    font-family: 'Libre Baskerville', Georgia, serif;
   }
 }
 
 @layer utilities {
-  /* ── Color token utilities ───────────────────────── */
-  .bg-cream      { background-color: var(--cream); }
-  .bg-sidebar    { background-color: var(--sidebar-bg); }
+  .bg-page    { background-color: var(--page-bg); }
+  .bg-sidebar { background-color: var(--sidebar-bg); }
 
-  /* ── Shadow utilities ────────────────────────────── */
-  .shadow-card    { box-shadow: 4px 4px 0px 0px rgba(0,0,0,0.12); }
-  .shadow-card-sm { box-shadow: 2px 2px 0px 0px rgba(0,0,0,0.08); }
-  .dark .shadow-card    { box-shadow: 4px 4px 0px 0px rgba(0,0,0,0.4); }
-  .dark .shadow-card-sm { box-shadow: 2px 2px 0px 0px rgba(0,0,0,0.3); }
+  .paper-grain {
+    background-image:
+      radial-gradient(rgba(0, 0, 0, 0.035) 0.6px, transparent 0.6px),
+      radial-gradient(rgba(255, 255, 255, 0.04) 0.7px, transparent 0.7px);
+    background-size: 7px 7px, 11px 11px;
+    background-position: 0 0, 4px 3px;
+  }
+
+  .ease-human {
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
 
   /* ── Scrollbar ───────────────────────────────────── */
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
   .dark ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); }
-}
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@media (pointer: coarse) {
+  button, a, [role='button'], input, select, textarea {
+    min-height: 44px;
   }
 }

@@ -5,10 +5,20 @@ import { LucideIcon } from 'lucide-react';
 interface CardProps {
   children: React.ReactNode;
   className?: string;
+  onClick?: () => void;
+  hoverable?: boolean;
 }
 
-export const Card: React.FC<CardProps> = ({ children, className }) => (
-  <div className={cn('bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl shadow-card overflow-hidden transition-colors', className)}>
+export const Card: React.FC<CardProps> = ({ children, className, onClick, hoverable }) => (
+  <div
+    onClick={onClick}
+    className={cn(
+      'bg-white dark:bg-[#0A2016] border border-emerald-950/10 dark:border-emerald-800/40 rounded-lg shadow-sm overflow-hidden transition-colors duration-200',
+      hoverable && 'hover:border-primary/30 dark:hover:border-emerald-600/50 cursor-pointer',
+      onClick && 'cursor-pointer',
+      className
+    )}
+  >
     {children}
   </div>
 );
@@ -16,73 +26,152 @@ export const Card: React.FC<CardProps> = ({ children, className }) => (
 export const CardHeader: React.FC<{
   title: string;
   description?: string;
+  badge?: React.ReactNode;
   action?: React.ReactNode;
   className?: string;
-}> = ({ title, description, action, className }) => (
+}> = ({ title, description, badge, action, className }) => (
   <div className={cn(
-    'px-6 py-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4',
+    'px-5 py-4 border-b border-emerald-950/5 dark:border-emerald-800/30 flex items-center justify-between gap-3',
     className
   )}>
     <div>
-      <h3 className="text-base font-black text-slate-900 dark:text-slate-100">{title}</h3>
-      {description && <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">{description}</p>}
+      <div className="flex items-center gap-2">
+        <h3 className="text-[15px] font-semibold text-slate-900 dark:text-emerald-50 tracking-tight">{title}</h3>
+        {badge}
+      </div>
+      {description && <p className="text-xs text-slate-500 dark:text-emerald-400/80 mt-0.5">{description}</p>}
     </div>
     {action && <div className="shrink-0">{action}</div>}
   </div>
 );
 
-// Brown Gradient Card Palette: Golden Sand, Light Cream Beige, Toffee, and Amber Brown Gradients
-const COLOR_MAP: Record<string, { light: string; dot: string; iconBg: string }> = {
-  yellow:     { light: 'bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border-[#c28846]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950 dark:text-amber-100' },
-  pink:       { light: 'bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  green:      { light: 'bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border-[#d1b397]', dot: 'bg-amber-800', iconBg: 'bg-amber-950/20 text-amber-950' },
-  lavender:   { light: 'bg-gradient-to-br from-[#E6CCB2] to-[#DDA15E] text-amber-950 border-[#d1b397]', dot: 'bg-amber-800', iconBg: 'bg-amber-950/20 text-amber-950' },
-  peach:      { light: 'bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  blue:       { light: 'bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border-[#c28846]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  cyan:       { light: 'bg-gradient-to-br from-[#C68B59] to-[#836452] text-amber-50 border-[#806143]',  dot: 'bg-amber-100', iconBg: 'bg-white/20 text-amber-100' },
-  sage:       { light: 'bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border-[#d1b397]', dot: 'bg-amber-800', iconBg: 'bg-amber-950/20 text-amber-950' },
-  teal:       { light: 'bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  forestGreen:{ light: 'bg-gradient-to-br from-[#DDA15E] to-[#C68B59] text-amber-950 border-[#c28846]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  darkGreen:  { light: 'bg-gradient-to-br from-[#C68B59] to-[#836452] text-amber-50 border-[#806143]',  dot: 'bg-amber-100', iconBg: 'bg-white/20 text-amber-100' },
-  lightBrown: { light: 'bg-gradient-to-br from-[#D4A373] to-[#C68B59] text-amber-950 border-[#ba8b5b]', dot: 'bg-amber-900', iconBg: 'bg-amber-950/20 text-amber-950' },
-  creamBrown: { light: 'bg-gradient-to-br from-[#E6CCB2] to-[#D4A373] text-amber-950 border-[#d1b397]', dot: 'bg-amber-800', iconBg: 'bg-amber-950/20 text-amber-950' },
-  dark:       { light: 'bg-gradient-to-br from-[#836452] to-[#6c503f] text-white border-[#6c503f]',     dot: 'bg-amber-200', iconBg: 'bg-white/10 text-white' },
+export type MetricVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral' | 'gold';
+
+const VARIANT_ACCENTS: Record<MetricVariant, {
+  bar: string;
+  iconBg: string;
+  iconColor: string;
+  tagBg: string;
+  tagColor: string;
+}> = {
+  success: {
+    bar: 'bg-emerald-500',
+    iconBg: 'bg-emerald-50 dark:bg-emerald-950/60',
+    iconColor: 'text-emerald-700 dark:text-emerald-300',
+    tagBg: 'bg-emerald-50 dark:bg-emerald-950/50',
+    tagColor: 'text-emerald-700 dark:text-emerald-300',
+  },
+  warning: {
+    bar: 'bg-amber-500',
+    iconBg: 'bg-amber-50 dark:bg-amber-950/60',
+    iconColor: 'text-amber-700 dark:text-amber-300',
+    tagBg: 'bg-amber-50 dark:bg-amber-950/50',
+    tagColor: 'text-amber-700 dark:text-amber-300',
+  },
+  danger: {
+    bar: 'bg-rose-500',
+    iconBg: 'bg-rose-50 dark:bg-rose-950/60',
+    iconColor: 'text-rose-700 dark:text-rose-300',
+    tagBg: 'bg-rose-50 dark:bg-rose-950/50',
+    tagColor: 'text-rose-700 dark:text-rose-300',
+  },
+  info: {
+    bar: 'bg-blue-500',
+    iconBg: 'bg-blue-50 dark:bg-blue-950/60',
+    iconColor: 'text-blue-700 dark:text-blue-300',
+    tagBg: 'bg-blue-50 dark:bg-blue-950/50',
+    tagColor: 'text-blue-700 dark:text-blue-300',
+  },
+  gold: {
+    bar: 'bg-amber-400',
+    iconBg: 'bg-amber-100/60 dark:bg-amber-950/60',
+    iconColor: 'text-amber-800 dark:text-amber-200',
+    tagBg: 'bg-amber-50 dark:bg-amber-950/50',
+    tagColor: 'text-amber-800 dark:text-amber-200',
+  },
+  neutral: {
+    bar: 'bg-slate-400',
+    iconBg: 'bg-slate-100 dark:bg-slate-800/80',
+    iconColor: 'text-slate-600 dark:text-emerald-300',
+    tagBg: 'bg-slate-100 dark:bg-slate-800',
+    tagColor: 'text-slate-600 dark:text-slate-300',
+  },
 };
+
+function resolveVariant(color?: string): MetricVariant {
+  if (!color) return 'success';
+  if (['emerald', 'green', 'sage', 'forestGreen', 'darkGreen', 'teal'].includes(color)) return 'success';
+  if (['amber', 'yellow', 'lightBrown', 'creamBrown', 'peach'].includes(color)) return 'warning';
+  if (['gold'].includes(color)) return 'gold';
+  if (['rose', 'pink', 'red'].includes(color)) return 'danger';
+  if (['sky', 'blue', 'violet', 'cyan', 'lavender'].includes(color)) return 'info';
+  return 'neutral';
+}
 
 export const MetricCard: React.FC<{
   title: string;
   value: string | number;
   subtitle?: string;
   icon: LucideIcon;
-  color?: 'yellow' | 'pink' | 'green' | 'lavender' | 'peach' | 'blue' | 'cyan' | 'sage' | 'teal' | 'dark';
+  color?: string;
+  variant?: MetricVariant;
+  trend?: string;
   onClick?: () => void;
-}> = ({ title, value, subtitle, icon: Icon, color = 'yellow', onClick }) => {
-  const theme = COLOR_MAP[color] ?? COLOR_MAP['yellow']!;
+  className?: string;
+}> = ({
+  title,
+  value,
+  subtitle,
+  icon: Icon,
+  color,
+  variant,
+  trend,
+  onClick,
+  className,
+}) => {
+  const v = variant || resolveVariant(color);
+  const theme = VARIANT_ACCENTS[v];
 
   return (
     <div
       onClick={onClick}
       className={cn(
-        'rounded-3xl p-5 shadow-card border transition-all',
-        'dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100',
-        theme.light,
-        onClick && 'cursor-pointer hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,0.14)] hover:-translate-y-0.5'
+        'group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-emerald-950/10 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 dark:hover:border-emerald-500/60 transition-colors duration-200 overflow-hidden flex flex-col justify-between',
+        onClick && 'cursor-pointer',
+        className
       )}
     >
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-2">{title}</div>
-          <div className="text-3xl font-black leading-none text-slate-900 dark:text-slate-100">{value}</div>
-          {subtitle && (
-            <div className="text-xs font-medium text-slate-600 dark:text-slate-400 mt-2 flex items-center gap-1.5">
-              <span className={cn('w-2 h-2 rounded-full', theme.dot)} />
-              {subtitle}
-            </div>
+      {/* Decorative top accent line with gradient fade */}
+      <div className={cn('absolute top-0 left-0 right-0 h-[3px]', theme.bar)} />
+
+      {/* Top row: Label & Icon */}
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-emerald-400/90 truncate">
+          {title}
+        </span>
+        <div className={cn('p-2 rounded-md shrink-0', theme.iconBg)}>
+          <Icon className={cn('w-4 h-4', theme.iconColor)} />
+        </div>
+      </div>
+
+      {/* Value & Trend */}
+      <div>
+        <div className="flex items-baseline gap-2.5">
+          <div className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-emerald-50 font-sans">
+            {value}
+          </div>
+          {trend && (
+            <span className={cn('text-[11px] font-semibold px-2 py-0.5 rounded-md border border-black/5 dark:border-white/5', theme.tagBg, theme.tagColor)}>
+              {trend}
+            </span>
           )}
         </div>
-        <div className={cn('p-2.5 rounded-2xl backdrop-blur-sm', theme.iconBg)}>
-          <Icon className="w-5 h-5" />
-        </div>
+
+        {subtitle && (
+          <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-1.5 leading-snug line-clamp-1">
+            {subtitle}
+          </p>
+        )}
       </div>
     </div>
   );

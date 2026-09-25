@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeCosineSimilarity,
+  deserializeFaceDescriptor,
   euclideanDistance,
+  evaluateFacePartConsistency,
   findDuplicateStudentId,
   isFaceBoxUsable,
   isSameEnrolledPerson,
@@ -52,6 +54,19 @@ describe('FaceNet matcher', () => {
     expect(result.label).toBe('unknown');
   });
 
+  it('rejects a face beyond the acceptance threshold even when it is near a locked student', () => {
+    const result = scoreFaceNetMatch(
+      [0.555, 0],
+      [
+        { label: 'std-a', descriptors: [[0, 0]] },
+        { label: 'std-b', descriptors: [[1.5, 0]] },
+      ]
+    );
+    expect(result.accepted).toBe(false);
+    expect(result.label).toBe('unknown');
+    expect(result.reason).toBe('below_threshold');
+  });
+
   it('rejects an ambiguous nearest-neighbor when two students are similarly close', () => {
     const result = scoreFaceNetMatch(
       [0, 0],
@@ -82,8 +97,32 @@ describe('FaceNet matcher', () => {
     expect(isFaceBoxUsable(120, 120, 0.6)).toBe(true);
   });
 
+  it('accepts a face only when the key facial landmarks are aligned', () => {
+    const points = Array.from({ length: 68 }, () => ({ x: 0, y: 0 }));
+    const eyeLeft = { x: 100, y: 120 };
+    const eyeRight = { x: 180, y: 120 };
+    const nose = { x: 140, y: 150 };
+    const mouth = { x: 140, y: 190 };
+
+    [36, 37, 38, 39, 40, 41].forEach(i => { points[i] = eyeLeft; });
+    [42, 43, 44, 45, 46, 47].forEach(i => { points[i] = eyeRight; });
+    [27, 28, 29, 30, 31, 32, 33, 34, 35].forEach(i => { points[i] = nose; });
+    [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67].forEach(i => { points[i] = mouth; });
+
+    expect(evaluateFacePartConsistency(points as any, { x: 40, y: 60, width: 220, height: 220 })).toBe(true);
+
+    [42, 43, 44, 45, 46, 47].forEach(i => { points[i] = { x: 140, y: 120 }; });
+    expect(evaluateFacePartConsistency(points as any, { x: 40, y: 60, width: 220, height: 220 })).toBe(false);
+  });
+
   it('keeps cosine similarity in the valid range', () => {
     expect(computeCosineSimilarity(studentA, studentA)).toBeCloseTo(1, 5);
     expect(euclideanDistance(studentA, studentA)).toBeCloseTo(0, 5);
+  });
+
+  it('reconstructs descriptors from JSON arrays and JSON strings', () => {
+    expect(deserializeFaceDescriptor([0.1, 0.2])).toBeInstanceOf(Float32Array);
+    expect(deserializeFaceDescriptor('[0.1, 0.2]')).toBeInstanceOf(Float32Array);
+    expect(deserializeFaceDescriptor('not-json')).toBeNull();
   });
 });

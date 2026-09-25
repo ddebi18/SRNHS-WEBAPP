@@ -21,20 +21,33 @@ import {
   saveStoredSections,
   getStoredStudents,
   generateUUID,
-  isValidUUID,
 } from '@/features/faceRegistration/api';
 import { Section as FRSection } from '@/features/faceRegistration/types';
-import {
-  fetchRooms,
-  createRoom,
-  updateRoom,
-  deleteRoom,
-  fetchSubjects,
-  createSubject,
-  updateSubject,
-  deleteSubject,
-} from '@/features/academics/api';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+
+// ─── LocalStorage keys for rooms & subjects ───────────────────────────────────
+const LS_ROOMS = 'srnhs_academics_rooms_v1';
+const LS_SUBJECTS = 'srnhs_academics_subjects_v1';
+
+function getStoredRooms(): Room[] {
+  try {
+    const raw = localStorage.getItem(LS_ROOMS);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [];
+}
+function saveRooms(rooms: Room[]) {
+  try { localStorage.setItem(LS_ROOMS, JSON.stringify(rooms)); } catch {}
+}
+function getStoredSubjects(): Subject[] {
+  try {
+    const raw = localStorage.getItem(LS_SUBJECTS);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [];
+}
+function saveSubjects(subjects: Subject[]) {
+  try { localStorage.setItem(LS_SUBJECTS, JSON.stringify(subjects)); } catch {}
+}
 
 // Convert domain Section ↔ faceRegistration Section
 function toFRSection(sec: Section): FRSection {
@@ -61,21 +74,16 @@ const inputCls =
 export const AcademicsManager: React.FC = () => {
   const { isAdmin } = useRole();
   const [activeTab, setActiveTab] = useState<'sections' | 'subjects' | 'rooms'>('sections');
-  const [isLoading, setIsLoading] = useState(false);
 
   // ── Persisted state ──────────────────────────────────────────────────────────
   const [rooms, setRooms] = useState<Room[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
 
-  // Load from API / Supabase on mount
+  // Load from localStorage on mount
   useEffect(() => {
-    setIsLoading(true);
-    Promise.all([fetchRooms(), fetchSubjects()]).then(([r, s]) => {
-      setRooms(r);
-      setSubjects(s);
-      setIsLoading(false);
-    }).catch(() => setIsLoading(false));
+    setRooms(getStoredRooms());
+    setSubjects(getStoredSubjects());
 
     // Map faceRegistration sections → domain Section shape
     const frSections = getStoredSections();
@@ -94,20 +102,11 @@ export const AcademicsManager: React.FC = () => {
   // ── Persist helpers ──────────────────────────────────────────────────────────
   const persistSections = (next: Section[]) => {
     setSections(next);
+    // Also save to faceRegistration store so student enrollment dropdown sees them
     saveStoredSections(next.map(toFRSection));
-
-    if (supabase && isSupabaseConfigured) {
-      const rows = next.map(sec => ({
-        id: isValidUUID(sec.id) ? sec.id : generateUUID(),
-        grade_level: sec.grade_level,
-        name: sec.name,
-        adviser_id: (sec.adviser_id && isValidUUID(sec.adviser_id)) ? sec.adviser_id : null,
-      }));
-      supabase.from('sections').upsert(rows, { onConflict: 'id' }).then(({ error }) => {
-        if (error) console.warn('[Academics] Supabase sections sync note:', error.message);
-      });
-    }
   };
+  const persistRooms = (next: Room[]) => { setRooms(next); saveRooms(next); };
+  const persistSubjects = (next: Subject[]) => { setSubjects(next); saveSubjects(next); };
 
   // ── Modal state ──────────────────────────────────────────────────────────────
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -188,33 +187,45 @@ export const AcademicsManager: React.FC = () => {
       }
     } else if (activeTab === 'rooms') {
       if (editingItem) {
-        const updated: Room = { ...editingItem, name: roomName.trim(), building: roomBuilding.trim(), capacity: Number(roomCapacity) || 40 };
-        updateRoom(updated).then(() => {
-          setRooms(prev => prev.map(r => r.id === updated.id ? updated : r));
-        });
+        persistRooms(
+          rooms.map(r =>
+            r.id === editingItem.id
+              ? { ...r, name: roomName.trim(), building: roomBuilding.trim(), capacity: Number(roomCapacity) || 40 }
+              : r
+          )
+        );
       } else {
-        createRoom({
-          name: roomName.trim(),
-          building: roomBuilding.trim(),
-          capacity: Number(roomCapacity) || 40,
-        }).then(created => {
-          setRooms(prev => [created, ...prev]);
-        });
+        persistRooms([
+          ...rooms,
+          {
+            id: `rm-${Date.now()}`,
+            name: roomName.trim(),
+            building: roomBuilding.trim(),
+            capacity: Number(roomCapacity) || 40,
+            created_at: new Date().toISOString(),
+          },
+        ]);
       }
     } else {
       if (editingItem) {
-        const updated: Subject = { ...editingItem, code: subCode.trim(), title: subTitle.trim(), description: subDesc.trim() };
-        updateSubject(updated).then(() => {
-          setSubjects(prev => prev.map(s => s.id === updated.id ? updated : s));
-        });
+        persistSubjects(
+          subjects.map(s =>
+            s.id === editingItem.id
+              ? { ...s, code: subCode.trim(), title: subTitle.trim(), description: subDesc.trim() }
+              : s
+          )
+        );
       } else {
-        createSubject({
-          code: subCode.trim(),
-          title: subTitle.trim(),
-          description: subDesc.trim(),
-        }).then(created => {
-          setSubjects(prev => [created, ...prev]);
-        });
+        persistSubjects([
+          ...subjects,
+          {
+            id: `sub-${Date.now()}`,
+            code: subCode.trim(),
+            title: subTitle.trim(),
+            description: subDesc.trim(),
+            created_at: new Date().toISOString(),
+          },
+        ]);
       }
     }
     setIsModalOpen(false);
@@ -224,14 +235,8 @@ export const AcademicsManager: React.FC = () => {
   const confirmDelete = () => {
     if (!deleteTarget) return;
     if (activeTab === 'sections') persistSections(sections.filter(s => s.id !== deleteTarget.id));
-    if (activeTab === 'rooms') {
-      deleteRoom(deleteTarget.id);
-      setRooms(prev => prev.filter(r => r.id !== deleteTarget.id));
-    }
-    if (activeTab === 'subjects') {
-      deleteSubject(deleteTarget.id);
-      setSubjects(prev => prev.filter(s => s.id !== deleteTarget.id));
-    }
+    if (activeTab === 'rooms') persistRooms(rooms.filter(r => r.id !== deleteTarget.id));
+    if (activeTab === 'subjects') persistSubjects(subjects.filter(s => s.id !== deleteTarget.id));
     setDeleteTarget(null);
   };
 
@@ -263,18 +268,15 @@ export const AcademicsManager: React.FC = () => {
             Configure grade sections, subjects, and rooms for SRNHS.
           </p>
         </div>
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          {isLoading && <span className="text-xs text-slate-400 animate-pulse font-semibold">Syncing cloud...</span>}
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.97 }}
-            onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-2xl bg-sidebar text-white hover:bg-black/80 dark:hover:bg-slate-700 shadow-card transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            {addLabel}
-          </motion.button>
-        </div>
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.97 }}
+          onClick={openAdd}
+          className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-sm shadow-emerald-900/20 transition-all self-start sm:self-auto cursor-pointer"
+        >
+          <Plus className="w-4 h-4" />
+          {addLabel}
+        </motion.button>
       </div>
 
       {/* Tabs */}
@@ -284,9 +286,9 @@ export const AcademicsManager: React.FC = () => {
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={cn(
-              'flex items-center gap-2 px-4 py-2.5 text-xs md:text-sm font-bold border-b-2 transition-all',
+              'flex items-center gap-2 px-4 py-2.5 text-xs md:text-sm font-bold border-b-2 transition-all cursor-pointer',
               activeTab === tab.key
-                ? 'border-brand-600 text-brand-600 dark:text-brand-400 dark:border-brand-400'
+                ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400 dark:border-emerald-400'
                 : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             )}
           >
@@ -295,7 +297,7 @@ export const AcademicsManager: React.FC = () => {
             <span className={cn(
               'ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold',
               activeTab === tab.key
-                ? 'bg-brand-100 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300'
+                ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
                 : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
             )}>
               {tab.count}
@@ -319,7 +321,7 @@ export const AcademicsManager: React.FC = () => {
                 icon={<Layers className="w-8 h-8" />}
                 title="No sections yet"
                 description="Create your first grade section. Students can then be enrolled into it."
-                action={<button onClick={openAdd} className="px-4 py-2 text-xs font-bold rounded-xl bg-sidebar text-white hover:bg-black/80 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Add Section</button>}
+                action={<button onClick={openAdd} className="px-4 py-2 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white flex items-center gap-1.5 shadow-sm shadow-emerald-900/20 cursor-pointer"><Plus className="w-3.5 h-3.5" />Add Section</button>}
               />
             ) : (
               <div className="space-y-2">
@@ -333,7 +335,7 @@ export const AcademicsManager: React.FC = () => {
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.03 }}
-                        className="flex items-center gap-4 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm hover:shadow-card transition-all group"
+                        className="flex items-center gap-4 p-4 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/60 dark:border-slate-800 shadow-card-sm hover:shadow-card hover:border-emerald-500/30 transition-all group"
                       >
                         {/* Grade badge */}
                         <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white font-black text-sm shrink-0 shadow-sm">
@@ -401,7 +403,7 @@ export const AcademicsManager: React.FC = () => {
                 icon={<BookOpen className="w-8 h-8" />}
                 title="No subjects yet"
                 description="Add the subjects taught at SRNHS for scheduling and records."
-                action={<button onClick={openAdd} className="px-4 py-2 text-xs font-bold rounded-xl bg-sidebar text-white hover:bg-black/80 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Add Subject</button>}
+                action={<button onClick={openAdd} className="px-4 py-2 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white flex items-center gap-1.5 shadow-sm shadow-emerald-900/20 cursor-pointer"><Plus className="w-3.5 h-3.5" />Add Subject</button>}
               />
             ) : (
               <div className="space-y-2">
@@ -411,7 +413,7 @@ export const AcademicsManager: React.FC = () => {
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.03 }}
-                    className="flex items-center gap-4 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm hover:shadow-card transition-all group"
+                    className="flex items-center gap-4 p-4 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/60 dark:border-slate-800 shadow-card-sm hover:shadow-card hover:border-emerald-500/30 transition-all group"
                   >
                     <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center text-white shrink-0 shadow-sm">
                       <BookOpen className="w-4 h-4" />
@@ -448,7 +450,7 @@ export const AcademicsManager: React.FC = () => {
                 icon={<Building2 className="w-8 h-8" />}
                 title="No rooms yet"
                 description="Add classrooms and buildings used for scheduling and camera placement."
-                action={<button onClick={openAdd} className="px-4 py-2 text-xs font-bold rounded-xl bg-sidebar text-white hover:bg-black/80 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />Add Room</button>}
+                action={<button onClick={openAdd} className="px-4 py-2 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white flex items-center gap-1.5 shadow-sm shadow-emerald-900/20 cursor-pointer"><Plus className="w-3.5 h-3.5" />Add Room</button>}
               />
             ) : (
               <div className="space-y-2">
@@ -458,7 +460,7 @@ export const AcademicsManager: React.FC = () => {
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.03 }}
-                    className="flex items-center gap-4 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-card-sm hover:shadow-card transition-all group"
+                    className="flex items-center gap-4 p-4 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border border-slate-200/60 dark:border-slate-800 shadow-card-sm hover:shadow-card hover:border-emerald-500/30 transition-all group"
                   >
                     <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center text-white shrink-0 shadow-sm">
                       <Building2 className="w-4 h-4" />
