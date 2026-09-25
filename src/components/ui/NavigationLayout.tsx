@@ -289,10 +289,10 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
 
         {/* ── Scrollable Page Content ─────────────────── */}
         <main className={cn(
-          "flex-1 overflow-y-auto",
+          "flex-1 overflow-y-auto flex flex-col",
           "pb-24 md:pb-0"
         )}>
-          <div className="p-4 sm:p-6 md:p-8">
+          <div className="flex-1 p-4 sm:p-6 md:p-8">
             <AnimatePresence mode="wait">
               <motion.div
                 key={location.pathname}
@@ -307,7 +307,7 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
           </div>
 
           {/* ── Institutional Footer ───────────────────── */}
-          <footer className="bg-[#004D29] text-white mt-8">
+          <footer className="bg-[#004D29] text-white mt-auto">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 py-8">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 {/* Col 1: School Identity */}
