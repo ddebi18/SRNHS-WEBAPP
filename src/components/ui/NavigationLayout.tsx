@@ -289,10 +289,10 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
 
         {/* ── Scrollable Page Content ─────────────────── */}
         <main className={cn(
-          "flex-1 overflow-y-auto flex flex-col",
+          "min-w-0 flex-1 overflow-y-auto flex flex-col",
           "pb-24 md:pb-0"
         )}>
-          <div className="flex-1 p-4 sm:p-6 md:p-8">
+          <div className="min-w-0 flex-1 p-4 sm:p-6 md:p-8">
             <AnimatePresence mode="wait">
               <motion.div
                 key={location.pathname}

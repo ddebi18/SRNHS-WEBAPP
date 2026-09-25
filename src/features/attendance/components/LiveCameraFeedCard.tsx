@@ -254,17 +254,17 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     <>
       <div
         className={cn(
-          'bg-white dark:bg-[#0A2016] rounded-3xl border border-emerald-950/10 dark:border-emerald-800/40 shadow-xs overflow-hidden transition-colors flex flex-col',
+          'min-w-0 w-full bg-white dark:bg-[#0A2016] rounded-3xl border border-emerald-950/10 dark:border-emerald-800/40 shadow-xs overflow-hidden transition-colors flex flex-col',
           className
         )}
       >
         {/* ── Card Header ─────────────────────────────────────────────────── */}
         <div className="px-4 py-3 sm:px-5 sm:py-3.5 border-b border-emerald-950/5 dark:border-emerald-800/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-emerald-50/20 dark:bg-[#071A11]">
-          <div className="flex items-center gap-3">
+          <div className="min-w-0 flex items-center gap-3">
             <div className="p-2.5 rounded-xl bg-primary text-white shadow-xs shrink-0">
               <Video className="w-4 h-4" />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-sm font-bold text-slate-900 dark:text-emerald-50 tracking-tight">Live Turnstile Camera Feed</h3>
                 <span className={cn(
@@ -289,7 +289,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
           </div>
 
           {/* Mode Switcher: Time-In vs Time-Out, Camera Selector & Webcam Toggle */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={toggleWebcam}
@@ -337,7 +337,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             <select
               value={selectedCamera}
               onChange={e => setSelectedCamera(e.target.value)}
-              className="w-full sm:w-auto px-3 py-1.5 text-xs font-semibold rounded-xl border border-emerald-950/15 dark:border-emerald-800/50 bg-white dark:bg-[#0E2A1E] text-slate-900 dark:text-emerald-100 shadow-xs focus:outline-none cursor-pointer"
+              className="min-w-0 w-full max-w-full sm:w-auto px-3 py-1.5 text-xs font-semibold rounded-xl border border-emerald-950/15 dark:border-emerald-800/50 bg-white dark:bg-[#0E2A1E] text-slate-900 dark:text-emerald-100 shadow-xs focus:outline-none cursor-pointer"
             >
               {cameras.map(cam => (
                 <option key={cam.id} value={cam.id} className="dark:bg-[#0A2016]">
@@ -349,7 +349,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
         </div>
 
         {/* ── Viewfinder Video Canvas Area ──────────────── */}
-        <div className="p-3 sm:p-4 lg:p-5 flex-1 flex flex-col">
+        <div className="min-w-0 p-3 sm:p-4 lg:p-5 flex-1 flex flex-col">
           <div
             ref={viewfinderRef}
             className={cn(
@@ -369,12 +369,12 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             <div className="absolute bottom-2.5 right-2.5 sm:bottom-3 sm:right-3 w-4 h-4 sm:w-5 sm:h-5 border-b-2 border-r-2 border-emerald-500/80 rounded-br-sm pointer-events-none" />
 
             {/* Top HUD Overlay */}
-            <div className="relative z-10 flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-emerald-400/90 drop-shadow">
+            <div className="relative z-10 min-w-0 flex items-center justify-between gap-2 text-[10px] sm:text-[11px] font-mono text-emerald-400/90 drop-shadow">
               <div className="flex items-center gap-1.5 sm:gap-2 bg-black/70 backdrop-blur-md px-2 sm:px-2.5 py-1 rounded-lg border border-emerald-500/30">
                 <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
                 <span>{currentCam.id.toUpperCase()} · {scanMode === 'entry' ? 'TIME-IN' : 'TIME-OUT'}</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="min-w-0 flex items-center gap-2">
                 <div className="bg-black/70 backdrop-blur-md px-2 sm:px-2.5 py-1 rounded-lg border border-slate-700/50 text-slate-300">
                   {currentTime}
                 </div>
@@ -581,7 +581,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
 
             {/* Bottom HUD Overlay */}
             <div className="relative z-10 flex items-center justify-between gap-2 text-[10px] font-mono text-slate-400 bg-black/80 px-2.5 py-1.5 rounded-md border border-slate-800">
-              <div className="flex items-center gap-2 text-slate-300 max-w-full truncate">
+              <div className="min-w-0 flex items-center gap-2 text-slate-300 max-w-full truncate">
                 <ShieldCheck className={cn('w-3.5 h-3.5 shrink-0', recognitionError ? 'text-amber-400' : isLive ? 'text-green-400' : 'text-amber-400')} />
                 <span className="truncate">
                   {recognitionError

@@ -150,14 +150,14 @@ export const DashboardOverviewPage: React.FC = () => {
       </motion.div>
 
       {/* ── 2. The Integrated Command Center: Live Camera + Verification Kiosk ── */}
-      <motion.div variants={fadeUp} className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <motion.div variants={fadeUp} className="min-w-0 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column (7 cols): The Live Camera Feed Viewfinder */}
-        <div className="lg:col-span-7 space-y-4">
+        <div className="min-w-0 lg:col-span-7 space-y-4">
           <LiveCameraFeedCard />
         </div>
 
         {/* Right Column (5 cols): Live Recognition Kiosk & Real-time Stream */}
-        <div className="lg:col-span-5 space-y-4">
+        <div className="min-w-0 lg:col-span-5 space-y-4">
           {/* Spotlight: Latest Verified Student Scan */}
           <div className="bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm relative overflow-hidden">
             <div className="flex items-center justify-between gap-2 pb-3 mb-4 border-b border-emerald-950/5 dark:border-emerald-800/30">
@@ -595,52 +595,6 @@ export const DashboardOverviewPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Institutional Heritage Card (1 Col) */}
-        <div className="bg-white dark:bg-[#0A2016] rounded-lg p-5 border border-slate-200 dark:border-emerald-800/40 shadow-sm flex flex-col justify-between">
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <LordIcon src={LORD_ICONS.school} size={48} trigger="loop" />
-              <img
-                src={SITE_CONFIG.sealPath}
-                alt="SRNHS Seal"
-                className="w-12 h-12 rounded-full object-cover border-2 border-gold shadow-sm bg-white shrink-0"
-              />
-              <div className="min-w-0">
-                <div className="font-heading font-bold text-sm text-slate-900 dark:text-emerald-50 tracking-tight">
-                  {SITE_CONFIG.schoolName}
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-emerald-400/80 font-medium">
-                  {SITE_CONFIG.division}
-                </div>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-600 dark:text-emerald-300/90 leading-relaxed">
-              #15 Marigman Street, Brgy. San Roque, Antipolo City, Rizal. Public secondary school committed to academic excellence and student safety.
-            </p>
-
-            <div>
-              <div className="text-[10px] font-bold text-slate-400 dark:text-emerald-400/70 uppercase tracking-widest mb-2">
-                DepEd Core Values
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {SITE_CONFIG.coreValues.map(cv => (
-                  <span
-                    key={cv.filipino}
-                    className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-[#06180F] text-primary dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60"
-                  >
-                    {cv.filipino}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-4 mt-4 border-t border-emerald-950/5 dark:border-emerald-800/30 flex items-center justify-between text-[11px] text-slate-400 dark:text-emerald-400/60">
-            <span>School ID: 301429</span>
-            <span className="font-semibold text-primary dark:text-emerald-400">DepEd Region IV-A</span>
-          </div>
-        </div>
       </motion.div>
     </motion.div>
   );
