@@ -2,6 +2,10 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
+import { SITE_CONFIG } from '@/config/siteConfig';
+import { LordIcon, LORD_ICONS } from '@/components/motion/LordIcon';
+import { fadeUp, staggerContainer } from '@/components/motion/PageFade';
+import { cn } from '@/lib/utils';
 import {
   Camera,
   Clock,
@@ -15,24 +19,16 @@ import {
   ChevronRight,
   Smartphone,
   ScanFace,
-  Timer,
   BarChart3,
   GraduationCap,
   Fingerprint,
+  ShieldCheck,
+  ArrowDownLeft,
+  ArrowUpRight,
+  TrendingUp,
 } from 'lucide-react';
 
-/* ── Animation helpers ─────────────────────────────────────── */
-const fadeUp = {
-  hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] } },
-};
-
-const staggerContainer = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { staggerChildren: 0.07, delayChildren: 0.1 } },
-};
-
-/* ── Mock data ─────────────────────────────────────────────── */
+/* ── Types & Mock Data ─────────────────────────────────────── */
 type AttendanceStatus = 'present' | 'late' | 'absent' | 'excused';
 
 interface SubjectSchedule {
@@ -80,19 +76,44 @@ const MOCK_HISTORY: AttendanceRecord[] = [
   { date: '2026-09-19', subjectCode: 'TLE10', subjectTitle: 'TLE 10', timeIn: '1:02 PM', timeOut: '3:00 PM', status: 'present' },
 ];
 
-/* ── Status Badge Helper ──────────────────────────────────── */
+/* ── Status Badge Helper (Admin Theme Styled) ─────────────── */
 const statusConfig: Record<AttendanceStatus | 'not-yet', { label: string; color: string; bg: string; icon: React.ReactNode }> = {
-  present: { label: 'Present', color: 'text-emerald-700 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800', icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
-  late: { label: 'Late', color: 'text-amber-700 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800', icon: <AlertCircle className="w-3.5 h-3.5" /> },
-  absent: { label: 'Absent', color: 'text-rose-700 dark:text-rose-400', bg: 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800', icon: <XCircle className="w-3.5 h-3.5" /> },
-  excused: { label: 'Excused', color: 'text-blue-700 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800', icon: <AlertCircle className="w-3.5 h-3.5" /> },
-  'not-yet': { label: 'Upcoming', color: 'text-slate-500 dark:text-slate-400', bg: 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700', icon: <Clock className="w-3.5 h-3.5" /> },
+  present: {
+    label: 'Present',
+    color: 'text-emerald-700 dark:text-emerald-300',
+    bg: 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800/50',
+    icon: <CheckCircle2 className="w-3.5 h-3.5" />,
+  },
+  late: {
+    label: 'Late',
+    color: 'text-amber-700 dark:text-amber-300',
+    bg: 'bg-amber-50 dark:bg-amber-950/60 border-amber-200 dark:border-amber-800/50',
+    icon: <AlertCircle className="w-3.5 h-3.5" />,
+  },
+  absent: {
+    label: 'Absent',
+    color: 'text-rose-700 dark:text-rose-300',
+    bg: 'bg-rose-50 dark:bg-rose-950/60 border-rose-200 dark:border-rose-800/50',
+    icon: <XCircle className="w-3.5 h-3.5" />,
+  },
+  excused: {
+    label: 'Excused',
+    color: 'text-blue-700 dark:text-blue-300',
+    bg: 'bg-blue-50 dark:bg-blue-950/60 border-blue-200 dark:border-blue-800/50',
+    icon: <AlertCircle className="w-3.5 h-3.5" />,
+  },
+  'not-yet': {
+    label: 'Upcoming',
+    color: 'text-slate-500 dark:text-emerald-400/70',
+    bg: 'bg-slate-50 dark:bg-[#06180F] border-slate-200 dark:border-emerald-800/30',
+    icon: <Clock className="w-3.5 h-3.5" />,
+  },
 };
 
-const StatusBadge: React.FC<{ status: AttendanceStatus | 'not-yet' }> = ({ status }) => {
+const StudentStatusBadge: React.FC<{ status: AttendanceStatus | 'not-yet' }> = ({ status }) => {
   const cfg = statusConfig[status];
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${cfg.bg} ${cfg.color}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${cfg.bg} ${cfg.color}`}>
       {cfg.icon}
       {cfg.label}
     </span>
@@ -103,13 +124,35 @@ const StatusBadge: React.FC<{ status: AttendanceStatus | 'not-yet' }> = ({ statu
 type TabId = 'face-scan' | 'subjects' | 'history' | 'mobile-attendance';
 
 /* ══════════════════════════════════════════════════════════════
-   MAIN COMPONENT
+   MAIN STUDENT DASHBOARD PAGE
    ══════════════════════════════════════════════════════════════ */
 export const StudentDashboardPage: React.FC = () => {
   const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  const [currentTimeStr, setCurrentTimeStr] = useState('');
+  const [gateTimeIn, setGateTimeIn] = useState<string | null>('6:45 AM');
+  const [gateTimeOut, setGateTimeOut] = useState<string | null>(null);
+
+  // Live Philippine Standard Time clock
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setCurrentTimeStr(
+        now.toLocaleTimeString('en-PH', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        })
+      );
+    };
+    updateTime();
+    const timer = setInterval(updateTime, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const getTabFromUrl = useCallback((): TabId => {
     const path = location.pathname;
@@ -141,94 +184,266 @@ export const StudentDashboardPage: React.FC = () => {
     navigate(tabRouteMap[newTab] || `/student/dashboard?tab=${newTab}`);
   };
 
-  const [gateTimeIn, setGateTimeIn] = useState<string | null>('6:45 AM');
-  const [gateTimeOut, setGateTimeOut] = useState<string | null>(null);
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const firstName = user?.full_name?.split(' ')[0] || 'Student';
 
+  // Determine school year (June–March)
   const now = new Date();
-  const dateStr = now.toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const timeStr = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
+  const schoolYearStart = now.getMonth() >= 5 ? now.getFullYear() : now.getFullYear() - 1;
+  const schoolYear = `S.Y. ${schoolYearStart}–${schoolYearStart + 1}`;
 
   const presentCount = MOCK_SUBJECTS.filter(s => s.status === 'present').length;
   const lateCount = MOCK_SUBJECTS.filter(s => s.status === 'late').length;
-  const totalDone = presentCount + lateCount;
+  const totalCompleted = presentCount + lateCount;
+  const attendancePercent = Math.round((presentCount / MOCK_SUBJECTS.length) * 100);
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode; mobileLabel: string }[] = [
-    { id: 'face-scan', label: 'Face Scan Time In/Out', icon: <ScanFace className="w-4 h-4" />, mobileLabel: 'Scan' },
-    { id: 'subjects', label: 'My Subjects', icon: <BookOpen className="w-4 h-4" />, mobileLabel: 'Subjects' },
+    { id: 'face-scan', label: 'Face Scan Time In/Out', icon: <ScanFace className="w-4 h-4" />, mobileLabel: 'Face Scan' },
+    { id: 'subjects', label: 'My Subjects & Schedules', icon: <BookOpen className="w-4 h-4" />, mobileLabel: 'Subjects' },
     { id: 'history', label: 'Attendance History', icon: <BarChart3 className="w-4 h-4" />, mobileLabel: 'History' },
     { id: 'mobile-attendance', label: 'Mobile Attendance', icon: <Smartphone className="w-4 h-4" />, mobileLabel: 'Mobile' },
   ];
 
   return (
-    <motion.div variants={staggerContainer} initial="hidden" animate="show" className="space-y-6">
-      {/* ── Welcome Banner ─────────────────────────────────── */}
-      <motion.div variants={fadeUp} className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#006937] via-[#008C4A] to-[#00B35B] p-6 sm:p-8 text-white shadow-xl">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/3" />
-        <div className="absolute bottom-0 left-0 w-40 h-40 bg-white/5 rounded-full translate-y-1/2 -translate-x-1/4" />
-        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center text-2xl font-bold shadow-lg backdrop-blur-sm">
-              {user?.full_name?.[0] || 'S'}
+    <motion.div
+      className="space-y-5 max-w-7xl mx-auto"
+      variants={staggerContainer}
+      initial="hidden"
+      animate="show"
+    >
+      {/* ── 1. Hero Institutional Header & Operational Bar (Admin Match) ── */}
+      <motion.div
+        variants={fadeUp}
+        className="bg-white dark:bg-[#0A2016] rounded-lg p-4 sm:p-5 border border-slate-200 dark:border-emerald-800/40 shadow-sm relative overflow-hidden"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 relative z-10">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap mb-1.5">
+              <span className="w-1 h-5 bg-primary rounded-sm" />
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-emerald-300">
+                Student Portal
+              </span>
+              <span className="text-xs text-slate-400 dark:text-emerald-400/60 font-medium">
+                DepEd Antipolo · Cluster 2
+              </span>
             </div>
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold leading-tight">
-                Good {now.getHours() < 12 ? 'Morning' : now.getHours() < 18 ? 'Afternoon' : 'Evening'}, {user?.full_name?.split(' ')[0] || 'Student'}!
-              </h1>
-              <p className="text-white/70 text-sm mt-0.5">{user?.department || 'Grade 10 - Diamond'}</p>
-              <p className="text-white/50 text-xs mt-1 flex items-center gap-1.5">
-                <Calendar className="w-3 h-3" />
-                {dateStr} • {timeStr}
-              </p>
-            </div>
+
+            <h1 className="text-xl sm:text-2xl font-semibold text-slate-900 dark:text-emerald-50 leading-tight">
+              {greeting}, {firstName}!
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-emerald-300/80 mt-1 max-w-2xl">
+              {user?.department || 'Grade 10 - Diamond'} · {SITE_CONFIG.schoolName} — Real-time attendance and schedule monitoring
+            </p>
           </div>
 
-          {/* Gate scan summary */}
-          <div className="flex gap-3">
-            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center min-w-[100px] border border-white/10">
-              <div className="text-[10px] uppercase tracking-wider text-white/50 font-semibold mb-1">Gate In</div>
-              <div className="text-lg font-bold flex items-center justify-center gap-1.5">
-                <LogInIcon className="w-4 h-4 text-emerald-300" />
-                {gateTimeIn || '—'}
+          <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 bg-emerald-50/40 dark:bg-[#06180F] p-2.5 sm:p-3 rounded-2xl border border-emerald-950/10 dark:border-emerald-800/30">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-[#0A2016] shadow-sm border border-emerald-950/5 dark:border-emerald-800/30">
+                <Clock className="w-4 h-4 text-primary dark:text-emerald-400" />
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-slate-400 dark:text-emerald-400/60 leading-none">PST Clock</div>
+                  <div className="text-xs font-mono font-bold text-slate-800 dark:text-emerald-100">{currentTimeStr || '12:00:00 PM'}</div>
+                </div>
               </div>
-            </div>
-            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center min-w-[100px] border border-white/10">
-              <div className="text-[10px] uppercase tracking-wider text-white/50 font-semibold mb-1">Gate Out</div>
-              <div className="text-lg font-bold flex items-center justify-center gap-1.5">
-                <LogOutIcon className="w-4 h-4 text-rose-300" />
-                {gateTimeOut || '—'}
-              </div>
-            </div>
-          </div>
-        </div>
 
-        {/* Quick stats */}
-        <div className="relative z-10 mt-5 grid grid-cols-3 gap-3">
-          <div className="bg-white/10 rounded-xl px-3 py-2 text-center backdrop-blur-sm border border-white/5">
-            <div className="text-2xl font-bold">{presentCount}</div>
-            <div className="text-[10px] text-white/60 font-medium">Present</div>
-          </div>
-          <div className="bg-white/10 rounded-xl px-3 py-2 text-center backdrop-blur-sm border border-white/5">
-            <div className="text-2xl font-bold">{lateCount}</div>
-            <div className="text-[10px] text-white/60 font-medium">Late</div>
-          </div>
-          <div className="bg-white/10 rounded-xl px-3 py-2 text-center backdrop-blur-sm border border-white/5">
-            <div className="text-2xl font-bold">{MOCK_SUBJECTS.length - totalDone}</div>
-            <div className="text-[10px] text-white/60 font-medium">Upcoming</div>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-[#0A2016] shadow-xs border border-emerald-950/5 dark:border-emerald-800/30">
+                <Calendar className="w-4 h-4 text-gold dark:text-gold-light" />
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-slate-400 dark:text-emerald-400/60 leading-none">Academic Year</div>
+                  <div className="text-xs font-semibold text-slate-800 dark:text-emerald-100">{schoolYear}</div>
+                </div>
+              </div>
+
+              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-bold shadow-xs">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Student ID Verified</span>
+              </div>
+            </div>
           </div>
         </div>
       </motion.div>
 
-      {/* ── Tab Navigation ─────────────────────────────────── */}
-      <motion.div variants={fadeUp} className="flex gap-1 bg-white dark:bg-slate-900 rounded-xl p-1.5 border border-slate-200 dark:border-slate-800 shadow-sm overflow-x-auto">
+      {/* ── 2. Statistics & Overview Metric Cards (Exact Admin Style) ── */}
+      <motion.div variants={fadeUp}>
+        <div className="flex items-center justify-between mb-3 px-1">
+          <div>
+            <h2 className="font-heading text-lg font-bold text-slate-900 dark:text-emerald-50 tracking-tight">
+              Daily Attendance Overview
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-emerald-400/80">
+              Turnstile entry status and subject schedules for today
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-primary dark:text-emerald-400 font-semibold">
+            <TrendingUp className="w-4 h-4" />
+            <span className="hidden sm:inline">Active Record</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Card 1: Gate Status */}
+          <div className="group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 transition-colors overflow-hidden flex flex-col justify-between">
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-emerald-500" />
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-emerald-400/90">
+                  Campus Turnstile
+                </span>
+                <div className="p-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 group-hover:scale-105 transition-transform">
+                  <LordIcon src={LORD_ICONS.school} size={28} trigger="hover" />
+                </div>
+              </div>
+
+              <div className="flex items-baseline gap-2">
+                <div className="text-2xl font-extrabold text-slate-900 dark:text-emerald-50 tracking-tight font-sans">
+                  {gateTimeIn || 'No Entry Yet'}
+                </div>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50">
+                  Timed-In
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 mt-3 text-[11px] font-semibold">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/40">
+                  <ArrowDownLeft className="w-3 h-3" />
+                  In: {gateTimeIn || '—'}
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/40">
+                  <ArrowUpRight className="w-3 h-3" />
+                  Out: {gateTimeOut || '—'}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-3 flex items-center justify-between">
+              <span>Main Gate Turnstile Node 01</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-emerald-600" />
+            </p>
+          </div>
+
+          {/* Card 2: Subject Attendance Rate */}
+          <div className="group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 transition-colors overflow-hidden flex flex-col justify-between">
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-blue-500" />
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-emerald-400/90">
+                  Classroom Attendance
+                </span>
+                <div className="p-1 rounded-xl bg-blue-50 dark:bg-blue-950/60 group-hover:scale-105 transition-transform">
+                  <LordIcon src={LORD_ICONS.book} size={28} trigger="hover" />
+                </div>
+              </div>
+
+              <div className="flex items-baseline gap-2">
+                <div className="text-3xl font-extrabold text-slate-900 dark:text-emerald-50 tracking-tight font-sans">
+                  {attendancePercent}%
+                </div>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/50">
+                  {presentCount} Present
+                </span>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="mt-3 w-full h-2 rounded-full bg-slate-100 dark:bg-[#06180F] overflow-hidden border border-emerald-950/5 dark:border-emerald-800/30">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-500"
+                  style={{ width: `${attendancePercent}%` }}
+                />
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-3 flex items-center justify-between">
+              <span>{totalCompleted} of {MOCK_SUBJECTS.length} classes completed</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-emerald-600" />
+            </p>
+          </div>
+
+          {/* Card 3: Enrolled Subjects */}
+          <div className="group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 transition-colors overflow-hidden flex flex-col justify-between">
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-gold" />
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-emerald-400/90">
+                  Enrolled Subjects
+                </span>
+                <div className="p-1 rounded-xl bg-amber-100/60 dark:bg-amber-950/60 group-hover:scale-105 transition-transform">
+                  <LordIcon src={LORD_ICONS.graduate} size={28} trigger="hover" />
+                </div>
+              </div>
+
+              <div className="flex items-baseline gap-2">
+                <div className="text-3xl font-extrabold text-slate-900 dark:text-emerald-50 tracking-tight font-sans">
+                  {MOCK_SUBJECTS.length}
+                </div>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800/50">
+                  Official Roster
+                </span>
+              </div>
+
+              <div className="mt-3 flex items-center gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+                <span>{user?.department || 'Grade 10 - Diamond'}</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-3 flex items-center justify-between">
+              <span>DepEd K-12 JHS Curriculum</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-emerald-600" />
+            </p>
+          </div>
+
+          {/* Card 4: Upcoming / Next Subject */}
+          <div className="group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 transition-colors overflow-hidden flex flex-col justify-between">
+            <div className="absolute top-0 left-0 right-0 h-[3px] bg-purple-500" />
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-emerald-400/90">
+                  Next Subject Period
+                </span>
+                <div className="p-1 rounded-xl bg-purple-50 dark:bg-purple-950/60 group-hover:scale-105 transition-transform">
+                  <LordIcon src={LORD_ICONS.bell} size={28} trigger="hover" />
+                </div>
+              </div>
+
+              <div className="flex items-baseline gap-2">
+                <div className="text-xl font-extrabold text-slate-900 dark:text-emerald-50 tracking-tight font-sans truncate">
+                  Room 203
+                </div>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/50">
+                  Filipino 10
+                </span>
+              </div>
+
+              <div className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-emerald-300 font-semibold">
+                <Clock className="w-3.5 h-3.5 text-purple-500" />
+                <span>TTh 7:30 - 9:00 AM · Gng. Bautista</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-3 flex items-center justify-between">
+              <span>Classroom Session Ready</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-emerald-600" />
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ── 3. Tab Navigation Bar (Admin Segmented Design) ────────── */}
+      <motion.div
+        variants={fadeUp}
+        className="flex gap-1.5 p-1.5 bg-white dark:bg-[#0A2016] rounded-lg border border-slate-200 dark:border-emerald-800/40 shadow-sm overflow-x-auto"
+      >
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
-            className={`flex-1 min-w-0 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap ${
+            className={cn(
+              'flex-1 min-w-0 flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap cursor-pointer',
               activeTab === tab.id
-                ? 'bg-[#006937] text-white shadow-md'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
+                ? 'bg-[#006937] text-white shadow-xs font-semibold'
+                : 'text-slate-600 dark:text-emerald-300 hover:bg-emerald-50/50 dark:hover:bg-[#06180F]'
+            )}
           >
             {tab.icon}
             <span className="hidden sm:inline">{tab.label}</span>
@@ -237,9 +452,19 @@ export const StudentDashboardPage: React.FC = () => {
         ))}
       </motion.div>
 
-      {/* ── Tab Content ────────────────────────────────────── */}
+      {/* ── 4. Tab Content Area ───────────────────────────────────── */}
       <AnimatePresence mode="wait">
-        {activeTab === 'face-scan' && <FaceScanTab key="face-scan" gateTimeIn={gateTimeIn} gateTimeOut={gateTimeOut} setGateTimeIn={setGateTimeIn} setGateTimeOut={setGateTimeOut} />}
+        {activeTab === 'face-scan' && (
+          <FaceScanTab
+            key="face-scan"
+            gateTimeIn={gateTimeIn}
+            gateTimeOut={gateTimeOut}
+            setGateTimeIn={setGateTimeIn}
+            setGateTimeOut={setGateTimeOut}
+            studentName={user?.full_name || 'Mark Anthony'}
+            department={user?.department || 'Grade 10 - Diamond'}
+          />
+        )}
         {activeTab === 'subjects' && <SubjectsTab key="subjects" />}
         {activeTab === 'history' && <HistoryTab key="history" />}
         {activeTab === 'mobile-attendance' && <MobileAttendanceTab key="mobile-attendance" />}
@@ -249,16 +474,25 @@ export const StudentDashboardPage: React.FC = () => {
 };
 
 /* ══════════════════════════════════════════════════════════════
-   TAB 1: FACE SCAN TIME IN / TIME OUT
+   TAB 1: FACE SCAN TIME IN / TIME OUT (Command Center Style)
    ══════════════════════════════════════════════════════════════ */
 interface FaceScanTabProps {
   gateTimeIn: string | null;
   gateTimeOut: string | null;
   setGateTimeIn: (v: string | null) => void;
   setGateTimeOut: (v: string | null) => void;
+  studentName: string;
+  department: string;
 }
 
-const FaceScanTab: React.FC<FaceScanTabProps> = ({ gateTimeIn, gateTimeOut, setGateTimeIn, setGateTimeOut }) => {
+const FaceScanTab: React.FC<FaceScanTabProps> = ({
+  gateTimeIn,
+  gateTimeOut,
+  setGateTimeIn,
+  setGateTimeOut,
+  studentName,
+  department,
+}) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -276,8 +510,7 @@ const FaceScanTab: React.FC<FaceScanTabProps> = ({ gateTimeIn, gateTimeOut, setG
         setCameraActive(true);
       }
     } catch (err) {
-      console.warn('Camera access denied:', err);
-      // Simulate camera for demo
+      console.warn('Camera access fallback simulation:', err);
       setCameraActive(true);
     }
   }, []);
@@ -295,7 +528,6 @@ const FaceScanTab: React.FC<FaceScanTabProps> = ({ gateTimeIn, gateTimeOut, setG
     setScanning(true);
     setScanResult(null);
 
-    // Simulate face recognition processing
     setTimeout(() => {
       setScanning(false);
       const now = new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
@@ -306,9 +538,8 @@ const FaceScanTab: React.FC<FaceScanTabProps> = ({ gateTimeIn, gateTimeOut, setG
         setGateTimeOut(now);
         setScanResult('success-out');
       }
-      // Auto-clear result after 4 seconds
       setTimeout(() => setScanResult(null), 4000);
-    }, 2500);
+    }, 2200);
   }, [scanMode, setGateTimeIn, setGateTimeOut]);
 
   useEffect(() => {
@@ -321,23 +552,29 @@ const FaceScanTab: React.FC<FaceScanTabProps> = ({ gateTimeIn, gateTimeOut, setG
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
       transition={{ duration: 0.35 }}
-      className="grid grid-cols-1 lg:grid-cols-5 gap-6"
+      className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start"
     >
-      {/* Camera Preview */}
-      <div className="lg:col-span-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      {/* Left Column (7 cols): Camera Viewfinder */}
+      <div className="lg:col-span-7 bg-white dark:bg-[#0A2016] rounded-lg border border-slate-200 dark:border-emerald-800/40 shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-emerald-950/5 dark:border-emerald-800/30 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ScanFace className="w-5 h-5 text-[#006937] dark:text-emerald-400" />
-            <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Face Recognition Scanner</h3>
+            <div>
+              <h3 className="font-heading text-sm font-bold text-slate-900 dark:text-emerald-50">
+                Turnstile Face Recognition Scanner
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-emerald-400/70">
+                Self-Service Campus Gate Check-In & Check-Out
+              </p>
+            </div>
           </div>
-          {cameraActive && (
-            <span className="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              Camera Active
-            </span>
-          )}
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50 text-[11px] font-bold">
+            <span className={`w-2 h-2 rounded-full ${cameraActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+            {cameraActive ? 'Camera Ready' : 'Standby'}
+          </span>
         </div>
 
+        {/* Viewfinder Frame */}
         <div className="relative aspect-[4/3] bg-slate-950 flex items-center justify-center overflow-hidden">
           <video
             ref={videoRef}
@@ -346,121 +583,124 @@ const FaceScanTab: React.FC<FaceScanTabProps> = ({ gateTimeIn, gateTimeOut, setG
             muted
           />
 
-          {/* Scan overlay */}
           {cameraActive && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className={`w-52 h-52 sm:w-64 sm:h-64 rounded-full border-4 ${scanning ? 'border-amber-400 animate-pulse' : 'border-white/40'} transition-colors duration-300`}>
+              <div className={`w-52 h-52 sm:w-64 sm:h-64 rounded-2xl border-2 ${scanning ? 'border-amber-400 animate-pulse' : 'border-emerald-400/50'} transition-colors duration-300`}>
                 {/* Corner markers */}
                 <div className="absolute top-1/2 left-1/2 w-52 h-52 sm:w-64 sm:h-64 -translate-x-1/2 -translate-y-1/2">
-                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-white/80 rounded-tl-lg" />
-                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-white/80 rounded-tr-lg" />
-                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-white/80 rounded-bl-lg" />
-                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-white/80 rounded-br-lg" />
+                  <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-emerald-400 rounded-tl-md" />
+                  <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-emerald-400 rounded-tr-md" />
+                  <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-emerald-400 rounded-bl-md" />
+                  <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-emerald-400 rounded-br-md" />
                 </div>
               </div>
+
               {scanning && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <div className="w-16 h-16 border-4 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
-                  <p className="mt-4 text-sm text-white font-semibold bg-black/50 px-4 py-1.5 rounded-full backdrop-blur-sm">
-                    Scanning face...
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px]">
+                  <div className="w-14 h-14 border-4 border-amber-400/30 border-t-amber-400 rounded-full animate-spin" />
+                  <p className="mt-3 text-xs text-white font-semibold bg-black/60 px-3.5 py-1 rounded-full border border-white/20">
+                    Verifying biometric descriptors...
                   </p>
                 </div>
               )}
             </div>
           )}
 
-          {/* Placeholder when camera off */}
           {!cameraActive && (
-            <div className="flex flex-col items-center gap-4 text-white/60">
-              <div className="w-20 h-20 rounded-full bg-white/10 flex items-center justify-center border-2 border-white/20">
-                <Camera className="w-10 h-10" />
+            <div className="flex flex-col items-center gap-3 text-white/60 p-6 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center border border-white/20 shadow-inner">
+                <Camera className="w-8 h-8 text-white/70" />
               </div>
-              <p className="text-sm font-medium">Camera is off</p>
-              <p className="text-xs text-white/40">Click "Start Camera" to begin</p>
+              <p className="text-sm font-semibold text-white">Camera Viewfinder is Standby</p>
+              <p className="text-xs text-white/50 max-w-xs">
+                Activate the live camera to scan your face against your enrolled school biometric vector.
+              </p>
             </div>
           )}
 
-          {/* Scan Result Overlay */}
+          {/* Result Overlay Banner */}
           <AnimatePresence>
             {scanResult && (
               <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
+                initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.8 }}
+                exit={{ opacity: 0, scale: 0.9 }}
                 className={`absolute inset-0 flex flex-col items-center justify-center backdrop-blur-sm ${
-                  scanResult === 'failed' ? 'bg-rose-950/70' : 'bg-emerald-950/70'
+                  scanResult === 'failed' ? 'bg-rose-950/80' : 'bg-emerald-950/80'
                 }`}
               >
                 {scanResult === 'failed' ? (
-                  <XCircle className="w-16 h-16 text-rose-400 mb-3" />
+                  <XCircle className="w-14 h-14 text-rose-400 mb-2" />
                 ) : (
-                  <CheckCircle2 className="w-16 h-16 text-emerald-400 mb-3" />
+                  <CheckCircle2 className="w-14 h-14 text-emerald-400 mb-2" />
                 )}
-                <p className="text-xl font-bold text-white">
-                  {scanResult === 'success-in' ? 'Time In Recorded!' : scanResult === 'success-out' ? 'Time Out Recorded!' : 'Face Not Recognized'}
+                <p className="text-lg font-bold text-white">
+                  {scanResult === 'success-in' ? 'Turnstile Time-In Verified!' : scanResult === 'success-out' ? 'Turnstile Time-Out Verified!' : 'Face Not Recognized'}
                 </p>
-                <p className="text-sm text-white/60 mt-1">
-                  {scanResult !== 'failed' ? new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : 'Please try again'}
+                <p className="text-xs text-white/70 mt-1">
+                  {scanResult !== 'failed' ? `${studentName} · SMS Notification Dispatched` : 'Please center face and try again'}
                 </p>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        {/* Camera Controls */}
-        <div className="p-4 space-y-3">
+        {/* Viewfinder Controls (Admin Style) */}
+        <div className="p-4 space-y-3 bg-white dark:bg-[#0A2016]">
           {/* Mode Selector */}
-          <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+          <div className="flex gap-2 p-1.5 bg-emerald-50/40 dark:bg-[#06180F] rounded-lg border border-emerald-950/10 dark:border-emerald-800/30">
             <button
               onClick={() => setScanMode('in')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={cn(
+                'flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-xs font-bold transition-all cursor-pointer',
                 scanMode === 'in'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 dark:text-emerald-300 hover:bg-white dark:hover:bg-[#0A2016]'
+              )}
             >
               <LogInIcon className="w-4 h-4" />
-              Time In
+              Time-In Mode
             </button>
             <button
               onClick={() => setScanMode('out')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={cn(
+                'flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-xs font-bold transition-all cursor-pointer',
                 scanMode === 'out'
-                  ? 'bg-rose-600 text-white shadow-md'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'text-slate-600 dark:text-emerald-300 hover:bg-white dark:hover:bg-[#0A2016]'
+              )}
             >
               <LogOutIcon className="w-4 h-4" />
-              Time Out
+              Time-Out Mode
             </button>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2.5">
             {!cameraActive ? (
               <button
                 onClick={startCamera}
-                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-[#006937] hover:bg-[#008C4A] text-white text-sm font-semibold shadow-sm transition-colors"
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-[#006937] hover:bg-[#008C4A] text-white text-xs font-bold shadow-xs transition-colors cursor-pointer"
               >
                 <Camera className="w-4 h-4" />
-                Start Camera
+                Initialize Live Camera
               </button>
             ) : (
               <>
                 <button
                   onClick={handleScan}
                   disabled={scanning}
-                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-[#006937] hover:bg-[#008C4A] text-white text-sm font-semibold shadow-sm transition-colors disabled:opacity-50"
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-[#006937] hover:bg-[#008C4A] text-white text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                 >
                   {scanning ? (
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   ) : (
                     <Fingerprint className="w-4 h-4" />
                   )}
-                  {scanning ? 'Scanning...' : `Scan ${scanMode === 'in' ? 'Time In' : 'Time Out'}`}
+                  {scanning ? 'Verifying...' : `Execute ${scanMode === 'in' ? 'Time-In' : 'Time-Out'} Match`}
                 </button>
                 <button
                   onClick={stopCamera}
-                  className="px-4 py-3 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors"
+                  className="px-4 py-2.5 rounded-lg bg-slate-100 dark:bg-[#06180F] border border-slate-200 dark:border-emerald-800/40 text-slate-700 dark:text-emerald-300 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                 >
                   Stop
                 </button>
@@ -470,57 +710,99 @@ const FaceScanTab: React.FC<FaceScanTabProps> = ({ gateTimeIn, gateTimeOut, setG
         </div>
       </div>
 
-      {/* Side Panel - Today's Log */}
-      <div className="lg:col-span-2 space-y-4">
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-5">
-          <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
-            <Timer className="w-4 h-4 text-[#006937] dark:text-emerald-400" />
-            Today's Time Log
-          </h3>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50">
-              <div className="flex items-center gap-2">
-                <LogInIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span className="text-xs font-medium text-emerald-800 dark:text-emerald-300">Gate Time In</span>
-              </div>
-              <span className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{gateTimeIn || '—'}</span>
+      {/* Right Column (5 cols): Spotlight Card + Recent Feed (Admin Match) */}
+      <div className="lg:col-span-5 space-y-4">
+        {/* Spotlight Card */}
+        <div className="bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm relative overflow-hidden">
+          <div className="flex items-center justify-between gap-2 pb-3 mb-4 border-b border-emerald-950/5 dark:border-emerald-800/30">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/80 text-primary dark:text-emerald-300">
+                <CheckCircle2 className="w-4 h-4" />
+              </span>
+              <h3 className="font-heading text-sm font-bold text-slate-900 dark:text-emerald-50">Latest Turnstile Scan</h3>
             </div>
-            <div className="flex items-center justify-between p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/50">
-              <div className="flex items-center gap-2">
-                <LogOutIcon className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-                <span className="text-xs font-medium text-rose-800 dark:text-rose-300">Gate Time Out</span>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50">
+              Verified Match
+            </span>
+          </div>
+
+          <div className="flex items-start gap-4">
+            <div className="relative shrink-0">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-50 dark:bg-[#143828] border-2 border-emerald-500 flex items-center justify-center text-primary dark:text-emerald-200 font-heading font-bold text-xl shadow-md">
+                {studentName?.slice(0, 2).toUpperCase()}
               </div>
-              <span className="text-sm font-bold text-rose-700 dark:text-rose-300">{gateTimeOut || '—'}</span>
+              <span className="absolute -bottom-1 -right-1 p-1 rounded-full bg-emerald-500 text-white shadow-xs">
+                <CheckCircle2 className="w-3 h-3" />
+              </span>
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <h4 className="font-heading font-bold text-base text-slate-900 dark:text-emerald-50 truncate">
+                {studentName}
+              </h4>
+              <p className="text-xs text-slate-500 dark:text-emerald-400/80 truncate mt-0.5 font-medium">
+                {department} • Turnstile Node-01
+              </p>
+
+              <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-bold capitalize shadow-2xs bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
+                  <ArrowDownLeft className="w-3 h-3" />
+                  Time-In
+                </span>
+
+                <span className="text-xs font-mono text-slate-500 dark:text-emerald-400/70 font-semibold">
+                  {gateTimeOut ? `Out: ${gateTimeOut}` : `In: ${gateTimeIn || '6:45 AM'}`}
+                </span>
+
+                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-100 dark:border-emerald-900/60">
+                  SMS Sent
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Subject Time In/Out Log */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-5">
-          <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-[#006937] dark:text-emerald-400" />
-            Subject Scans Today
-          </h3>
-          <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
-            {MOCK_SUBJECTS.filter(s => s.status !== 'not-yet').map(sub => (
-              <div key={sub.id} className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
-                <div>
-                  <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">{sub.code}</div>
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400">{sub.title}</div>
+        {/* Recent Scan History Feed (Admin Match) */}
+        <div className="bg-white dark:bg-[#0A2016] rounded-lg border border-slate-200 dark:border-emerald-800/40 shadow-sm overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-emerald-950/5 dark:border-emerald-800/30 flex items-center justify-between">
+            <div>
+              <h3 className="font-heading text-sm font-bold text-slate-900 dark:text-emerald-50">Recent Activity Log</h3>
+              <p className="text-[11px] text-slate-500 dark:text-emerald-400/70">Personal turnstile & subject logs</p>
+            </div>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50 text-[11px] font-bold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Live
+            </span>
+          </div>
+
+          <div className="p-3 divide-y divide-emerald-950/5 dark:divide-emerald-800/20 max-h-[290px] overflow-y-auto">
+            {MOCK_SUBJECTS.slice(0, 4).map(sub => (
+              <div
+                key={sub.id}
+                className="py-2.5 px-2 flex items-center justify-between gap-3 hover:bg-emerald-50/50 dark:hover:bg-[#0E2A1E] rounded-xl transition-colors"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-[#143828] text-primary dark:text-emerald-200 flex items-center justify-center text-xs font-bold shrink-0">
+                    {sub.code.slice(0, 2)}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-slate-900 dark:text-emerald-50 truncate">
+                      {sub.code} — {sub.title}
+                    </div>
+                    <div className="text-[10px] text-slate-400 dark:text-emerald-400/60 truncate">
+                      {sub.room} • {sub.teacher}
+                    </div>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                    In: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{sub.timeIn}</span>
-                  </div>
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                    Out: <span className="font-semibold text-rose-600 dark:text-rose-400">{sub.timeOut || '—'}</span>
-                  </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <StudentStatusBadge status={sub.status} />
+                  <span className="text-[11px] font-mono text-slate-400 dark:text-emerald-400/60">
+                    {sub.timeIn || '—'}
+                  </span>
                 </div>
               </div>
             ))}
-            {MOCK_SUBJECTS.filter(s => s.status !== 'not-yet').length === 0 && (
-              <p className="text-xs text-slate-400 text-center py-4">No scans recorded yet today</p>
-            )}
           </div>
         </div>
       </div>
@@ -529,7 +811,7 @@ const FaceScanTab: React.FC<FaceScanTabProps> = ({ gateTimeIn, gateTimeOut, setG
 };
 
 /* ══════════════════════════════════════════════════════════════
-   TAB 2: MY SUBJECTS
+   TAB 2: MY SUBJECTS (Admin Table & Drawer Style)
    ══════════════════════════════════════════════════════════════ */
 const SubjectsTab: React.FC = () => {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -541,40 +823,48 @@ const SubjectsTab: React.FC = () => {
       exit={{ opacity: 0, y: -10 }}
       transition={{ duration: 0.35 }}
     >
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div className="bg-white dark:bg-[#0A2016] rounded-lg border border-slate-200 dark:border-emerald-800/40 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-emerald-950/5 dark:border-emerald-800/30 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <GraduationCap className="w-5 h-5 text-[#006937] dark:text-emerald-400" />
-            <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">My Subjects — Current Schedule</h3>
+            <div>
+              <h3 className="font-bold text-sm text-slate-900 dark:text-emerald-50">
+                Official Enrolled Subjects & Teacher Assignments
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-emerald-400/70">
+                DepEd standard schedule for Grade 10 - Diamond
+              </p>
+            </div>
           </div>
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-            {MOCK_SUBJECTS.length} subjects
+          <span className="text-xs font-semibold text-primary dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-1 rounded-full border border-emerald-200 dark:border-emerald-800/50">
+            {MOCK_SUBJECTS.length} Subjects
           </span>
         </div>
 
-        <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        <div className="divide-y divide-emerald-950/5 dark:divide-emerald-800/20">
           {MOCK_SUBJECTS.map(sub => (
             <div key={sub.id}>
               <button
                 onClick={() => setExpanded(expanded === sub.id ? null : sub.id)}
-                className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left"
+                className="w-full px-5 py-4 flex items-center justify-between hover:bg-emerald-50/50 dark:hover:bg-[#0E2A1E] transition-colors text-left cursor-pointer"
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-xl bg-[#006937]/10 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
-                    <BookOpen className="w-5 h-5 text-[#006937] dark:text-emerald-400" />
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-primary dark:text-emerald-300 border border-emerald-100 dark:border-emerald-800/50 flex items-center justify-center shrink-0">
+                    <BookOpen className="w-5 h-5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
+                    <div className="text-sm font-bold text-slate-900 dark:text-emerald-50 truncate">
                       {sub.code} — {sub.title}
                     </div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    <div className="text-xs text-slate-500 dark:text-emerald-400/70 mt-0.5">
                       {sub.teacher} • {sub.room}
                     </div>
                   </div>
                 </div>
+
                 <div className="flex items-center gap-3 shrink-0 ml-3">
-                  <StatusBadge status={sub.status} />
-                  <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${expanded === sub.id ? 'rotate-90' : ''}`} />
+                  <StudentStatusBadge status={sub.status} />
+                  <ChevronRight className={`w-4 h-4 text-slate-400 dark:text-emerald-600 transition-transform ${expanded === sub.id ? 'rotate-90' : ''}`} />
                 </div>
               </button>
 
@@ -587,23 +877,23 @@ const SubjectsTab: React.FC = () => {
                     transition={{ duration: 0.25 }}
                     className="overflow-hidden"
                   >
-                    <div className="px-5 pb-4 pt-0 ml-[52px]">
+                    <div className="px-5 pb-4 pt-1 ml-[52px]">
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700/50">
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mb-1">Schedule</div>
-                          <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">{sub.schedule}</div>
+                        <div className="bg-emerald-50/30 dark:bg-[#06180F] rounded-lg p-3 border border-emerald-950/10 dark:border-emerald-800/30">
+                          <div className="text-[10px] text-slate-500 dark:text-emerald-400/70 font-bold uppercase tracking-wider mb-1">Weekly Schedule</div>
+                          <div className="text-xs font-bold text-slate-900 dark:text-emerald-50">{sub.schedule}</div>
                         </div>
-                        <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700/50">
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mb-1">Time In</div>
-                          <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">{sub.timeIn || '—'}</div>
+                        <div className="bg-emerald-50/30 dark:bg-[#06180F] rounded-lg p-3 border border-emerald-950/10 dark:border-emerald-800/30">
+                          <div className="text-[10px] text-slate-500 dark:text-emerald-400/70 font-bold uppercase tracking-wider mb-1">Time In Stamp</div>
+                          <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400">{sub.timeIn || 'Not recorded'}</div>
                         </div>
-                        <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700/50">
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mb-1">Time Out</div>
-                          <div className="text-xs font-semibold text-rose-600 dark:text-rose-400">{sub.timeOut || '—'}</div>
+                        <div className="bg-emerald-50/30 dark:bg-[#06180F] rounded-lg p-3 border border-emerald-950/10 dark:border-emerald-800/30">
+                          <div className="text-[10px] text-slate-500 dark:text-emerald-400/70 font-bold uppercase tracking-wider mb-1">Time Out Stamp</div>
+                          <div className="text-xs font-bold text-rose-600 dark:text-rose-400">{sub.timeOut || 'Not recorded'}</div>
                         </div>
-                        <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700/50">
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mb-1">Status</div>
-                          <StatusBadge status={sub.status} />
+                        <div className="bg-emerald-50/30 dark:bg-[#06180F] rounded-lg p-3 border border-emerald-950/10 dark:border-emerald-800/30">
+                          <div className="text-[10px] text-slate-500 dark:text-emerald-400/70 font-bold uppercase tracking-wider mb-1">Session Status</div>
+                          <StudentStatusBadge status={sub.status} />
                         </div>
                       </div>
                     </div>
@@ -619,7 +909,7 @@ const SubjectsTab: React.FC = () => {
 };
 
 /* ══════════════════════════════════════════════════════════════
-   TAB 3: ATTENDANCE HISTORY
+   TAB 3: ATTENDANCE HISTORY (Admin LiveGateLog Style)
    ══════════════════════════════════════════════════════════════ */
 const HistoryTab: React.FC = () => {
   const [filterSubject, setFilterSubject] = useState<string>('all');
@@ -629,7 +919,6 @@ const HistoryTab: React.FC = () => {
     ? MOCK_HISTORY
     : MOCK_HISTORY.filter(h => h.subjectCode === filterSubject);
 
-  // Group by date
   const grouped = filteredHistory.reduce<Record<string, AttendanceRecord[]>>((acc, rec) => {
     (acc[rec.date] = acc[rec.date] || []).push(rec);
     return acc;
@@ -642,49 +931,55 @@ const HistoryTab: React.FC = () => {
       exit={{ opacity: 0, y: -10 }}
       transition={{ duration: 0.35 }}
     >
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="bg-white dark:bg-[#0A2016] rounded-lg border border-slate-200 dark:border-emerald-800/40 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-emerald-950/5 dark:border-emerald-800/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-[#006937] dark:text-emerald-400" />
-            <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Attendance History</h3>
+            <div>
+              <h3 className="font-bold text-sm text-slate-900 dark:text-emerald-50">Attendance History & Audit Logs</h3>
+              <p className="text-[11px] text-slate-500 dark:text-emerald-400/70">Verified turnstile and classroom records</p>
+            </div>
           </div>
           <select
             value={filterSubject}
             onChange={e => setFilterSubject(e.target.value)}
-            className="px-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-[#006937]/20"
+            className="px-3 py-1.5 text-xs rounded-lg bg-emerald-50/40 dark:bg-[#06180F] border border-emerald-950/10 dark:border-emerald-800/30 text-slate-800 dark:text-emerald-100 font-semibold focus:outline-none focus:ring-2 focus:ring-[#006937]/30"
           >
-            <option value="all">All Subjects</option>
+            <option value="all">Filter: All Subjects</option>
             {uniqueSubjects.map(code => (
               <option key={code} value={code}>{code}</option>
             ))}
           </select>
         </div>
 
-        <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        <div className="divide-y divide-emerald-950/5 dark:divide-emerald-800/20">
           {Object.entries(grouped).map(([date, records]) => (
             <div key={date}>
-              <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-800/50 flex items-center gap-2">
-                <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+              <div className="px-5 py-2.5 bg-emerald-50/30 dark:bg-[#06180F] border-b border-emerald-950/5 dark:border-emerald-800/30 flex items-center gap-2">
+                <Calendar className="w-3.5 h-3.5 text-primary dark:text-emerald-400" />
+                <span className="text-xs font-bold text-slate-800 dark:text-emerald-100">
                   {new Date(date).toLocaleDateString('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}
                 </span>
               </div>
               {records.map((rec, idx) => (
-                <div key={`${date}-${rec.subjectCode}-${idx}`} className="px-5 py-3 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-[#006937]/10 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
-                      <BookOpen className="w-4 h-4 text-[#006937] dark:text-emerald-400" />
+                <div
+                  key={`${date}-${rec.subjectCode}-${idx}`}
+                  className="px-5 py-3 flex items-center justify-between hover:bg-emerald-50/50 dark:hover:bg-[#0E2A1E] transition-colors"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-primary dark:text-emerald-300 border border-emerald-100 dark:border-emerald-800/40 flex items-center justify-center shrink-0">
+                      <BookOpen className="w-4 h-4" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
+                      <div className="text-xs font-bold text-slate-900 dark:text-emerald-50 truncate">
                         {rec.subjectCode} — {rec.subjectTitle}
                       </div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        In: {rec.timeIn} • Out: {rec.timeOut}
+                      <div className="text-[11px] text-slate-500 dark:text-emerald-400/70 mt-0.5">
+                        In: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{rec.timeIn}</span> • Out: <span className="font-semibold text-rose-600 dark:text-rose-400">{rec.timeOut}</span>
                       </div>
                     </div>
                   </div>
-                  <StatusBadge status={rec.status} />
+                  <StudentStatusBadge status={rec.status} />
                 </div>
               ))}
             </div>
@@ -692,8 +987,8 @@ const HistoryTab: React.FC = () => {
         </div>
 
         {filteredHistory.length === 0 && (
-          <div className="py-12 text-center text-sm text-slate-400">
-            No attendance records found.
+          <div className="py-12 text-center text-xs text-slate-400 dark:text-emerald-400/60">
+            No attendance records match your filter criteria.
           </div>
         )}
       </div>
@@ -702,7 +997,7 @@ const HistoryTab: React.FC = () => {
 };
 
 /* ══════════════════════════════════════════════════════════════
-   TAB 4: MOBILE ATTENDANCE (scan on phone)
+   TAB 4: MOBILE ATTENDANCE (Admin Card & Action Style)
    ══════════════════════════════════════════════════════════════ */
 const MobileAttendanceTab: React.FC = () => {
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
@@ -710,9 +1005,7 @@ const MobileAttendanceTab: React.FC = () => {
 
   const handleMarkAttendance = (subjectId: string, type: 'in' | 'out') => {
     setAttendanceMarked(prev => ({ ...prev, [subjectId]: type }));
-    // In a real app, this would trigger a face scan + API call
     setTimeout(() => {
-      // Auto-deselect after marking
       setSelectedSubject(null);
     }, 1500);
   };
@@ -725,23 +1018,24 @@ const MobileAttendanceTab: React.FC = () => {
       transition={{ duration: 0.35 }}
       className="space-y-4"
     >
-      {/* Info Card */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 rounded-2xl border border-blue-200 dark:border-blue-900/50 p-5">
+      {/* Notice Card */}
+      <div className="bg-emerald-50/40 dark:bg-[#06180F] rounded-lg border border-emerald-950/10 dark:border-emerald-800/30 p-4">
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center shrink-0">
-            <Smartphone className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+          <div className="w-10 h-10 rounded-xl bg-white dark:bg-[#0A2016] border border-emerald-950/5 dark:border-emerald-800/30 text-primary dark:text-emerald-400 flex items-center justify-center shrink-0">
+            <Smartphone className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="font-bold text-sm text-blue-900 dark:text-blue-200">Mobile Attendance</h3>
-            <p className="text-xs text-blue-700/70 dark:text-blue-400/70 mt-1 leading-relaxed">
-              Quickly mark your attendance for each subject using your phone. Select a subject below,
-              then tap Time In or Time Out. Face recognition will verify your identity.
+            <h3 className="font-heading font-bold text-sm text-slate-900 dark:text-emerald-50">
+              Mobile Face Recognition Check-In
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-emerald-400/80 mt-1 leading-relaxed">
+              Mark attendance directly from your smartphone or tablet. Select a scheduled subject below, then execute Time In or Time Out.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Subject Cards for Mobile */}
+      {/* Subject Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {MOCK_SUBJECTS.map(sub => {
           const isSelected = selectedSubject === sub.id;
@@ -750,39 +1044,40 @@ const MobileAttendanceTab: React.FC = () => {
             <motion.div
               key={sub.id}
               layout
-              className={`bg-white dark:bg-slate-900 rounded-2xl border shadow-sm overflow-hidden transition-all ${
+              className={cn(
+                'bg-white dark:bg-[#0A2016] rounded-lg border shadow-xs overflow-hidden transition-all',
                 isSelected
                   ? 'border-[#006937] dark:border-emerald-500 ring-2 ring-[#006937]/20 dark:ring-emerald-500/20'
-                  : 'border-slate-200 dark:border-slate-800'
-              }`}
+                  : 'border-slate-200 dark:border-emerald-800/40 hover:border-primary/40'
+              )}
             >
               <button
                 onClick={() => setSelectedSubject(isSelected ? null : sub.id)}
-                className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
+                className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-emerald-50/40 dark:hover:bg-[#0E2A1E] transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                    marked ? 'bg-emerald-100 dark:bg-emerald-900/50' : 'bg-[#006937]/10 dark:bg-emerald-900/20'
-                  }`}>
-                    {marked ? (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                    ) : (
-                      <BookOpen className="w-5 h-5 text-[#006937] dark:text-emerald-400" />
-                    )}
+                  <div className={cn(
+                    'w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border',
+                    marked
+                      ? 'bg-emerald-100 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-100 dark:border-emerald-800/30 text-[#006937] dark:text-emerald-400'
+                  )}>
+                    {marked ? <CheckCircle2 className="w-5 h-5" /> : <BookOpen className="w-5 h-5" />}
                   </div>
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">{sub.code}</div>
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{sub.title}</div>
-                    <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{sub.schedule}</div>
+                    <div className="text-sm font-bold text-slate-900 dark:text-emerald-50 truncate">{sub.code}</div>
+                    <div className="text-[11px] text-slate-500 dark:text-emerald-400/80 truncate">{sub.title}</div>
+                    <div className="text-[10px] text-slate-400 dark:text-emerald-400/60 mt-0.5">{sub.schedule}</div>
                   </div>
                 </div>
+
                 <div className="shrink-0 ml-2">
                   {marked ? (
-                    <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 px-2 py-1 rounded-full">
+                    <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800/50">
                       {marked === 'in' ? '✓ Timed In' : '✓ Timed Out'}
                     </span>
                   ) : (
-                    <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${isSelected ? 'rotate-90' : ''}`} />
+                    <ChevronRight className={`w-4 h-4 text-slate-400 dark:text-emerald-600 transition-transform ${isSelected ? 'rotate-90' : ''}`} />
                   )}
                 </div>
               </button>
@@ -796,19 +1091,19 @@ const MobileAttendanceTab: React.FC = () => {
                     transition={{ duration: 0.2 }}
                     className="overflow-hidden"
                   >
-                    <div className="px-4 pb-4 flex gap-2">
+                    <div className="px-4 pb-3.5 pt-1 flex gap-2">
                       <button
                         onClick={() => handleMarkAttendance(sub.id, 'in')}
-                        className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold transition-colors shadow-sm"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
                       >
-                        <LogInIcon className="w-4 h-4" />
+                        <LogInIcon className="w-3.5 h-3.5" />
                         Time In
                       </button>
                       <button
                         onClick={() => handleMarkAttendance(sub.id, 'out')}
-                        className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold transition-colors shadow-sm"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
                       >
-                        <LogOutIcon className="w-4 h-4" />
+                        <LogOutIcon className="w-3.5 h-3.5" />
                         Time Out
                       </button>
                     </div>

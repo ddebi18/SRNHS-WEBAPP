@@ -14,7 +14,6 @@ import {
   Moon,
   MapPin,
   ChevronRight,
-  GraduationCap,
 } from 'lucide-react';
 import { SITE_CONFIG } from '@/config/siteConfig';
 import { useAuth } from '@/context/AuthContext';
@@ -61,7 +60,7 @@ export const StudentNavigationLayout: React.FC<{ children: React.ReactNode }> = 
   };
 
   const SidebarContent = () => (
-    <div className="w-64 h-full flex flex-col bg-gradient-to-b from-[#006937] to-[#004D29]">
+    <div className="w-64 h-full flex flex-col bg-[#006937]">
       {/* ── School Identity Header ──────────────────── */}
       <div className="px-4 py-5 border-b border-white/15">
         <div className="flex items-center justify-between">
@@ -86,23 +85,6 @@ export const StudentNavigationLayout: React.FC<{ children: React.ReactNode }> = 
           >
             <X className="w-5 h-5" />
           </button>
-        </div>
-      </div>
-
-      {/* Student Profile Card */}
-      <div className="px-4 py-4 border-b border-white/10">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center text-xl font-bold text-white shadow-lg">
-            {user?.full_name?.[0] || 'S'}
-          </div>
-          <div className="min-w-0">
-            <div className="text-sm font-bold text-white truncate">{user?.full_name || 'Student'}</div>
-            <div className="text-[11px] text-white/60 truncate">{user?.department || 'Grade 10 - Diamond'}</div>
-            <div className="flex items-center gap-1 mt-1">
-              <GraduationCap className="w-3 h-3 text-amber-300/80" />
-              <span className="text-[10px] text-amber-300/80 font-medium">Student</span>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -159,15 +141,26 @@ export const StudentNavigationLayout: React.FC<{ children: React.ReactNode }> = 
         </div>
       </div>
 
-      {/* ── Logout ──────────────────────────────────── */}
+      {/* ── User Section at bottom (Admin style) ────── */}
       <div className="p-3 border-t border-white/10 bg-black/15">
-        <button
-          onClick={handleLogout}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-xs font-medium"
-        >
-          <LogOut className="w-4 h-4" />
-          Sign Out
-        </button>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-xs shrink-0 border border-white/25">
+              {user?.full_name?.[0] || 'S'}
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-white truncate">{user?.full_name || 'Student'}</div>
+              <div className="text-[10px] text-white/55 truncate">{user?.department || 'Student'}</div>
+            </div>
+          </div>
+          <button
+            onClick={handleLogout}
+            title="Log out"
+            className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -338,7 +331,7 @@ export const StudentNavigationLayout: React.FC<{ children: React.ReactNode }> = 
       </div>
 
       {/* Mobile Bottom Navigation Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] flex items-center justify-around shadow-lg transition-colors">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-[#132B20] border-t border-slate-200 dark:border-green-900/50 px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] flex items-center justify-around shadow-lg transition-colors">
           {mobileBottomTabs.map((tab, idx) => {
             const Icon = tab.icon;
             return (
