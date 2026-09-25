@@ -6,7 +6,6 @@ export const useRole = () => {
 
   const isAdmin = role === 'admin';
   const isTeacher = role === 'teacher';
-  const isStudent = role === 'student';
 
   const hasPermission = (allowedRoles: UserRole[]) => {
     if (!role) return false;
@@ -18,7 +17,6 @@ export const useRole = () => {
     user,
     isAdmin,
     isTeacher,
-    isStudent,
     hasPermission,
   };
 };

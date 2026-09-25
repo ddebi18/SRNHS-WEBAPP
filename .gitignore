@@ -37,3 +37,5 @@ edge_engine/students_cache.json
 env/
 venv/
 
+.antigravity/
+backup/

@@ -72,7 +72,7 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
   const handleLogout = async () => {
     const priorRole = role;
     await logout();
-    navigate(priorRole === 'admin' ? '/admin/login' : priorRole === 'student' ? '/student/login' : '/teacher/login', { replace: true });
+    navigate(priorRole === 'admin' ? '/admin/login' : '/teacher/login', { replace: true });
   };
 
   const SidebarContent = () => (

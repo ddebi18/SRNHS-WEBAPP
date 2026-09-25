@@ -194,11 +194,6 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
                     <LordIcon src={LORD_ICONS.shield} size={22} trigger="loop" colors="primary:#006937,secondary:#d4a373" />
                     <span>Administrator Access</span>
                   </>
-                ) : portal === 'student' ? (
-                  <>
-                    <LordIcon src={LORD_ICONS.student} size={22} trigger="loop" colors="primary:#006937,secondary:#d4a373" />
-                    <span>Student Access</span>
-                  </>
                 ) : (
                   <>
                     <LordIcon src={LORD_ICONS.school} size={22} trigger="loop" colors="primary:#006937,secondary:#d4a373" />
@@ -306,22 +301,6 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
               >
                 {switchLabel}
               </Link>
-              {portal !== 'student' && (
-                <Link
-                  to="/student/login"
-                  className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-emerald-400 hover:underline block"
-                >
-                  Are you a student? Go to Student Sign-In
-                </Link>
-              )}
-              {portal === 'student' && (
-                <Link
-                  to="/admin/login"
-                  className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-emerald-400 hover:underline block"
-                >
-                  Administrator? Go to Admin Sign-In
-                </Link>
-              )}
             </div>
           </motion.div>
         </motion.div>

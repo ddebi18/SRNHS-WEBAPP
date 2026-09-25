@@ -6,8 +6,6 @@ export const getRoleLabel = (role?: UserRole | null): string => {
       return 'Admin';
     case 'teacher':
       return 'Faculty';
-    case 'student':
-      return 'Student';
     default:
       return 'Staff';
   }

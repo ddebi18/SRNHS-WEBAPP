@@ -1,7 +1,6 @@
 import React, { Suspense, lazy } from 'react';
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 import { NavigationLayout } from '@/components/ui/NavigationLayout';
-import { StudentNavigationLayout } from '@/components/ui/StudentNavigationLayout';
 import { LoadingSpinner, ForbiddenState } from '@/components/ui/StateViews';
 import { useAuth } from '@/context/AuthContext';
 import { useRole } from '@/hooks/useRole';
@@ -9,7 +8,6 @@ import { UserRole } from '@/types/domain.types';
 
 const AdminLoginPage = lazy(() => import('./AdminLoginPage').then(m => ({ default: m.AdminLoginPage })));
 const TeacherLoginPage = lazy(() => import('./TeacherLoginPage').then(m => ({ default: m.TeacherLoginPage })));
-const StudentLoginPage = lazy(() => import('./StudentLoginPage').then(m => ({ default: m.StudentLoginPage })));
 const DashboardOverviewPage = lazy(() => import('./DashboardOverviewPage').then(m => ({ default: m.DashboardOverviewPage })));
 const GateLogPage = lazy(() => import('./GateLogPage').then(m => ({ default: m.GateLogPage })));
 const ClassroomAttendancePage = lazy(() => import('./ClassroomAttendancePage').then(m => ({ default: m.ClassroomAttendancePage })));
@@ -18,11 +16,11 @@ const FacultyPage = lazy(() => import('./FacultyPage').then(m => ({ default: m.F
 const AcademicsPage = lazy(() => import('./AcademicsPage').then(m => ({ default: m.AcademicsPage })));
 const SmsLogPage = lazy(() => import('./SmsLogPage').then(m => ({ default: m.SmsLogPage })));
 const FaceRegistrationPage = lazy(() => import('./FaceRegistrationPage').then(m => ({ default: m.FaceRegistrationPage })));
-const StudentDashboardPage = lazy(() => import('./StudentDashboardPage').then(m => ({ default: m.StudentDashboardPage })));
+const TempAccessPage = lazy(() => import('./TempAccessPage').then(m => ({ default: m.TempAccessPage })));
 const ForbiddenPage = lazy(() => import('./ForbiddenPage').then(m => ({ default: m.ForbiddenPage })));
 const NotFoundPage = lazy(() => import('./NotFoundPage').then(m => ({ default: m.NotFoundPage })));
 
-// Protected Route Guard Wrapper (Requirement 4: Role-based guards and targeted redirects)
+// Protected Route Guard Wrapper: Role-based guards and targeted redirects
 const ProtectedRoute: React.FC<{
   children: React.ReactNode;
   allowedRoles?: UserRole[];
@@ -40,11 +38,6 @@ const ProtectedRoute: React.FC<{
     return <Navigate to={isAdminOnlyRoute ? '/admin/login' : '/teacher/login'} replace />;
   }
 
-  // Students trying to access admin/teacher routes get redirected to student dashboard
-  if (role === 'student' && allowedRoles && !allowedRoles.includes('student')) {
-    return <Navigate to="/student/dashboard" replace />;
-  }
-
   // Wrong-role users get a 403 Forbidden state
   if (allowedRoles && role && !allowedRoles.includes(role)) {
     return (
@@ -55,28 +48,6 @@ const ProtectedRoute: React.FC<{
   }
 
   return <NavigationLayout>{children}</NavigationLayout>;
-};
-
-// Student-specific protected route with student navigation layout
-const StudentProtectedRoute: React.FC<{
-  children: React.ReactNode;
-}> = ({ children }) => {
-  const { user, isLoading } = useAuth();
-  const { role } = useRole();
-
-  if (isLoading) {
-    return <LoadingSpinner label="Authenticating session..." />;
-  }
-
-  if (!user) {
-    return <Navigate to="/student/login" replace />;
-  }
-
-  if (role !== 'student') {
-    return <Navigate to="/" replace />;
-  }
-
-  return <StudentNavigationLayout>{children}</StudentNavigationLayout>;
 };
 
 const router = createBrowserRouter([
@@ -97,16 +68,17 @@ const router = createBrowserRouter([
     ),
   },
   {
-    path: '/student/login',
-    element: (
-      <Suspense fallback={<LoadingSpinner />}>
-        <StudentLoginPage />
-      </Suspense>
-    ),
-  },
-  {
     path: '/login',
     element: <Navigate to="/teacher/login" replace />,
+  },
+  // ── Public Temporary Single-Use Student Access Route ──
+  {
+    path: '/temp-access/:token',
+    element: (
+      <Suspense fallback={<LoadingSpinner label="Loading student access portal..." />}>
+        <TempAccessPage />
+      </Suspense>
+    ),
   },
   {
     path: '/',
@@ -196,57 +168,6 @@ const router = createBrowserRouter([
           <FaceRegistrationPage />
         </Suspense>
       </ProtectedRoute>
-    ),
-  },
-  // ── Student Portal Routes ─────────────────────────────
-  {
-    path: '/student/dashboard',
-    element: (
-      <StudentProtectedRoute>
-        <Suspense fallback={<LoadingSpinner />}>
-          <StudentDashboardPage />
-        </Suspense>
-      </StudentProtectedRoute>
-    ),
-  },
-  {
-    path: '/student/face-scan',
-    element: (
-      <StudentProtectedRoute>
-        <Suspense fallback={<LoadingSpinner />}>
-          <StudentDashboardPage />
-        </Suspense>
-      </StudentProtectedRoute>
-    ),
-  },
-  {
-    path: '/student/subjects',
-    element: (
-      <StudentProtectedRoute>
-        <Suspense fallback={<LoadingSpinner />}>
-          <StudentDashboardPage />
-        </Suspense>
-      </StudentProtectedRoute>
-    ),
-  },
-  {
-    path: '/student/history',
-    element: (
-      <StudentProtectedRoute>
-        <Suspense fallback={<LoadingSpinner />}>
-          <StudentDashboardPage />
-        </Suspense>
-      </StudentProtectedRoute>
-    ),
-  },
-  {
-    path: '/student/mobile-attendance',
-    element: (
-      <StudentProtectedRoute>
-        <Suspense fallback={<LoadingSpinner />}>
-          <StudentDashboardPage />
-        </Suspense>
-      </StudentProtectedRoute>
     ),
   },
   {
