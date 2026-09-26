@@ -143,7 +143,7 @@ export async function createSharedSession(params: CreateSharedSessionParams = {}
   // Always keep offline cache primed
   offlineGrants.set(token, newGrant);
 
-  if (isSupabaseConfigured && supabase) {
+  if (isSupabaseConfigured && supabase && ttlMinutes > 0) {
     try {
       const { data: rpcData, error: rpcError } = await supabase.rpc('create_shared_temp_session', {
         p_label: label,
@@ -216,6 +216,20 @@ export async function validateTempSession(token: string): Promise<ValidateSessio
     return { valid: false, reason: 'invalid_token' };
   }
 
+  const localGrant = offlineGrants.get(cleanToken);
+  if (localGrant) {
+    if (!localGrant.is_active || localGrant.status === 'revoked') {
+      return { valid: false, reason: 'revoked' };
+    }
+    if (new Date(localGrant.expires_at).getTime() <= Date.now() || localGrant.status === 'expired') {
+      localGrant.status = 'expired';
+      return { valid: false, reason: 'expired' };
+    }
+    if (localGrant.max_uses !== null && localGrant.max_uses !== undefined && localGrant.use_count >= localGrant.max_uses) {
+      return { valid: false, reason: 'max_uses_reached' };
+    }
+  }
+
   if (isSupabaseConfigured && supabase) {
     try {
       const { data: rpcData, error: rpcError } = await supabase.rpc('validate_temp_session', {
@@ -231,7 +245,7 @@ export async function validateTempSession(token: string): Promise<ValidateSessio
   }
 
   // Memory fallback
-  const grant = offlineGrants.get(cleanToken);
+  const grant = localGrant;
   if (!grant) {
     return { valid: false, reason: 'not_found' };
   }
