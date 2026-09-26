@@ -1,22 +1,27 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  lookupStudentByLrn,
-  createAccessGrant,
-  validateAccessToken,
-  completeAccessGrant,
+  lrnSchema,
+  verifierSchema,
+  claimFormSchema,
+  createSharedSession,
+  revokeSession,
+  validateTempSession,
+  claimTempSession,
+  completeTempClaim,
   resetLrnLookupRateLimit,
+  GENERIC_VERIFICATION_ERROR,
 } from '@/features/tempAccess/api';
-import { lrnSchema } from '@/features/tempAccess/api';
 import { saveStoredStudents } from '@/features/faceRegistration/api';
 
-describe('Temporary Access QR & Portal (Single-Use Scoped Access)', () => {
+describe('Shared-Session Temporary Access & Verification (§1-§4)', () => {
   const TEST_LRN = '109823456789';
   const TEST_STUDENT_ID = 'std-test-temp-01';
+  const TEST_LAST_NAME = 'Santos';
 
   beforeEach(() => {
     resetLrnLookupRateLimit();
 
-    // Populate mock student in stored roster
+    // Populate mock student in stored roster with both last_name and birthDate
     saveStoredStudents([
       {
         id: TEST_STUDENT_ID,
@@ -27,107 +32,241 @@ describe('Temporary Access QR & Portal (Single-Use Scoped Access)', () => {
         faceRegistrationStatus: 'unregistered',
         guardianName: 'Capitan Tiago',
         guardianPhone: '+639171112233',
-      },
+        birthDate: '2008-05-15',
+      } as any,
     ]);
   });
 
-  describe('LRN Format & Rate Limiting (§2)', () => {
-    it('accepts a valid 12-digit DepEd LRN format', () => {
-      const res = lrnSchema.safeParse('109823456789');
-      expect(res.success).toBe(true);
+  describe('Zod Schema Validation for LRN & Secondary Verifier (§4 & §5)', () => {
+    it('accepts valid 12-digit DepEd LRN format', () => {
+      expect(lrnSchema.safeParse('109823456789').success).toBe(true);
     });
 
-    it('rejects invalid LRN format (non-numeric, shorter, longer)', () => {
+    it('rejects invalid LRN format (non-numeric, shorter, longer, empty)', () => {
       expect(lrnSchema.safeParse('12345').success).toBe(false);
       expect(lrnSchema.safeParse('10982345678A').success).toBe(false);
       expect(lrnSchema.safeParse('1098234567890123').success).toBe(false);
       expect(lrnSchema.safeParse('').success).toBe(false);
     });
 
-    it('looks up student successfully by valid LRN', async () => {
-      const student = await lookupStudentByLrn(TEST_LRN);
-      expect(student).not.toBeNull();
-      expect(student?.lrn).toBe(TEST_LRN);
-      expect(student?.first_name).toBe('Maria Clara De Los');
-      expect(student?.last_name).toBe('Santos');
+    it('accepts valid verifiers (birth date or last name)', () => {
+      expect(verifierSchema.safeParse('2008-05-15').success).toBe(true);
+      expect(verifierSchema.safeParse('Santos').success).toBe(true);
     });
 
-    it('returns null when looking up a non-existent student LRN', async () => {
-      const student = await lookupStudentByLrn('999999999999');
-      expect(student).toBeNull();
+    it('rejects empty or whitespace-only verifier', () => {
+      expect(verifierSchema.safeParse('').success).toBe(false);
+      expect(verifierSchema.safeParse('   ').success).toBe(false);
     });
 
-    it('enforces rate limiting on repeated LRN lookup attempts', async () => {
-      // 6 lookups allowed per window
-      for (let i = 0; i < 6; i++) {
-        await lookupStudentByLrn(TEST_LRN);
-      }
-      // 7th lookup must trigger rate limit error
-      await expect(lookupStudentByLrn(TEST_LRN)).rejects.toThrow(/Rate limit exceeded/);
+    it('validates claimFormSchema compound inputs', () => {
+      expect(
+        claimFormSchema.safeParse({
+          lrn: '109823456789',
+          verifier: 'Santos',
+        }).success
+      ).toBe(true);
+
+      expect(
+        claimFormSchema.safeParse({
+          lrn: '109823456789',
+          verifier: '',
+        }).success
+      ).toBe(false);
+
+      expect(
+        claimFormSchema.safeParse({
+          lrn: 'invalid-lrn',
+          verifier: 'Santos',
+        }).success
+      ).toBe(false);
     });
   });
 
-  describe('Access Grant Token Generation & Security (§2)', () => {
-    it('creates a grant with a secure opaque token and does not embed the raw LRN in the token', async () => {
-      const grant = await createAccessGrant({
-        lrn: TEST_LRN,
+  describe('Shared Session Creation & Staff Management (§3)', () => {
+    it('creates a shared session with high-entropy token not bound to a single LRN', async () => {
+      const session = await createSharedSession({
+        label: 'Grade 7 Enrollment Day',
         purpose: 'both',
+        ttlMinutes: 240,
+        maxUses: 100,
+      });
+
+      expect(session.token).toBeDefined();
+      expect(session.token.length).toBeGreaterThanOrEqual(32);
+      expect(session.is_shared).toBe(true);
+      expect(session.is_active).toBe(true);
+      expect(session.label).toBe('Grade 7 Enrollment Day');
+      expect(session.max_uses).toBe(100);
+      expect(session.use_count).toBe(0);
+      expect(session.lrn).toBeUndefined(); // Shared session is not pre-bound to an LRN
+    });
+
+    it('allows staff to revoke an active session early', async () => {
+      const session = await createSharedSession({
+        label: 'Short Lived Session',
         ttlMinutes: 60,
       });
 
-      expect(grant.token).toBeDefined();
-      expect(grant.token.length).toBeGreaterThanOrEqual(32);
-      expect(grant.token).not.toContain(TEST_LRN); // Token is opaque random, never raw LRN
-      expect(grant.status).toBe('pending');
-      expect(grant.purpose).toBe('both');
-    });
-  });
+      const revoked = await revokeSession(session.id);
+      expect(revoked).toBe(true);
 
-  describe('Token Validation & Temporary Session Lifecycle (§3 & §4)', () => {
-    it('validates an active, pending token and returns student scope', async () => {
-      const grant = await createAccessGrant({
-        lrn: TEST_LRN,
-        purpose: 'face_registration',
-        ttlMinutes: 60,
-      });
-
-      const val = await validateAccessToken(grant.token);
-      expect(val.valid).toBe(true);
-      expect(val.student?.lrn).toBe(TEST_LRN);
-      expect(val.purpose).toBe('face_registration');
-    });
-
-    it('rejects an invalid or non-existent token', async () => {
-      const val = await validateAccessToken('non_existent_token_1234567890abcdef');
+      const val = await validateTempSession(session.token);
       expect(val.valid).toBe(false);
-      expect(val.reason).toBe('not_found');
+      expect(val.reason).toBe('revoked');
     });
+  });
 
-    it('rejects an expired token', async () => {
-      const grant = await createAccessGrant({
-        lrn: TEST_LRN,
-        purpose: 'both',
-        ttlMinutes: -10, // already expired
+  describe('Session Validation Lifecycle (§2)', () => {
+    it('validates active session and returns minimal non-sensitive metadata', async () => {
+      const session = await createSharedSession({
+        label: 'Campus Gate Open Session',
+        purpose: 'face_registration',
+        ttlMinutes: 120,
       });
 
-      const val = await validateAccessToken(grant.token);
+      const val = await validateTempSession(session.token);
+      expect(val.valid).toBe(true);
+      expect(val.label).toBe('Campus Gate Open Session');
+      expect(val.purpose).toBe('face_registration');
+      expect(val.is_active).toBe(true);
+    });
+
+    it('rejects an expired session token', async () => {
+      const session = await createSharedSession({
+        ttlMinutes: -10, // already expired in the past
+      });
+
+      const val = await validateTempSession(session.token);
       expect(val.valid).toBe(false);
       expect(val.reason).toBe('expired');
     });
+
+    it('rejects an invalid or non-existent token', async () => {
+      const val = await validateTempSession('non_existent_token_1234567890abcdef');
+      expect(val.valid).toBe(false);
+      expect(val.reason).toBe('not_found');
+    });
   });
 
-  describe('Single-Use Grant Completion & Invalidation (§4)', () => {
-    it('completes grant atomically, updates face/guardian, and marks token completed so it cannot be reused', async () => {
-      const grant = await createAccessGrant({
+  describe('Student Identification & Verification (Claim Flow) (§2 & §4)', () => {
+    it('happy path: student claims session using valid LRN and Last Name verifier', async () => {
+      const session = await createSharedSession({ ttlMinutes: 60 });
+
+      const claimRes = await claimTempSession({
+        token: session.token,
         lrn: TEST_LRN,
-        purpose: 'both',
-        ttlMinutes: 60,
+        verifier: TEST_LAST_NAME,
       });
 
+      expect(claimRes.success).toBe(true);
+      expect(claimRes.claim_token).toBeDefined();
+      expect(claimRes.claim_token).not.toBe(session.token); // Scoped claim token differs from shared session token
+      expect(claimRes.student?.lrn).toBe(TEST_LRN);
+      expect(claimRes.student?.last_name).toBe(TEST_LAST_NAME);
+    });
+
+    it('happy path: student claims session using valid LRN and Birth Date verifier', async () => {
+      const session = await createSharedSession({ ttlMinutes: 60 });
+
+      const claimRes = await claimTempSession({
+        token: session.token,
+        lrn: TEST_LRN,
+        verifier: '2008-05-15',
+      });
+
+      expect(claimRes.success).toBe(true);
+      expect(claimRes.claim_token).toBeDefined();
+      expect(claimRes.student?.lrn).toBe(TEST_LRN);
+    });
+
+    it('rejects non-existent LRN with generic error (no LRN enumeration oracle)', async () => {
+      const session = await createSharedSession({ ttlMinutes: 60 });
+
+      await expect(
+        claimTempSession({
+          token: session.token,
+          lrn: '999999999999',
+          verifier: 'Santos',
+        })
+      ).rejects.toThrow(GENERIC_VERIFICATION_ERROR);
+    });
+
+    it('rejects verifier mismatch with generic error', async () => {
+      const session = await createSharedSession({ ttlMinutes: 60 });
+
+      await expect(
+        claimTempSession({
+          token: session.token,
+          lrn: TEST_LRN,
+          verifier: 'WrongLastNameOrDate',
+        })
+      ).rejects.toThrow(GENERIC_VERIFICATION_ERROR);
+    });
+
+    it('prevents double-claiming the same session with the same LRN', async () => {
+      const session = await createSharedSession({ ttlMinutes: 60 });
+
+      // First claim succeeds
+      const firstClaim = await claimTempSession({
+        token: session.token,
+        lrn: TEST_LRN,
+        verifier: TEST_LAST_NAME,
+      });
+      expect(firstClaim.success).toBe(true);
+
+      // Second claim attempt by same student on same grant fails
+      await expect(
+        claimTempSession({
+          token: session.token,
+          lrn: TEST_LRN,
+          verifier: TEST_LAST_NAME,
+        })
+      ).rejects.toThrow(GENERIC_VERIFICATION_ERROR);
+    });
+
+    it('enforces rate-limiting after repeated failed attempts', async () => {
+      const session = await createSharedSession({ ttlMinutes: 60 });
+
+      // 5 failed attempts with bad verifier
+      for (let i = 0; i < 5; i++) {
+        try {
+          await claimTempSession({
+            token: session.token,
+            lrn: TEST_LRN,
+            verifier: `WrongAttempt${i}`,
+          });
+        } catch {
+          // Expected failure
+        }
+      }
+
+      // Next attempt (even with correct details) must fail due to rate-limiting
+      await expect(
+        claimTempSession({
+          token: session.token,
+          lrn: TEST_LRN,
+          verifier: TEST_LAST_NAME,
+        })
+      ).rejects.toThrow(GENERIC_VERIFICATION_ERROR);
+    });
+  });
+
+  describe('Scoped Claim Completion (§2 & §4)', () => {
+    it('completes claim with face biometrics & guardian info, then locks further edits', async () => {
+      const session = await createSharedSession({ ttlMinutes: 60 });
+
+      const claimRes = await claimTempSession({
+        token: session.token,
+        lrn: TEST_LRN,
+        verifier: TEST_LAST_NAME,
+      });
+
+      const claimToken = claimRes.claim_token!;
       const mockEmbedding = [Array.from({ length: 128 }, (_, i) => i * 0.005)];
 
-      const completeRes = await completeAccessGrant({
-        token: grant.token,
+      const completeRes = await completeTempClaim({
+        claimToken,
         faceDescriptors: mockEmbedding,
         guardianDetails: {
           name: 'Maria Elena Santos',
@@ -139,18 +278,13 @@ describe('Temporary Access QR & Portal (Single-Use Scoped Access)', () => {
       expect(completeRes.success).toBe(true);
       expect(completeRes.status).toBe('completed');
 
-      // Attempting to validate the token again must now fail as already_used
-      const reValidate = await validateAccessToken(grant.token);
-      expect(reValidate.valid).toBe(false);
-      expect(reValidate.reason).toBe('already_used');
-
-      // Attempting to complete with the same token again must fail
-      const reuseRes = await completeAccessGrant({
-        token: grant.token,
+      // Attempting to complete with the same claim token again must fail
+      const reuseRes = await completeTempClaim({
+        claimToken,
         faceDescriptors: mockEmbedding,
       });
       expect(reuseRes.success).toBe(false);
-      expect(reuseRes.error).toContain('already completed');
+      expect(reuseRes.error).toContain('already been completed');
     });
   });
 });

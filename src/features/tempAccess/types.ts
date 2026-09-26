@@ -2,6 +2,8 @@ export type AccessGrantPurpose = 'face_registration' | 'guardian_update' | 'both
 
 export type AccessGrantStatus = 'pending' | 'completed' | 'expired' | 'revoked';
 
+export type ClaimStatus = 'pending' | 'verified' | 'completed' | 'failed';
+
 export interface StudentSummary {
   id: string;
   lrn: string;
@@ -11,6 +13,7 @@ export interface StudentSummary {
   grade_level?: number;
   section_name?: string;
   photo_url?: string | null;
+  birth_date?: string;
 }
 
 export interface GuardianDetails {
@@ -23,10 +26,15 @@ export interface GuardianDetails {
 
 export interface StudentAccessGrant {
   id: string;
-  student_id: string;
-  lrn: string;
+  student_id?: string | null;
+  lrn?: string | null;
   token: string;
   purpose: AccessGrantPurpose;
+  label?: string | null;
+  is_shared: boolean;
+  max_uses?: number | null;
+  use_count: number;
+  is_active: boolean;
   created_by?: string | null;
   expires_at: string;
   status: AccessGrantStatus;
@@ -36,26 +44,73 @@ export interface StudentAccessGrant {
   student?: StudentSummary;
 }
 
-export interface AccessGrantEvent {
+export interface StudentAccessGrantClaim {
   id: string;
   grant_id: string;
-  event_type: 'created' | 'validated' | 'face_captured' | 'guardian_updated' | 'completed' | 'revoked';
-  timestamp: string;
-  metadata?: Record<string, unknown>;
+  lrn: string;
+  student_id?: string;
+  claim_token: string;
+  status: ClaimStatus;
+  claimed_at: string;
+  completed_at?: string | null;
+  ip_address?: string | null;
+  user_agent?: string | null;
 }
 
-export interface ValidateTokenResponse {
+export interface ValidateSessionResponse {
   valid: boolean;
-  reason?: 'not_found' | 'expired' | 'already_used' | 'revoked' | 'invalid_token';
+  reason?: 'not_found' | 'expired' | 'revoked' | 'max_uses_reached' | 'invalid_token';
   grant_id?: string;
-  student_id?: string;
+  label?: string | null;
   purpose?: AccessGrantPurpose;
   expires_at?: string;
+  is_shared?: boolean;
+  max_uses?: number | null;
+  use_count?: number;
+  is_active?: boolean;
+}
+
+// Retain legacy type alias for compatibility
+export type ValidateTokenResponse = ValidateSessionResponse & {
+  student_id?: string;
   has_existing_face?: boolean;
   student?: StudentSummary;
   guardian?: GuardianDetails | null;
+};
+
+export interface ClaimSessionPayload {
+  token: string;
+  lrn: string;
+  verifier: string;
 }
 
+export interface ClaimSessionResponse {
+  success: boolean;
+  claim_token?: string;
+  grant_id?: string;
+  purpose?: AccessGrantPurpose;
+  student?: StudentSummary;
+  guardian?: GuardianDetails | null;
+  has_existing_face?: boolean;
+  error?: string;
+}
+
+export interface CompleteClaimPayload {
+  claimToken: string;
+  faceDescriptors?: number[][];
+  guardianDetails?: GuardianDetails;
+  capturedPhotoUrl?: string;
+}
+
+export interface CompleteClaimResponse {
+  success: boolean;
+  claim_id?: string;
+  student_id?: string;
+  status?: ClaimStatus;
+  error?: string;
+}
+
+// Legacy payload compatibility
 export interface CompleteGrantPayload {
   token: string;
   faceDescriptors?: number[][];

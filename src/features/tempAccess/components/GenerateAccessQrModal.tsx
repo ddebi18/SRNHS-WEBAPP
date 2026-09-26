@@ -1,21 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Modal } from '@/components/ui/Modal';
-import { Card } from '@/components/ui/Card';
 import {
   AccessGrantPurpose,
-  AccessGrantStatus,
   StudentAccessGrant,
-  StudentSummary,
+  StudentAccessGrantClaim,
 } from '../types';
 import {
-  lookupStudentByLrn,
-  createAccessGrant,
+  createSharedSession,
+  revokeSession,
+  subscribeToSessionClaims,
   subscribeToGrantStatus,
 } from '../api';
 import {
   QrCode,
-  Search,
   Camera,
   UserCheck,
   Clock,
@@ -24,125 +22,112 @@ import {
   Printer,
   AlertCircle,
   Sparkles,
-  ArrowRight,
   Shield,
   RefreshCw,
+  Users,
+  Ban,
 } from 'lucide-react';
 
 interface GenerateAccessQrModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialLrn?: string;
 }
 
 export const GenerateAccessQrModal: React.FC<GenerateAccessQrModalProps> = ({
   isOpen,
   onClose,
-  initialLrn = '',
 }) => {
-  const [lrnInput, setLrnInput] = useState(initialLrn);
-  const [lookupLoading, setLookupLoading] = useState(false);
-  const [lookupError, setLookupError] = useState<string | null>(null);
-  const [matchedStudent, setMatchedStudent] = useState<StudentSummary | null>(null);
-
+  const [label, setLabel] = useState('Student Registration Session');
   const [purpose, setPurpose] = useState<AccessGrantPurpose>('both');
-  const [ttlMinutes, setTtlMinutes] = useState<number>(60); // 1 hour default
+  const [expiryPreset, setExpiryPreset] = useState<'60' | '240' | '1440' | 'custom'>('240');
+  const [customMinutes, setCustomMinutes] = useState<number>(120);
+  const [maxUsesInput, setMaxUsesInput] = useState<string>('');
 
   const [generating, setGenerating] = useState(false);
-  const [activeGrant, setActiveGrant] = useState<StudentAccessGrant | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [activeSession, setActiveSession] = useState<StudentAccessGrant | null>(null);
   const [copied, setCopied] = useState(false);
-  const [liveStatus, setLiveStatus] = useState<AccessGrantStatus>('pending');
+  const [revoking, setRevoking] = useState(false);
+  const [recentClaims, setRecentClaims] = useState<StudentAccessGrantClaim[]>([]);
 
   const printRef = useRef<HTMLDivElement>(null);
-
-  // Auto-search if initialLrn provided
-  useEffect(() => {
-    if (initialLrn && initialLrn.length === 12) {
-      setLrnInput(initialLrn);
-      handleLookup(initialLrn);
-    }
-  }, [initialLrn, isOpen]);
 
   // Reset state on modal close
   useEffect(() => {
     if (!isOpen) {
-      setLrnInput('');
-      setMatchedStudent(null);
-      setActiveGrant(null);
-      setLookupError(null);
-      setLiveStatus('pending');
+      setLabel('Student Registration Session');
+      setPurpose('both');
+      setExpiryPreset('240');
+      setMaxUsesInput('');
+      setActiveSession(null);
+      setError(null);
+      setRecentClaims([]);
     }
   }, [isOpen]);
 
-  // Subscribe to realtime status changes for active grant
+  // Realtime claims and status listener
   useEffect(() => {
-    if (!activeGrant) return;
-    setLiveStatus(activeGrant.status);
+    if (!activeSession) return;
 
-    const unsubscribe = subscribeToGrantStatus(activeGrant.id, (newStatus) => {
-      setLiveStatus(newStatus);
+    const unsubClaims = subscribeToSessionClaims(activeSession.id, (newClaim) => {
+      setRecentClaims((prev) => [newClaim, ...prev.slice(0, 9)]);
+      setActiveSession((curr) => curr ? { ...curr, use_count: curr.use_count + 1 } : null);
+    });
+
+    const unsubStatus = subscribeToGrantStatus(activeSession.id, (newStatus) => {
+      setActiveSession((curr) => curr ? { ...curr, status: newStatus, is_active: newStatus === 'pending' } : null);
     });
 
     return () => {
-      unsubscribe();
+      unsubClaims();
+      unsubStatus();
     };
-  }, [activeGrant]);
+  }, [activeSession?.id]);
 
-  const handleLookup = async (lrnToSearch: string) => {
-    const clean = lrnToSearch.trim();
-    if (!clean) return;
-
-    if (!/^\d{12}$/.test(clean)) {
-      setLookupError('LRN must be exactly 12 numeric digits.');
-      setMatchedStudent(null);
-      return;
-    }
-
-    setLookupLoading(true);
-    setLookupError(null);
-
-    try {
-      const student = await lookupStudentByLrn(clean);
-      if (!student) {
-        setLookupError(`No enrolled student found with LRN ${clean}.`);
-        setMatchedStudent(null);
-      } else {
-        setMatchedStudent(student);
-        setLookupError(null);
-      }
-    } catch (err: any) {
-      setLookupError(err.message || 'Error looking up student.');
-      setMatchedStudent(null);
-    } finally {
-      setLookupLoading(false);
-    }
-  };
-
-  const handleGenerate = async () => {
-    if (!matchedStudent) return;
+  const handleGenerate = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setGenerating(true);
+    setError(null);
+
+    const ttl = expiryPreset === 'custom' ? Number(customMinutes) || 60 : Number(expiryPreset);
+    const maxUses = maxUsesInput.trim() ? parseInt(maxUsesInput.trim(), 10) : null;
+
     try {
-      const grant = await createAccessGrant({
-        lrn: matchedStudent.lrn,
+      const session = await createSharedSession({
+        label,
         purpose,
-        ttlMinutes,
+        ttlMinutes: ttl,
+        maxUses: maxUses && maxUses > 0 ? maxUses : null,
       });
-      setActiveGrant(grant);
-      setLiveStatus('pending');
+      setActiveSession(session);
+      setRecentClaims([]);
     } catch (err: any) {
-      setLookupError(err.message || 'Failed to generate access grant.');
+      setError(err.message || 'Failed to create registration session.');
     } finally {
       setGenerating(false);
     }
   };
 
-  const accessUrl = activeGrant
-    ? `${window.location.origin}/temp-access/${activeGrant.token}`
+  const handleRevoke = async () => {
+    if (!activeSession) return;
+    setRevoking(true);
+    try {
+      await revokeSession(activeSession.id);
+      setActiveSession((prev) => (prev ? { ...prev, is_active: false, status: 'revoked' } : null));
+    } catch (err: any) {
+      setError(err.message || 'Failed to revoke session.');
+    } finally {
+      setRevoking(false);
+    }
+  };
+
+  const sessionUrl = activeSession
+    ? `${window.location.origin}/temp-access/${activeSession.token}`
     : '';
 
   const handleCopyLink = () => {
-    if (!accessUrl) return;
-    navigator.clipboard.writeText(accessUrl);
+    if (!sessionUrl) return;
+    navigator.clipboard.writeText(sessionUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -155,329 +140,333 @@ export const GenerateAccessQrModal: React.FC<GenerateAccessQrModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Generate Temporary Access QR"
-      subtitle="Single-use, scoped biometric enrollment & guardian update portal"
-      maxWidth="lg"
+      title="Shared Registration Session QR"
+      subtitle="Generate a reusable QR code for on-site student facial enrollment and contact verification."
+      maxWidth="2xl"
     >
       <div className="space-y-6">
-        {!activeGrant ? (
-          <>
-            {/* Step 1: LRN Lookup Form */}
-            <div className="space-y-3">
-              <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                Look up Student by Learner Reference Number (LRN)
+        {/* Error Alert */}
+        {error && (
+          <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {!activeSession ? (
+          /* Step 1: Session Configuration Form */
+          <form onSubmit={handleGenerate} className="space-y-5">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Session Event Name / Label
               </label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <input
-                    type="text"
-                    maxLength={12}
-                    placeholder="Enter 12-digit LRN (e.g. 109823456789)"
-                    value={lrnInput}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '').slice(0, 12);
-                      setLrnInput(val);
-                      if (val.length === 12) {
-                        handleLookup(val);
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleLookup(lrnInput);
-                      }
-                    }}
-                    className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 focus:ring-2 focus:ring-primary-500 focus:outline-none font-mono text-sm tracking-wide"
-                  />
-                  <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-3.5" />
-                </div>
+              <input
+                type="text"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="e.g. Grade 7 On-Site Enrollment Day"
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+                required
+              />
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                A descriptive title displayed to students when they scan the QR code.
+              </p>
+            </div>
+
+            {/* Purpose Selection */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                Registration Scope
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <button
                   type="button"
-                  disabled={lrnInput.length !== 12 || lookupLoading}
-                  onClick={() => handleLookup(lrnInput)}
-                  className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 dark:bg-neutral-100 dark:hover:bg-neutral-200 text-white dark:text-neutral-900 font-medium text-sm rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  onClick={() => setPurpose('both')}
+                  className={`p-3 rounded-lg border text-left flex flex-col justify-between transition-all ${
+                    purpose === 'both'
+                      ? 'border-primary bg-primary-50/70 dark:bg-primary-950/40 ring-1 ring-primary'
+                      : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                  }`}
                 >
-                  {lookupLoading ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    'Verify LRN'
-                  )}
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Sparkles className="w-4 h-4 text-primary" />
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">Full Setup</span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    3-angle face enrollment + parent contact details
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPurpose('face_registration')}
+                  className={`p-3 rounded-lg border text-left flex flex-col justify-between transition-all ${
+                    purpose === 'face_registration'
+                      ? 'border-primary bg-primary-50/70 dark:bg-primary-950/40 ring-1 ring-primary'
+                      : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Camera className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">Face Only</span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Biometric facial capture for gate turnstiles
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPurpose('guardian_update')}
+                  className={`p-3 rounded-lg border text-left flex flex-col justify-between transition-all ${
+                    purpose === 'guardian_update'
+                      ? 'border-primary bg-primary-50/70 dark:bg-primary-950/40 ring-1 ring-primary'
+                      : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <UserCheck className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">Guardian Only</span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Update guardian names & emergency SMS numbers
+                  </span>
                 </button>
               </div>
+            </div>
 
-              {lookupError && (
-                <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 flex items-center gap-2 text-xs text-rose-700 dark:text-rose-400">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{lookupError}</span>
+            {/* Expiration Preset */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                Session Expiration Window
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { id: '60', label: '1 Hour' },
+                  { id: '240', label: '4 Hours (Recommended)' },
+                  { id: '1440', label: '1 Day (24h)' },
+                  { id: 'custom', label: 'Custom' },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setExpiryPreset(item.id as any)}
+                    className={`px-3 py-2 text-xs font-medium rounded-lg border text-center transition-all ${
+                      expiryPreset === item.id
+                        ? 'border-primary bg-primary-50 dark:bg-primary-950/60 text-primary-700 dark:text-primary-300 font-semibold'
+                        : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              {expiryPreset === 'custom' && (
+                <div className="mt-2.5 flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={5}
+                    max={10080}
+                    value={customMinutes}
+                    onChange={(e) => setCustomMinutes(Math.max(5, parseInt(e.target.value, 10) || 5))}
+                    className="w-28 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
+                  />
+                  <span className="text-xs text-slate-500">minutes (5 mins up to 7 days)</span>
                 </div>
               )}
             </div>
 
-            {/* Step 2: Confirmation & Student Profile Preview */}
-            {matchedStudent && (
-              <Card className="p-4 border-primary-200 dark:border-primary-900/50 bg-primary-50/40 dark:bg-primary-950/20">
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-full overflow-hidden bg-neutral-200 dark:bg-neutral-700 shrink-0 border-2 border-white dark:border-neutral-800 shadow-sm">
-                    {matchedStudent.photo_url ? (
-                      <img
-                        src={matchedStudent.photo_url}
-                        alt={matchedStudent.first_name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center font-bold text-neutral-500 dark:text-neutral-400">
-                        {matchedStudent.first_name.charAt(0)}
-                        {matchedStudent.last_name.charAt(0)}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-semibold text-neutral-900 dark:text-neutral-100 truncate">
-                        {matchedStudent.first_name} {matchedStudent.last_name}
-                      </h4>
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">
-                        LRN Verified
-                      </span>
-                    </div>
-                    <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-0.5">
-                      LRN: <span className="font-mono font-semibold">{matchedStudent.lrn}</span> •{' '}
-                      Grade {matchedStudent.grade_level} ({matchedStudent.section_name})
-                    </p>
-                  </div>
-                </div>
-              </Card>
-            )}
+            {/* Optional Max Uses */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Student Cap / Max Registrations (Optional)
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={maxUsesInput}
+                onChange={(e) => setMaxUsesInput(e.target.value)}
+                placeholder="Leave blank for unlimited during the session window"
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+              />
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                Limits how many students can successfully complete claims using this session QR code.
+              </p>
+            </div>
 
-            {/* Step 3: Grant Purpose & Expiry Options */}
-            {matchedStudent && (
-              <div className="space-y-4 pt-2">
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 mb-2">
-                    Scope & Allowed Purpose
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => setPurpose('both')}
-                      className={`p-3 rounded-lg border text-left transition-all ${
-                        purpose === 'both'
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-950/40 text-primary-900 dark:text-primary-100 ring-2 ring-primary-500/20'
-                          : 'border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 font-medium text-sm">
-                        <Sparkles className="w-4 h-4 text-primary-500" />
-                        <span>Both Tasks</span>
-                      </div>
-                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                        Biometric face scan + guardian details update
-                      </p>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setPurpose('face_registration')}
-                      className={`p-3 rounded-lg border text-left transition-all ${
-                        purpose === 'face_registration'
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-950/40 text-primary-900 dark:text-primary-100 ring-2 ring-primary-500/20'
-                          : 'border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 font-medium text-sm">
-                        <Camera className="w-4 h-4 text-primary-500" />
-                        <span>Face Only</span>
-                      </div>
-                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                        Capture face embedding and photo only
-                      </p>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setPurpose('guardian_update')}
-                      className={`p-3 rounded-lg border text-left transition-all ${
-                        purpose === 'guardian_update'
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-950/40 text-primary-900 dark:text-primary-100 ring-2 ring-primary-500/20'
-                          : 'border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-800/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 font-medium text-sm">
-                        <UserCheck className="w-4 h-4 text-primary-500" />
-                        <span>Guardian Only</span>
-                      </div>
-                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                        Update emergency parent contact and SMS
-                      </p>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between p-3 rounded-lg bg-neutral-50 dark:bg-neutral-800/50 border border-neutral-200 dark:border-neutral-800">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
-                    <div>
-                      <p className="text-xs font-medium text-neutral-900 dark:text-neutral-100">
-                        Access Expiration (TTL)
-                      </p>
-                      <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                        Token automatically invalidates once used or expired
-                      </p>
-                    </div>
-                  </div>
-                  <select
-                    value={ttlMinutes}
-                    onChange={(e) => setTtlMinutes(Number(e.target.value))}
-                    className="px-2.5 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-medium focus:ring-1 focus:ring-primary-500"
-                  >
-                    <option value={15}>15 Minutes</option>
-                    <option value={30}>30 Minutes</option>
-                    <option value={60}>1 Hour (Standard)</option>
-                    <option value={120}>2 Hours</option>
-                  </select>
-                </div>
-
-                {/* Generate Button */}
-                <div className="pt-2 flex justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={generating}
-                    onClick={handleGenerate}
-                    className="px-5 py-2 bg-primary-600 hover:bg-primary-700 text-white font-medium text-sm rounded-lg shadow-sm transition-colors flex items-center gap-2"
-                  >
-                    {generating ? (
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <>
-                        <QrCode className="w-4 h-4" />
-                        Generate Single-Use QR
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
+            {/* Submit */}
+            <div className="pt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={generating}
+                className="px-5 py-2 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-light text-white flex items-center gap-2 shadow-sm transition-colors disabled:opacity-50"
+              >
+                {generating ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Generating Session...
+                  </>
+                ) : (
+                  <>
+                    <QrCode className="w-4 h-4" />
+                    Generate Session QR
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
         ) : (
-          /* Active QR Code Display & Realtime Tracker */
+          /* Step 2: Active Session Display with Live QR Code */
           <div className="space-y-6">
             <div
               ref={printRef}
-              className="p-6 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl flex flex-col items-center text-center shadow-sm"
+              className="p-6 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 shadow-sm flex flex-col items-center text-center space-y-4"
             >
-              {/* Security Header */}
-              <div className="flex items-center gap-2 mb-3">
-                <Shield className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span className="text-xs font-bold tracking-wide uppercase text-neutral-600 dark:text-neutral-400">
-                  San Roque National High School • Student Self-Service
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                    activeSession.is_active && activeSession.status === 'pending'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                      : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      activeSession.is_active ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+                    }`}
+                  />
+                  {activeSession.is_active ? 'Live Session Active' : 'Session Revoked'}
+                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  {activeSession.purpose === 'both'
+                    ? 'Face + Guardian'
+                    : activeSession.purpose === 'face_registration'
+                    ? 'Face Only'
+                    : 'Guardian Only'}
                 </span>
               </div>
 
-              {/* Student Identification */}
-              <h3 className="text-lg font-bold text-neutral-900 dark:text-neutral-100">
-                {activeGrant.student?.first_name} {activeGrant.student?.last_name}
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                {activeSession.label || 'Student Registration Session'}
               </h3>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                LRN: <span className="font-mono font-medium">{activeGrant.lrn}</span> • Scope:{' '}
-                <span className="font-semibold capitalize">{activeGrant.purpose.replace('_', ' ')}</span>
-              </p>
 
-              {/* QR Code */}
-              <div className="my-5 p-4 bg-white rounded-xl border border-neutral-200 shadow-inner">
+              {/* QR Code Container */}
+              <div className="p-4 bg-white rounded-2xl shadow-inner border border-slate-200 inline-block">
                 <QRCodeSVG
-                  value={accessUrl}
-                  size={210}
+                  value={sessionUrl}
+                  size={200}
                   level="H"
                   includeMargin={true}
-                  imageSettings={{
-                    src: '/srnhs-seal.jpg',
-                    x: undefined,
-                    y: undefined,
-                    height: 38,
-                    width: 38,
-                    excavate: true,
-                  }}
                 />
               </div>
 
-              <div className="flex items-center gap-2 text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                <Clock className="w-3.5 h-3.5 text-amber-500" />
-                <span>
-                  Valid for {ttlMinutes} min • Single-use access credential
-                </span>
-              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-400 max-w-sm">
+                Students scan this QR code with their mobile device camera. They will be prompted to enter their 12-digit LRN and verify their identity.
+              </p>
 
-              {/* Live Realtime Status Pill */}
-              <div className="mt-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700">
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    liveStatus === 'completed'
-                      ? 'bg-emerald-500 animate-none'
-                      : 'bg-amber-500 animate-ping'
-                  }`}
-                />
-                <span className="text-xs font-semibold text-neutral-800 dark:text-neutral-200 capitalize">
-                  {liveStatus === 'pending'
-                    ? 'Waiting for student scan / submission…'
-                    : liveStatus === 'completed'
-                    ? 'Registration Completed & Invalidation Finalized'
-                    : `Status: ${liveStatus}`}
-                </span>
+              {/* Stats Bar */}
+              <div className="grid grid-cols-2 gap-3 w-full max-w-sm pt-2">
+                <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-left">
+                  <div className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1">
+                    <Users className="w-3 h-3 text-primary" /> Registrations
+                  </div>
+                  <div className="text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5">
+                    {activeSession.use_count}{' '}
+                    <span className="text-xs font-normal text-slate-500">
+                      / {activeSession.max_uses ? activeSession.max_uses : 'Unlimited'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-left">
+                  <div className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-amber-500" /> Expires
+                  </div>
+                  <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 mt-1">
+                    {new Date(activeSession.expires_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Quick Link & Action Buttons */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  value={accessUrl}
-                  className="flex-1 px-3 py-2 text-xs font-mono rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 select-all"
-                />
-                <button
-                  type="button"
-                  onClick={handleCopyLink}
-                  className="px-3 py-2 text-xs font-medium bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 rounded-lg flex items-center gap-1.5 transition-colors"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePrint}
-                  className="px-3 py-2 text-xs font-medium bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 rounded-lg flex items-center gap-1.5 transition-colors"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  Print
-                </button>
+            {/* Direct URL sharing bar */}
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                value={sessionUrl}
+                className="flex-1 px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 select-all outline-none font-mono"
+              />
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 flex items-center gap-1.5 transition-colors shrink-0"
+              >
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? 'Copied' : 'Copy Link'}
+              </button>
+              <button
+                type="button"
+                onClick={handlePrint}
+                className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 flex items-center gap-1.5 transition-colors shrink-0"
+              >
+                <Printer className="w-3.5 h-3.5" /> Print
+              </button>
+            </div>
+
+            {/* Live Claims Activity Feed */}
+            {recentClaims.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-primary" /> Recent Verified Claims ({recentClaims.length})
+                </h4>
+                <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                  {recentClaims.map((claim) => (
+                    <div
+                      key={claim.id}
+                      className="px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs"
+                    >
+                      <span className="font-mono text-slate-800 dark:text-slate-200">LRN: {claim.lrn}</span>
+                      <span className="text-[11px] text-slate-400">
+                        {new Date(claim.claimed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
+            )}
 
-              <div className="flex items-center justify-between pt-2">
+            {/* Revoke and Reset Actions */}
+            <div className="pt-2 flex items-center justify-between border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                disabled={!activeSession.is_active || revoking}
+                onClick={handleRevoke}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900/60 hover:bg-rose-100 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Ban className="w-3.5 h-3.5" />
+                {revoking ? 'Revoking...' : 'Revoke Session'}
+              </button>
+
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setActiveGrant(null);
-                    setMatchedStudent(null);
-                    setLrnInput('');
-                  }}
-                  className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline flex items-center gap-1"
+                  onClick={() => setActiveSession(null)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 transition-colors"
                 >
-                  <ArrowRight className="w-3 h-3 rotate-180" />
-                  Generate another QR
+                  Create Another Session
                 </button>
-
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 text-xs font-medium bg-neutral-900 hover:bg-neutral-800 dark:bg-neutral-100 dark:hover:bg-neutral-200 text-white dark:text-neutral-900 rounded-lg transition-colors"
+                  className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-primary text-white hover:bg-primary-light transition-colors"
                 >
                   Done
                 </button>

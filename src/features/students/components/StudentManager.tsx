@@ -88,7 +88,6 @@ export const StudentManager: React.FC = () => {
   // Violation Modal
   const [violationModalOpen, setViolationModalOpen] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
-  const [qrModalLrn, setQrModalLrn] = useState('');
   const [violationStudentId, setViolationStudentId] = useState('');
   const [violationTitle, setViolationTitle] = useState('');
   const [violationDesc, setViolationDesc] = useState('');
@@ -268,16 +267,6 @@ export const StudentManager: React.FC = () => {
           >
             <Eye className="w-3.5 h-3.5" /> Details
           </button>
-          <button
-            onClick={() => {
-              setQrModalLrn(s.lrn);
-              setQrModalOpen(true);
-            }}
-            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-primary-50 dark:bg-primary-950/60 border border-primary-200 dark:border-primary-800 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors flex items-center gap-1"
-            title="Generate temporary access QR"
-          >
-            <QrCode className="w-3.5 h-3.5" /> Access QR
-          </button>
           {isAdmin && (
             <button
               onClick={() => handleDeleteStudent(s.id, `${s.first_name} ${s.last_name}`)}
@@ -308,14 +297,11 @@ export const StudentManager: React.FC = () => {
 
         <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
           <button
-            onClick={() => {
-              setQrModalLrn('');
-              setQrModalOpen(true);
-            }}
+            onClick={() => setQrModalOpen(true)}
             className="px-3.5 py-2 text-xs font-medium rounded-lg bg-neutral-900 hover:bg-neutral-800 dark:bg-neutral-100 dark:hover:bg-neutral-200 text-white dark:text-neutral-900 flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
           >
             <QrCode className="w-4 h-4" />
-            Generate Access QR
+            Registration Session QR
           </button>
 
           <button
@@ -549,7 +535,6 @@ export const StudentManager: React.FC = () => {
       <GenerateAccessQrModal
         isOpen={qrModalOpen}
         onClose={() => setQrModalOpen(false)}
-        initialLrn={qrModalLrn}
       />
     </div>
   );

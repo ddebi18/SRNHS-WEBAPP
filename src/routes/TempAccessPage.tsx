@@ -5,11 +5,16 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { motion } from 'framer-motion';
 import {
-  validateAccessToken,
-  completeAccessGrant,
+  validateTempSession,
+  claimTempSession,
+  completeTempClaim,
+  claimFormSchema,
+  ClaimFormData,
+  GENERIC_VERIFICATION_ERROR,
 } from '@/features/tempAccess/api';
 import {
-  ValidateTokenResponse,
+  ValidateSessionResponse,
+  StudentSummary,
 } from '@/features/tempAccess/types';
 import { ensureFaceNetModels, detectAccurateFace } from '@/features/attendance/lib/faceNetEngine';
 import {
@@ -25,6 +30,8 @@ import {
   Heart,
   ChevronRight,
   Lock,
+  KeyRound,
+  IdCard,
 } from 'lucide-react';
 
 // Guardian Form Validation Schema
@@ -40,20 +47,40 @@ const guardianFormSchema = z.object({
 
 type GuardianFormData = z.infer<typeof guardianFormSchema>;
 
+type PageStep = 'identify' | 'face' | 'guardian' | 'completed';
+
 export const TempAccessPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
 
-  // In-memory temporary session state ONLY (Never stored in localStorage)
-  const [session, setSession] = useState<ValidateTokenResponse | null>(null);
+  // In-memory temporary session & claim state ONLY
+  const [session, setSession] = useState<ValidateSessionResponse | null>(null);
+  const [claimToken, setClaimToken] = useState<string | null>(null);
+  const [student, setStudent] = useState<StudentSummary | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [errorState, setErrorState] = useState<string | null>(null);
 
   // Expiration countdown
   const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
 
-  // Wizard state: 'face' | 'guardian' | 'completed'
-  const [currentStep, setCurrentStep] = useState<'face' | 'guardian' | 'completed'>('face');
+  // Wizard state: 'identify' | 'face' | 'guardian' | 'completed'
+  const [currentStep, setCurrentStep] = useState<PageStep>('identify');
+
+  // Identification Form & Rate Limiting
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [claimSubmitting, setClaimSubmitting] = useState(false);
+  const failedAttemptsRef = useRef(0);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+
+  const {
+    register: registerClaim,
+    handleSubmit: handleSubmitClaim,
+    formState: { errors: claimErrors },
+  } = useForm<ClaimFormData>({
+    resolver: zodResolver(claimFormSchema),
+    mode: 'onSubmit',
+  });
 
   // Camera & Face capture state
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -75,38 +102,38 @@ export const TempAccessPage: React.FC = () => {
 
   // Guardian Form
   const {
-    register,
-    handleSubmit,
-    setValue,
-    formState: { errors },
+    register: registerGuardian,
+    handleSubmit: handleSubmitGuardian,
+    setValue: setGuardianValue,
+    formState: { errors: guardianErrors },
   } = useForm<GuardianFormData>({
     resolver: zodResolver(guardianFormSchema),
     mode: 'onChange',
   });
 
-  // 1. Initial Token Validation on Mount
+  // 1. Initial Session Validation on Mount
   useEffect(() => {
     let isMounted = true;
     if (!token) {
-      setErrorState('No access token provided.');
+      setErrorState('No session token provided.');
       setLoading(false);
       return;
     }
 
     async function initSession() {
       try {
-        const res = await validateAccessToken(token!);
+        const res = await validateTempSession(token!);
         if (!isMounted) return;
 
         if (!res.valid) {
-          if (res.reason === 'already_used') {
-            setErrorState('This single-use access link has already been used and completed.');
-          } else if (res.reason === 'expired') {
-            setErrorState('This temporary access link has expired. Please ask staff to generate a new one.');
+          if (res.reason === 'expired') {
+            setErrorState('This QR has expired — ask a staff member for a current one.');
           } else if (res.reason === 'revoked') {
-            setErrorState('This temporary access link has been revoked by administration.');
+            setErrorState('This registration session has been revoked by administration.');
+          } else if (res.reason === 'max_uses_reached') {
+            setErrorState('This registration session has reached its maximum student capacity.');
           } else {
-            setErrorState('This access link is invalid. Please request a new QR code from your teacher or administrator.');
+            setErrorState('This QR code is invalid or has expired — ask a staff member for a current one.');
           }
           setLoading(false);
           return;
@@ -114,24 +141,10 @@ export const TempAccessPage: React.FC = () => {
 
         setSession(res);
 
-        // Pre-fill guardian info if already exists
-        if (res.guardian) {
-          setValue('name', res.guardian.name || '');
-          setValue('relationship', res.guardian.relationship || '');
-          setValue('phone_number', res.guardian.phone_number || '');
-        }
-
         // Calculate countdown seconds
         if (res.expires_at) {
           const diff = Math.max(0, Math.floor((new Date(res.expires_at).getTime() - Date.now()) / 1000));
           setRemainingSeconds(diff);
-        }
-
-        // Determine starting step based on purpose
-        if (res.purpose === 'guardian_update') {
-          setCurrentStep('guardian');
-        } else {
-          setCurrentStep('face');
         }
 
         setLoading(false);
@@ -147,7 +160,7 @@ export const TempAccessPage: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [token, setValue]);
+  }, [token]);
 
   // 2. Client-side Expiry Countdown Timer
   useEffect(() => {
@@ -157,7 +170,7 @@ export const TempAccessPage: React.FC = () => {
       setRemainingSeconds((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
-          setErrorState('Your temporary access session has expired. Please request a new QR from school staff.');
+          setErrorState('This QR has expired — ask a staff member for a current one.');
           setSession(null);
           return 0;
         }
@@ -167,6 +180,61 @@ export const TempAccessPage: React.FC = () => {
 
     return () => clearInterval(interval);
   }, [session, remainingSeconds]);
+
+  // Cooldown countdown timer for claim attempts
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setCooldownSeconds((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownSeconds]);
+
+  // Handle student identification claim
+  const onClaimSubmit = async (data: ClaimFormData) => {
+    if (!token || cooldownSeconds > 0) return;
+    setClaimSubmitting(true);
+    setClaimError(null);
+
+    try {
+      const res = await claimTempSession({
+        token,
+        lrn: data.lrn,
+        verifier: data.verifier,
+      });
+
+      if (!res.success || !res.claim_token || !res.student) {
+        throw new Error(GENERIC_VERIFICATION_ERROR);
+      }
+
+      // Store claim token in memory & sessionStorage
+      setClaimToken(res.claim_token);
+      setStudent(res.student);
+      sessionStorage.setItem(`temp_claim_${token}`, res.claim_token);
+
+      // Pre-fill guardian info if already exists
+      if (res.guardian) {
+        setGuardianValue('name', res.guardian.name || '');
+        setGuardianValue('relationship', res.guardian.relationship || '');
+        setGuardianValue('phone_number', res.guardian.phone_number || '');
+      }
+
+      // Proceed to next step
+      if (res.purpose === 'guardian_update') {
+        setCurrentStep('guardian');
+      } else {
+        setCurrentStep('face');
+      }
+    } catch (err: any) {
+      failedAttemptsRef.current += 1;
+      if (failedAttemptsRef.current >= 4) {
+        setCooldownSeconds(30); // 30s cooldown
+      }
+      setClaimError(GENERIC_VERIFICATION_ERROR);
+    } finally {
+      setClaimSubmitting(false);
+    }
+  };
 
   // 3. Camera lifecycle for Face Step
   useEffect(() => {
@@ -248,7 +316,6 @@ export const TempAccessPage: React.FC = () => {
             motionHistoryRef.current.shift();
           }
 
-          // Check if natural micro-movement or head turn occurred
           const avgMotion =
             motionHistoryRef.current.reduce((a, b) => a + b, 0) / motionHistoryRef.current.length;
 
@@ -285,7 +352,6 @@ export const TempAccessPage: React.FC = () => {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const photoDataUrl = canvas.toDataURL('image/jpeg', 0.88);
 
-      // Extract FaceNet 128D embedding
       const detection = await detectAccurateFace(video, 0.50);
       if (!detection || !detection.descriptor) {
         throw new Error('Could not extract a clear biometric vector. Please ensure good lighting and face forward.');
@@ -296,7 +362,6 @@ export const TempAccessPage: React.FC = () => {
       setCapturedPhotoUrl(photoDataUrl);
       setCapturedDescriptor(descriptorArray);
 
-      // Stop video stream
       if (video.srcObject) {
         const stream = video.srcObject as MediaStream;
         stream.getTracks().forEach((t) => t.stop());
@@ -318,14 +383,14 @@ export const TempAccessPage: React.FC = () => {
     prevBoxRef.current = null;
   };
 
-  // Complete Grant Handler
+  // Complete Claim Handler
   const handleFinalSubmit = async (guardianData?: GuardianFormData) => {
-    if (!token || !session) return;
+    if (!claimToken) return;
     setSubmitting(true);
 
     try {
       const payload = {
-        token,
+        claimToken,
         faceDescriptors: capturedDescriptor ? [capturedDescriptor] : undefined,
         capturedPhotoUrl: capturedPhotoUrl || undefined,
         guardianDetails: guardianData
@@ -339,13 +404,14 @@ export const TempAccessPage: React.FC = () => {
           : undefined,
       };
 
-      const res = await completeAccessGrant(payload);
+      const res = await completeTempClaim(payload);
       if (!res.success) {
         throw new Error(res.error || 'Failed to submit registration.');
       }
 
-      // Memory-only session teardown
-      setSession(null);
+      // Invalidate claim token from memory and storage
+      sessionStorage.removeItem(`temp_claim_${token}`);
+      setClaimToken(null);
       setCurrentStep('completed');
     } catch (err: any) {
       alert(err.message || 'An error occurred during completion. Please ask staff for assistance.');
@@ -354,7 +420,6 @@ export const TempAccessPage: React.FC = () => {
     }
   };
 
-  // Format countdown string
   const formatCountdown = (totalSec: number) => {
     const mins = Math.floor(totalSec / 60);
     const secs = totalSec % 60;
@@ -363,19 +428,17 @@ export const TempAccessPage: React.FC = () => {
 
   // ── Render States ─────────────────────────────────────────────────────────
 
-  // Loading Screen
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-900 text-neutral-100 p-4">
         <div className="text-center space-y-4">
           <RefreshCw className="w-8 h-8 animate-spin text-primary-400 mx-auto" />
-          <p className="text-sm text-neutral-400">Validating temporary access credential…</p>
+          <p className="text-sm text-neutral-400">Validating registration session…</p>
         </div>
       </div>
     );
   }
 
-  // Error / Expired Screen
   if (errorState) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-900 text-neutral-100 p-4">
@@ -400,7 +463,6 @@ export const TempAccessPage: React.FC = () => {
     );
   }
 
-  // Completed Success Screen
   if (currentStep === 'completed') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-900 text-neutral-100 p-4">
@@ -422,10 +484,10 @@ export const TempAccessPage: React.FC = () => {
           <div className="p-4 rounded-xl bg-neutral-900/60 border border-neutral-700/80 text-left text-xs space-y-2">
             <div className="flex items-center gap-2 text-emerald-400 font-medium">
               <ShieldCheck className="w-4 h-4" />
-              <span>Single-use token finalized and invalidated</span>
+              <span>Claim finalized and locked</span>
             </div>
             <p className="text-neutral-400">
-              No further changes can be made with this link. You may now safely close this browser window.
+              No further changes can be made with this session. You may now safely close this browser window.
             </p>
           </div>
         </motion.div>
@@ -433,7 +495,6 @@ export const TempAccessPage: React.FC = () => {
     );
   }
 
-  const student = session?.student;
   const isBoth = session?.purpose === 'both';
 
   return (
@@ -448,7 +509,9 @@ export const TempAccessPage: React.FC = () => {
             <h1 className="text-sm font-bold text-white tracking-wide">
               San Roque National High School
             </h1>
-            <p className="text-[11px] text-neutral-400">Temporary Student Portal</p>
+            <p className="text-[11px] text-neutral-400">
+              {session?.label || 'Student Registration Session'}
+            </p>
           </div>
         </div>
 
@@ -461,7 +524,7 @@ export const TempAccessPage: React.FC = () => {
 
       {/* Main Form Body */}
       <main className="w-full max-w-2xl my-6 flex-1 flex flex-col justify-center">
-        {/* Student Welcome Banner */}
+        {/* Student Welcome Banner (only after successful identification) */}
         {student && (
           <div className="mb-6 p-4 rounded-xl bg-neutral-900/80 border border-neutral-800 flex items-center gap-4">
             <div className="w-12 h-12 rounded-full overflow-hidden bg-neutral-800 border border-neutral-700 flex items-center justify-center shrink-0">
@@ -483,13 +546,106 @@ export const TempAccessPage: React.FC = () => {
           </div>
         )}
 
-        {/* Step Indicator (when both tasks required) */}
-        {isBoth && (
+        {/* STEP 1: Identification & Claim Step */}
+        {currentStep === 'identify' && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-neutral-900/90 border border-neutral-800 rounded-2xl p-6 sm:p-8 space-y-6 shadow-xl"
+          >
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 rounded-xl bg-primary-950/60 border border-primary-800 text-primary-400 flex items-center justify-center mx-auto shadow-inner">
+                <IdCard className="w-6 h-6" />
+              </div>
+              <h2 className="text-xl font-bold text-white">Student Identification</h2>
+              <p className="text-xs text-neutral-400 max-w-md mx-auto">
+                Scan verified. Please enter your 12-digit DepEd Learner Reference Number and secondary verifier to unlock your enrollment form.
+              </p>
+            </div>
+
+            {/* Error Message */}
+            {claimError && (
+              <div className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800/80 text-xs text-rose-300 flex items-center gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{claimError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitClaim(onClaimSubmit)} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  12-Digit Learner Reference Number (LRN) *
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    maxLength={12}
+                    placeholder="e.g. 109823456789"
+                    {...registerClaim('lrn')}
+                    className="w-full pl-9 pr-4 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 text-sm font-mono tracking-wider focus:ring-2 focus:ring-primary focus:outline-none"
+                  />
+                  <IdCard className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
+                </div>
+                {claimErrors.lrn && (
+                  <p className="text-[11px] text-rose-400 mt-1">{claimErrors.lrn.message}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Secondary Verifier (Date of Birth or Last Name) *
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="YYYY-MM-DD (e.g. 2008-05-15) or Last Name"
+                    {...registerClaim('verifier')}
+                    className="w-full pl-9 pr-4 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 text-sm focus:ring-2 focus:ring-primary focus:outline-none"
+                  />
+                  <KeyRound className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
+                </div>
+                {claimErrors.verifier && (
+                  <p className="text-[11px] text-rose-400 mt-1">{claimErrors.verifier.message}</p>
+                )}
+                <p className="text-[11px] text-neutral-500 mt-1">
+                  Confirms your identity against official DepEd school records.
+                </p>
+              </div>
+
+              {cooldownSeconds > 0 && (
+                <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs text-amber-300 text-center">
+                  Too many verification attempts. Please wait <span className="font-bold">{cooldownSeconds}s</span> before retrying.
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={claimSubmitting || cooldownSeconds > 0}
+                className="w-full py-3 rounded-xl bg-primary hover:bg-primary-light text-white font-semibold text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {claimSubmitting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Verifying Identity...
+                  </>
+                ) : (
+                  <>
+                    <span>Continue to Registration</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </form>
+          </motion.div>
+        )}
+
+        {/* Step Indicator (shown once verified and both tasks required) */}
+        {student && isBoth && (
           <div className="flex items-center justify-center gap-3 mb-6">
             <div
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border ${
                 currentStep === 'face'
-                  ? 'border-primary-500 bg-primary-950/40 text-primary-300'
+                  ? 'border-primary bg-primary-950/40 text-primary-300'
                   : 'border-neutral-800 bg-neutral-900 text-neutral-400'
               }`}
             >
@@ -503,7 +659,7 @@ export const TempAccessPage: React.FC = () => {
             <div
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border ${
                 currentStep === 'guardian'
-                  ? 'border-primary-500 bg-primary-950/40 text-primary-300'
+                  ? 'border-primary bg-primary-950/40 text-primary-300'
                   : 'border-neutral-800 bg-neutral-900 text-neutral-400'
               }`}
             >
@@ -513,7 +669,7 @@ export const TempAccessPage: React.FC = () => {
           </div>
         )}
 
-        {/* STEP 1: Biometric Face Registration with Mandatory Liveness */}
+        {/* STEP 2: Biometric Face Registration with Mandatory Liveness */}
         {currentStep === 'face' && (
           <div className="bg-neutral-900/90 border border-neutral-800 rounded-2xl p-6 space-y-6 shadow-xl">
             <div className="text-center space-y-1">
@@ -591,7 +747,7 @@ export const TempAccessPage: React.FC = () => {
                   type="button"
                   disabled={!livenessPassed || capturing}
                   onClick={handleCapture}
-                  className="px-6 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 disabled:opacity-40 disabled:hover:bg-primary-600 text-white font-semibold text-sm shadow-md transition-all flex items-center gap-2"
+                  className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-light disabled:opacity-40 text-white font-semibold text-sm shadow-md transition-all flex items-center gap-2"
                 >
                   {capturing ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
@@ -644,10 +800,10 @@ export const TempAccessPage: React.FC = () => {
           </div>
         )}
 
-        {/* STEP 2: Guardian Details Form */}
+        {/* STEP 3: Guardian Details Form */}
         {currentStep === 'guardian' && (
           <form
-            onSubmit={handleSubmit((data) => handleFinalSubmit(data))}
+            onSubmit={handleSubmitGuardian((data) => handleFinalSubmit(data))}
             className="bg-neutral-900/90 border border-neutral-800 rounded-2xl p-6 space-y-5 shadow-xl"
           >
             <div className="text-center space-y-1">
@@ -668,14 +824,14 @@ export const TempAccessPage: React.FC = () => {
                 <div className="relative">
                   <input
                     type="text"
-                    {...register('name')}
+                    {...registerGuardian('name')}
                     placeholder="e.g. Elena Reyes"
-                    className="w-full pl-9 pr-4 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 text-sm focus:ring-2 focus:ring-primary-500 focus:outline-none"
+                    className="w-full pl-9 pr-4 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 text-sm focus:ring-2 focus:ring-primary focus:outline-none"
                   />
                   <User className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
                 </div>
-                {errors.name && (
-                  <p className="text-[11px] text-rose-400 mt-1">{errors.name.message}</p>
+                {guardianErrors.name && (
+                  <p className="text-[11px] text-rose-400 mt-1">{guardianErrors.name.message}</p>
                 )}
               </div>
 
@@ -685,8 +841,8 @@ export const TempAccessPage: React.FC = () => {
                     Relationship *
                   </label>
                   <select
-                    {...register('relationship')}
-                    className="w-full px-3 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 text-sm focus:ring-2 focus:ring-primary-500 focus:outline-none"
+                    {...registerGuardian('relationship')}
+                    className="w-full px-3 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 text-sm focus:ring-2 focus:ring-primary focus:outline-none"
                   >
                     <option value="">Select relationship</option>
                     <option value="Mother">Mother</option>
@@ -696,8 +852,8 @@ export const TempAccessPage: React.FC = () => {
                     <option value="Sibling">Sibling (Of Legal Age)</option>
                     <option value="Relative">Relative</option>
                   </select>
-                  {errors.relationship && (
-                    <p className="text-[11px] text-rose-400 mt-1">{errors.relationship.message}</p>
+                  {guardianErrors.relationship && (
+                    <p className="text-[11px] text-rose-400 mt-1">{guardianErrors.relationship.message}</p>
                   )}
                 </div>
 
@@ -708,14 +864,14 @@ export const TempAccessPage: React.FC = () => {
                   <div className="relative">
                     <input
                       type="text"
-                      {...register('phone_number')}
+                      {...registerGuardian('phone_number')}
                       placeholder="09171234567"
-                      className="w-full pl-9 pr-4 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 text-sm focus:ring-2 focus:ring-primary-500 focus:outline-none font-mono"
+                      className="w-full pl-9 pr-4 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 text-sm focus:ring-2 focus:ring-primary focus:outline-none font-mono"
                     />
                     <Phone className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
                   </div>
-                  {errors.phone_number && (
-                    <p className="text-[11px] text-rose-400 mt-1">{errors.phone_number.message}</p>
+                  {guardianErrors.phone_number && (
+                    <p className="text-[11px] text-rose-400 mt-1">{guardianErrors.phone_number.message}</p>
                   )}
                 </div>
               </div>
@@ -726,12 +882,12 @@ export const TempAccessPage: React.FC = () => {
                 </label>
                 <input
                   type="email"
-                  {...register('email')}
+                  {...registerGuardian('email')}
                   placeholder="parent@example.com"
-                  className="w-full px-4 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 text-sm focus:ring-2 focus:ring-primary-500 focus:outline-none"
+                  className="w-full px-4 py-2.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 text-sm focus:ring-2 focus:ring-primary focus:outline-none"
                 />
-                {errors.email && (
-                  <p className="text-[11px] text-rose-400 mt-1">{errors.email.message}</p>
+                {guardianErrors.email && (
+                  <p className="text-[11px] text-rose-400 mt-1">{guardianErrors.email.message}</p>
                 )}
               </div>
             </div>
