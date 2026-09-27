@@ -491,7 +491,7 @@ export const DashboardOverviewPage: React.FC = () => {
             </div>
 
             <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-3 flex items-center justify-between">
-              <span>PhilSMS / Twilio Carrier</span>
+              <span>Local Android SMS Gateway</span>
               {isAdmin && <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-emerald-600 group-hover:translate-x-0.5 transition-transform" />}
             </p>
           </div>

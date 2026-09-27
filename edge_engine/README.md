@@ -72,3 +72,18 @@ A student is confirmed when cosine similarity is at least `0.47` **and** the nex
 - Press **`s`** to reload the student roster from Supabase or local cache.
 
 The browser registration flow stores descriptors in the Supabase `students.face_descriptors` column. The local JSON cache is only a fallback when Supabase is unavailable.
+
+---
+
+## 4. Local Android SMS Gateway Integration
+
+When a student is matched at the turnstile:
+1. `gate_biometrics.py` writes the attendance event to `gate_logs`.
+2. It immediately and non-blockingly dispatches an SMS alert to the student's `guardian_phone` using `local_sms_gateway.py`.
+3. The message is sent to a self-hosted Android SMS Gateway device running on the school LAN:
+   - `SMS_GATEWAY_URL` (e.g. `http://192.168.1.50:8080`)
+   - `SMS_GATEWAY_USER` (Basic Auth username)
+   - `SMS_GATEWAY_PASSWORD` (Basic Auth password)
+4. Audit records are logged to the Supabase `sms_notifications` table with status `sent` or `failed`.
+5. SMS dispatch failures never block turnstile opening or attendance logging.
+

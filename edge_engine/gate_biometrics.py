@@ -26,6 +26,10 @@ try:
 except ImportError:
     pass
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from local_sms_gateway import send_sms, build_attendance_message
+
+
 DEFAULT_CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 DEFAULT_GATE_ID = os.getenv("GATE_ID", "Gate-01 (Main Turnstile)")
 DEFAULT_EVENT_TYPE = os.getenv("EVENT_TYPE", "entry")
@@ -197,7 +201,7 @@ class TurnstileGateClient:
                 response = requests.get(
                     f"{SUPABASE_URL}/rest/v1/students",
                     params={
-                        "select": "id,lrn,first_name,last_name,face_descriptors,face_descriptor_version",
+                        "select": "id,lrn,first_name,last_name,guardian_phone,face_descriptors,face_descriptor_version",
                         "face_descriptors": "not.is.null",
                     },
                     headers={
@@ -218,6 +222,7 @@ class TurnstileGateClient:
                     self.enrolled_roster[item["id"]] = {
                         "name": f'{item.get("first_name", "")} {item.get("last_name", "")}'.strip() or "Unknown",
                         "lrn": item.get("lrn", "N/A"),
+                        "guardian_phone": item.get("guardian_phone", ""),
                         "vector": vec,
                     }
                 print(f"[TurnstileNode] Loaded {len(self.enrolled_roster)} embedding(s) from Supabase.")
@@ -298,6 +303,42 @@ class TurnstileGateClient:
                 requests.post(f"{SUPABASE_URL}/rest/v1/gate_logs", json=payload, headers=headers, timeout=3)
             except Exception as ex:
                 print(f"[TurnstileNode] Supabase logging warning: {ex}")
+
+        # --- Local Android SMS Gateway dispatch (non-blocking) ---
+        # Attendance is already recorded above; SMS failure must never affect it.
+        guardian_phone = profile.get("guardian_phone", "")
+        if guardian_phone:
+            sms_text = build_attendance_message(student_name, lrn, DEFAULT_EVENT_TYPE, self.gate_id)
+            sms_ok, sms_err = send_sms(guardian_phone, sms_text)
+            sms_status = "sent" if sms_ok else "failed"
+            if not sms_ok:
+                print(f"[SMS] Dispatch failed for {student_name}: {sms_err}")
+
+            # Persist SMS audit log to Supabase sms_notifications table
+            if SUPABASE_URL and SUPABASE_ANON_KEY:
+                try:
+                    sms_log_headers = {
+                        "apikey": SUPABASE_ANON_KEY,
+                        "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal",
+                    }
+                    sms_log_payload = {
+                        "student_id": student_id,
+                        "phone_number": guardian_phone,
+                        "message": sms_text,
+                        "event_type": DEFAULT_EVENT_TYPE,
+                        "status": sms_status,
+                        "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    }
+                    requests.post(
+                        f"{SUPABASE_URL}/rest/v1/sms_notifications",
+                        json=sms_log_payload,
+                        headers=sms_log_headers,
+                        timeout=3,
+                    )
+                except Exception as sms_log_exc:
+                    print(f"[SMS] Audit log warning: {sms_log_exc}")
 
     def run(self):
         print(f"[TurnstileNode] Opening camera sensor index {self.camera_index}...")

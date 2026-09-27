@@ -1,16 +1,13 @@
 export * from './NotificationAdapter';
 export * from './MockNotificationAdapter';
-export * from './PhilSmsAdapter';
 
 import { mockNotificationAdapter } from './MockNotificationAdapter';
-import { philSmsAdapter } from './PhilSmsAdapter';
 import { NotificationAdapter } from './NotificationAdapter';
 
 /**
- * Returns the active notification adapter.
- * Uses PhilSMS if VITE_PHILSMS_API_TOKEN is configured; otherwise uses mock adapter for offline dev.
+ * Returns the active notification adapter for the frontend UI.
+ * Real SMS dispatch is handled on-premise by edge_engine via the local Android SMS gateway.
+ * The browser UI uses mockNotificationAdapter for audit viewing and simulation.
  */
-export const activeNotificationAdapter: NotificationAdapter =
-  import.meta.env.VITE_PHILSMS_API_TOKEN
-    ? philSmsAdapter
-    : mockNotificationAdapter;
+export const activeNotificationAdapter: NotificationAdapter = mockNotificationAdapter;
+

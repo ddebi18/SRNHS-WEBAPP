@@ -39,23 +39,35 @@ serve(async (req: Request) => {
     let providerUsed = 'mock';
     let providerResponse: any = null;
 
-    // 1. Check Semaphore (Philippines primary)
-    const semaphoreApiKey = Deno.env.get('SEMAPHORE_API_KEY');
-    const semaphoreSender = Deno.env.get('SEMAPHORE_SENDER_NAME') || 'SEMAPHORE';
+    // 1. Check Android SMS Gateway (Self-hosted local/tunnel gateway)
+    const androidGatewayUrl = Deno.env.get('ANDROID_GATEWAY_URL');
+    const androidGatewayKey = Deno.env.get('ANDROID_GATEWAY_API_KEY');
 
-    // 2. Check PhilSms
-    const philSmsToken = Deno.env.get('PHILSMS_API_TOKEN');
-
-    // 3. Check Twilio
+    // 2. Check Twilio (Optional fallback)
     const twilioSid = Deno.env.get('TWILIO_ACCOUNT_SID');
     const twilioAuth = Deno.env.get('TWILIO_AUTH_TOKEN');
     const twilioFrom = Deno.env.get('TWILIO_PHONE_NUMBER');
 
-    // 4. Check Android SMS Gateway
-    const androidGatewayUrl = Deno.env.get('ANDROID_GATEWAY_URL');
-    const androidGatewayKey = Deno.env.get('ANDROID_GATEWAY_API_KEY');
+    // 3. Check Semaphore (Optional Philippine cloud backup)
+    const semaphoreApiKey = Deno.env.get('SEMAPHORE_API_KEY');
+    const semaphoreSender = Deno.env.get('SEMAPHORE_SENDER_NAME') || 'SEMAPHORE';
 
-    if (semaphoreApiKey) {
+    if (androidGatewayUrl) {
+      providerUsed = 'android_gateway';
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (androidGatewayKey) headers['x-api-key'] = androidGatewayKey;
+
+      const resp = await fetch(`${androidGatewayUrl}/send`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          to: guardian_phone,
+          message: message,
+        }),
+      });
+      providerResponse = await resp.json().catch(() => ({}));
+      status = resp.ok ? 'sent' : 'failed';
+    } else if (semaphoreApiKey) {
       providerUsed = 'semaphore';
       const cleanPhone = guardian_phone.replace(/^\+63/, '0').replace(/[^0-9]/g, '');
       const resp = await fetch('https://api.semaphore.co/api/v4/messages', {
@@ -66,24 +78,6 @@ serve(async (req: Request) => {
           number: cleanPhone,
           message: message,
           sender_name: semaphoreSender,
-        }),
-      });
-      providerResponse = await resp.json();
-      status = resp.ok ? 'sent' : 'failed';
-    } else if (philSmsToken) {
-      providerUsed = 'philsms';
-      const resp = await fetch('https://app.philsms.com/api/v3/sms/send', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${philSmsToken}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-          recipient: guardian_phone,
-          sender_id: 'PhilSMS',
-          type: 'plain',
-          message: message,
         }),
       });
       providerResponse = await resp.json();
@@ -107,21 +101,6 @@ serve(async (req: Request) => {
         }
       );
       providerResponse = await resp.json();
-      status = resp.ok ? 'sent' : 'failed';
-    } else if (androidGatewayUrl) {
-      providerUsed = 'android_gateway';
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (androidGatewayKey) headers['x-api-key'] = androidGatewayKey;
-
-      const resp = await fetch(`${androidGatewayUrl}/send`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          to: guardian_phone,
-          message: message,
-        }),
-      });
-      providerResponse = await resp.json().catch(() => ({}));
       status = resp.ok ? 'sent' : 'failed';
     } else {
       // Mock / Simulation mode when no API keys are set
