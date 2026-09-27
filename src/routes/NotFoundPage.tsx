@@ -15,7 +15,7 @@ export const NotFoundPage: React.FC = () => {
       </p>
       <button
         onClick={() => navigate('/')}
-        className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand-600 hover:bg-brand-700 text-white flex items-center gap-1.5 shadow-sm"
+        className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-light text-white flex items-center gap-1.5 shadow-sm transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />
         Return to Dashboard Overview

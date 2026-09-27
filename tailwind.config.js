@@ -29,6 +29,22 @@ export default {
           900:     '#002E18',
         },
 
+        // Brand color tokens (mapped to institutional palette)
+        brand: {
+          DEFAULT: '#006937',
+          50:      '#E6F5ED',
+          100:     '#B3E0C7',
+          200:     '#52B788',
+          400:     '#34D399',
+          500:     '#006937',
+          600:     '#004D29',
+          700:     '#002E18',
+          800:     '#092116',
+          900:     '#05140D',
+        },
+
+        cream: '#F4F7F4',
+
         // Gold accent — for institutional branding (seal, badges)
         gold: {
           DEFAULT: '#C4962C',

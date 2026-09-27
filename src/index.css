@@ -6,9 +6,11 @@
 
 @layer base {
   :root {
-    /* ── Page backgrounds ───────────────────────────── */
+    /* ── Page backgrounds & Accent Tokens ──────────── */
     --page-bg: #F4F7F4;
     --sidebar-bg: #006937;
+    --primary: #006937;
+    --primary-foreground: #FFFFFF;
 
     /* ── Type scale ─────────────────────────────────── */
     --text-xs:   0.75rem;   /* 12px — meta, timestamps */
@@ -29,6 +31,13 @@
   .dark {
     --page-bg: #05140D;
     --sidebar-bg: #004D29;
+    --primary: #008C4A;
+    --primary-foreground: #FFFFFF;
+  }
+
+  ::selection {
+    background-color: var(--primary);
+    color: var(--primary-foreground);
   }
 
   body {
