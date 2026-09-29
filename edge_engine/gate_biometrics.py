@@ -28,7 +28,10 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from local_sms_gateway import send_sms, build_attendance_message
-from sms_hook import notify_recognition
+try:
+    from sms_hook import notify_recognition as _sms_notify
+except Exception:  # pragma: no cover — hook is optional
+    _sms_notify = None
 
 
 DEFAULT_CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
@@ -386,6 +389,18 @@ class TurnstileGateClient:
                 requests.post(f"{SUPABASE_URL}/rest/v1/gate_logs", json=gate_payload, headers=headers, timeout=3)
             except Exception as ex:
                 print(f"[TurnstileNode] Supabase logging warning: {ex}")
+
+        # --- Test SMS hook (temporary, feature-flagged) ---
+        if _sms_notify is not None:
+            try:
+                _sms_notify(
+                    student_id=student_id,
+                    student_first_name=student_name,
+                    event_type=self.event_type,
+                    timestamp=now,
+                )
+            except Exception as ex:
+                print(f"[SMSHook] notify suppressed error: {ex}")
 
         # --- Local Android SMS Gateway dispatch (non-blocking) ---
         guardian_phone = profile.get("guardian_phone", "")
