@@ -9,7 +9,6 @@ import {
   Eye,
   CheckCircle2,
   Info,
-  Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcStream';
@@ -101,12 +100,10 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     recognitionBox,
     isLive,
     isAnalyzing,
-    triggerInstantScan,
     diagnosticInfo,
     qualityGuidance,
     qualityPassed,
   } = useFaceRecognition(videoRef, hasVideoSource);
-  const [isInstantScanning, setIsInstantScanning] = useState(false);
   const activeBox = isFaceDetected ? (faceBox || recognitionBox) : recognitionBox;
   const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
 
@@ -461,7 +458,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             {activeBox && (() => {
               const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.50);
               const isRecognized = Boolean(matchedStudent);
-              const isDetecting = !isRecognized && (isAnalyzing || isInstantScanning || !isRecognitionReady);
+              const isDetecting = !isRecognized && (isAnalyzing || !isRecognitionReady);
               const isSpoofWarning = isRecognized && !isLive;
 
               return (
@@ -622,24 +619,10 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
           <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2 text-slate-500 dark:text-emerald-400/80 text-xs">
               <Eye className="w-3.5 h-3.5 text-primary dark:text-emerald-400 shrink-0" />
-              <span className="truncate">{diagnosticInfo || 'Recognition runs continuously. Click Instant Scan for immediate snapshot.'}</span>
+              <span className="truncate">{diagnosticInfo || 'Recognition runs continuously.'}</span>
             </div>
 
             <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-              {hasVideoSource && (
-                <button
-                  onClick={async () => {
-                    setIsInstantScanning(true);
-                    await triggerInstantScan();
-                    setIsInstantScanning(false);
-                  }}
-                  disabled={isInstantScanning}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-primary hover:bg-primary-light text-white font-semibold text-xs shadow-xs transition-all active:scale-95 cursor-pointer shrink-0"
-                >
-                  <Zap className="w-3.5 h-3.5" />
-                  <span>{isInstantScanning ? 'Scanning…' : 'Instant Scan'}</span>
-                </button>
-              )}
               <button
                 onClick={() => setIsFullscreen(!isFullscreen)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-950/15 dark:border-emerald-800/50 text-slate-700 dark:text-emerald-200 hover:bg-emerald-50 dark:hover:bg-[#143828] transition-all shadow-xs text-xs font-semibold active:scale-95 cursor-pointer"

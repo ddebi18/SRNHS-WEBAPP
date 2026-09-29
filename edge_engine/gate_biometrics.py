@@ -14,7 +14,7 @@ import sys
 import time
 import json
 import argparse
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import cv2
 import numpy as np
@@ -28,6 +28,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from local_sms_gateway import send_sms, build_attendance_message
+from sms_hook import notify_recognition
 
 
 DEFAULT_CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
@@ -189,7 +190,43 @@ class TurnstileGateClient:
         self.enrolled_roster: Dict[str, dict] = {}
         self.last_scan_times: Dict[str, float] = {}
         self.dedup_cooldown_seconds = 30.0
+        self.unidentified_cooldown_seconds = 15.0
+        self.recent_unidentified: List[Dict[str, Any]] = []
         self.load_enrolled_students()
+
+    def upload_unidentified_capture(self, face_image: np.ndarray, prefix: str = "unidentified") -> Optional[str]:
+        """
+        Uploads face crop JPEG to private Supabase Storage bucket 'unidentified-captures'.
+        Returns storage path (e.g. 'unidentified/20260927_120000_abc123.jpg') or None on failure.
+        """
+        if not (SUPABASE_URL and SUPABASE_ANON_KEY) or face_image is None or face_image.size == 0:
+            return None
+        try:
+            ok, buf = cv2.imencode(".jpg", face_image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if not ok:
+                return None
+            jpeg_bytes = buf.tobytes()
+            timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+            rand_suffix = os.urandom(4).hex()
+            file_path = f"{prefix}/{timestamp_str}_{rand_suffix}.jpg"
+
+            url = f"{SUPABASE_URL}/storage/v1/object/unidentified-captures/{file_path}"
+            headers = {
+                "apikey": SUPABASE_ANON_KEY,
+                "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                "Content-Type": "image/jpeg",
+                "x-upsert": "true",
+            }
+            res = requests.post(url, data=jpeg_bytes, headers=headers, timeout=5)
+            if res.status_code in (200, 201):
+                return file_path
+            else:
+                print(f"[TurnstileNode] Image upload note (status {res.status_code}): {res.text[:100]}")
+                return None
+        except Exception as exc:
+            print(f"[TurnstileNode] Image upload warning: {exc}")
+            return None
+
 
     def load_enrolled_students(self):
         print("[TurnstileNode] Fetching enrolled student roster...")
@@ -250,22 +287,47 @@ class TurnstileGateClient:
         if SUPABASE_URL and SUPABASE_READ_KEY and not self.enrolled_roster:
             print("[TurnstileNode] No cloud FaceNet embeddings. Matching stays idle until a student is registered.")
 
-    def match_face(self, live_vector: np.ndarray) -> Tuple[Optional[str], float]:
+    def match_face(self, live_vector: np.ndarray) -> Tuple[str, Optional[str], float, List[Dict[str, Any]]]:
+        """
+        Matches a live face vector against enrolled roster.
+        Returns:
+            outcome: 'matched' | 'unidentified' | 'ambiguous'
+            matched_id: student ID if matched, else None
+            top_similarity: float
+            candidates: list of candidate profiles (for ambiguous matches)
+        """
         ranked: List[Tuple[str, float]] = []
         for student_id, profile in self.enrolled_roster.items():
             sim = self.similarity_engine.compute_similarity(live_vector, profile["vector"])
             ranked.append((student_id, sim))
         ranked.sort(key=lambda item: item[1], reverse=True)
         if not ranked:
-            return None, 0.0
+            return "unidentified", None, 0.0, []
 
         best_id, best_sim = ranked[0]
         second_sim = ranked[1][1] if len(ranked) > 1 else -1.0
+
         if best_sim < SIMILARITY_THRESHOLD:
-            return None, best_sim
+            return "unidentified", None, best_sim, []
+
         if second_sim >= 0 and (best_sim - second_sim) < AMBIGUITY_MARGIN:
-            return None, best_sim
-        return best_id, best_sim
+            candidates = [
+                {
+                    "student_id": ranked[0][0],
+                    "student_name": self.enrolled_roster[ranked[0][0]]["name"],
+                    "lrn": self.enrolled_roster[ranked[0][0]]["lrn"],
+                    "similarity": round(ranked[0][1], 4),
+                },
+                {
+                    "student_id": ranked[1][0],
+                    "student_name": self.enrolled_roster[ranked[1][0]]["name"],
+                    "lrn": self.enrolled_roster[ranked[1][0]]["lrn"],
+                    "similarity": round(ranked[1][1], 4),
+                },
+            ]
+            return "ambiguous", None, best_sim, candidates
+
+        return "matched", best_id, best_sim, []
 
     def dispatch_attendance_log(self, student_id: str, confidence: float):
         now = time.time()
@@ -286,6 +348,7 @@ class TurnstileGateClient:
         print("=======================================================\n")
 
         if SUPABASE_URL and SUPABASE_ANON_KEY:
+            iso_now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             try:
                 headers = {
                     "apikey": SUPABASE_ANON_KEY,
@@ -293,19 +356,32 @@ class TurnstileGateClient:
                     "Content-Type": "application/json",
                     "Prefer": "return=minimal",
                 }
-                payload = {
+                # 1. Post to recognition_events (primary real-time event log)
+                rec_payload = {
+                    "student_id": student_id,
+                    "event_type": DEFAULT_EVENT_TYPE,
+                    "gate": self.gate_id,
+                    "confidence_score": round(confidence, 4),
+                    "top_similarity_score": round(confidence, 4),
+                    "status": "matched",
+                    "source": "camera",
+                    "captured_at": iso_now,
+                }
+                requests.post(f"{SUPABASE_URL}/rest/v1/recognition_events", json=rec_payload, headers=headers, timeout=3)
+
+                # 2. Legacy gate_logs table fallback
+                gate_payload = {
                     "student_id": student_id,
                     "event_type": DEFAULT_EVENT_TYPE,
                     "gate": self.gate_id,
                     "confidence": round(confidence, 4),
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "timestamp": iso_now,
                 }
-                requests.post(f"{SUPABASE_URL}/rest/v1/gate_logs", json=payload, headers=headers, timeout=3)
+                requests.post(f"{SUPABASE_URL}/rest/v1/gate_logs", json=gate_payload, headers=headers, timeout=3)
             except Exception as ex:
                 print(f"[TurnstileNode] Supabase logging warning: {ex}")
 
         # --- Local Android SMS Gateway dispatch (non-blocking) ---
-        # Attendance is already recorded above; SMS failure must never affect it.
         guardian_phone = profile.get("guardian_phone", "")
         if guardian_phone:
             sms_text = build_attendance_message(student_name, lrn, DEFAULT_EVENT_TYPE, self.gate_id)
@@ -314,7 +390,6 @@ class TurnstileGateClient:
             if not sms_ok:
                 print(f"[SMS] Dispatch failed for {student_name}: {sms_err}")
 
-            # Persist SMS audit log to Supabase sms_notifications table
             if SUPABASE_URL and SUPABASE_ANON_KEY:
                 try:
                     sms_log_headers = {
@@ -340,6 +415,77 @@ class TurnstileGateClient:
                 except Exception as sms_log_exc:
                     print(f"[SMS] Audit log warning: {sms_log_exc}")
 
+        # Temporary SMSGate recognition hook (feature-flagged)
+        notify_recognition(student_id, student_name.split()[0] if student_name else "Student", DEFAULT_EVENT_TYPE, now)
+
+    def dispatch_unidentified_log(
+        self,
+        outcome: str,
+        similarity: float,
+        live_vector: np.ndarray,
+        face_crop: Optional[np.ndarray],
+        candidates: List[Dict[str, Any]],
+    ):
+        """
+        Logs unidentified or ambiguous faces for security review.
+        Applies a 15-second embedding similarity cooldown to deduplicate lingering faces.
+        NEVER triggers SMS gateway, NEVER marks attendance.
+        """
+        now = time.time()
+        # Clean expired records (>15s cooldown)
+        self.recent_unidentified = [
+            item for item in self.recent_unidentified
+            if (now - item["timestamp"]) < self.unidentified_cooldown_seconds
+        ]
+
+        # Deduplication check: compare against recent embeddings
+        for item in self.recent_unidentified:
+            cos_sim = self.similarity_engine.compute_similarity(live_vector, item["vector"])
+            if cos_sim >= 0.65:
+                # Same individual lingering in front of sensor — suppress duplicate
+                return
+
+        self.recent_unidentified.append({"vector": live_vector, "timestamp": now})
+
+        print("\n-------------------------------------------------------")
+        print(f" [SECURITY LOG: {outcome.upper()} FACE DETECTED] — {self.gate_id}")
+        print(f" Outcome:    {outcome}")
+        print(f" Top Score:  {similarity * 100:.2f}%")
+        if candidates:
+            print(f" Candidates: {len(candidates)} ambiguous match(es)")
+        print(f" Timestamp:  {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print("-------------------------------------------------------\n")
+
+        # Upload face crop to Supabase Storage
+        captured_image_path = None
+        if face_crop is not None and face_crop.size > 0:
+            captured_image_path = self.upload_unidentified_capture(face_crop, prefix=outcome)
+
+        # Log to Supabase recognition_events
+        if SUPABASE_URL and SUPABASE_ANON_KEY:
+            try:
+                headers = {
+                    "apikey": SUPABASE_ANON_KEY,
+                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal",
+                }
+                payload = {
+                    "student_id": None,
+                    "event_type": DEFAULT_EVENT_TYPE,
+                    "gate": self.gate_id,
+                    "confidence_score": round(similarity, 4),
+                    "top_similarity_score": round(similarity, 4),
+                    "status": outcome,
+                    "candidate_student_ids": candidates if candidates else [],
+                    "captured_image_path": captured_image_path,
+                    "source": "camera",
+                    "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+                requests.post(f"{SUPABASE_URL}/rest/v1/recognition_events", json=payload, headers=headers, timeout=3)
+            except Exception as ex:
+                print(f"[TurnstileNode] Unidentified logging warning: {ex}")
+
     def run(self):
         print(f"[TurnstileNode] Opening camera sensor index {self.camera_index}...")
         cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY)
@@ -357,7 +503,7 @@ class TurnstileGateClient:
         frame_counter = 0
         current_fps = 0.0
         frame_index = 0
-        last_faces: List[Tuple[int, int, int, int, Optional[str], float]] = []
+        last_faces: List[Tuple[int, int, int, int, str, Optional[str], float]] = []
 
         try:
             while True:
@@ -377,25 +523,42 @@ class TurnstileGateClient:
                     normalized = self.clahe.process(frame)
                     detections = self.engine.detect(normalized)
                     overlay = []
+                    fh, fw = frame.shape[:2]
                     for (x, y, w, h, face_row) in detections:
                         live_vector = self.engine.embed(normalized, face_row)
                         if live_vector is None:
-                            overlay.append((x, y, w, h, None, 0.0))
+                            overlay.append((x, y, w, h, "unidentified", None, 0.0))
                             continue
-                        matched_id, similarity = self.match_face(live_vector)
-                        if matched_id:
+
+                        outcome, matched_id, similarity, candidates = self.match_face(live_vector)
+
+                        # Extract padded crop for security capture if unidentified or ambiguous
+                        pad_x = int(w * 0.15)
+                        pad_y = int(h * 0.15)
+                        face_crop = frame[
+                            max(0, y - pad_y):min(fh, y + h + pad_y),
+                            max(0, x - pad_x):min(fw, x + w + pad_x)
+                        ].copy()
+
+                        if outcome == "matched" and matched_id:
                             self.dispatch_attendance_log(matched_id, similarity)
-                        overlay.append((x, y, w, h, matched_id, similarity))
+                        else:
+                            self.dispatch_unidentified_log(outcome, similarity, live_vector, face_crop, candidates)
+
+                        overlay.append((x, y, w, h, outcome, matched_id, similarity))
                     last_faces = overlay
 
-                for (x, y, w, h, matched_id, similarity) in last_faces:
-                    if matched_id:
-                        student_name = self.enrolled_roster[matched_id]["name"]
+                for (x, y, w, h, outcome, matched_id, similarity) in last_faces:
+                    if outcome == "matched" and matched_id:
+                        student_name = self.enrolled_roster.get(matched_id, {}).get("name", "Student")
                         box_color = (0, 230, 70)
                         label = f"{student_name} ({similarity * 100:.1f}%)"
+                    elif outcome == "ambiguous":
+                        box_color = (0, 190, 255)
+                        label = f"Ambiguous ({similarity * 100:.1f}%)"
                     else:
-                        box_color = (0, 165, 255)
-                        label = f"Unknown ({max(0.0, similarity) * 100:.1f}%)"
+                        box_color = (0, 80, 255)
+                        label = f"Unidentified ({max(0.0, similarity) * 100:.1f}%)"
                     cv2.rectangle(frame, (x, y), (x + w, y + h), box_color, 2)
                     cv2.rectangle(frame, (x, y - 28), (x + w, y), box_color, cv2.FILLED)
                     cv2.putText(frame, label, (x + 6, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)

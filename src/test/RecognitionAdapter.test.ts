@@ -14,10 +14,13 @@ describe('MockRecognitionAdapter', () => {
       capturedEvent = evt;
     });
 
-    await mockRecognitionAdapter.simulateScan({
+    await mockRecognitionAdapter.logRecognitionEvent({
       student_name: 'Test Student',
       student_lrn: '100000000001',
       event_type: 'entry',
+      camera_id: 'cam-01',
+      gate_id: 'gate-01',
+      confidence_score: 0.95,
     });
 
     expect(capturedEvent).not.toBeNull();
@@ -162,4 +165,59 @@ describe('MockRecognitionAdapter', () => {
     expect(studentEntries.length).toBe(1);
     expect(studentExits.length).toBe(1);
   });
+
+  it('logs unidentified face events with null student_id and top_similarity_score', async () => {
+    const unidentifiedEvent = await mockRecognitionAdapter.logRecognitionEvent({
+      status: 'unidentified',
+      top_similarity_score: 0.38,
+      confidence_score: 0.38,
+      captured_image_path: 'unidentified/20260927_sample.jpg',
+      event_type: 'entry',
+      camera_id: 'cam-01',
+      gate_id: 'gate-01',
+    });
+
+    expect(unidentifiedEvent.status).toBe('unidentified');
+    expect(unidentifiedEvent.student_id).toBeNull();
+    expect(unidentifiedEvent.student_name).toBe('Unidentified Individual');
+    expect(unidentifiedEvent.student_lrn).toBe('Threshold Unmet');
+    expect(unidentifiedEvent.top_similarity_score).toBe(0.38);
+    expect(unidentifiedEvent.captured_image_path).toBe('unidentified/20260927_sample.jpg');
+
+    // Appears in getEvents timeline
+    const allEvents = await mockRecognitionAdapter.getEvents();
+    const found = allEvents.find(e => e.id === unidentifiedEvent.id);
+    expect(found).toBeDefined();
+    expect(found?.status).toBe('unidentified');
+  });
+
+  it('logs ambiguous match events with candidate students list and score margin', async () => {
+    const candidates = [
+      { student_id: 'std-cand-1', student_name: 'Candidate One', lrn: '109811111111', similarity: 0.54 },
+      { student_id: 'std-cand-2', student_name: 'Candidate Two', lrn: '109822222222', similarity: 0.50 },
+    ];
+
+    const ambiguousEvent = await mockRecognitionAdapter.logRecognitionEvent({
+      status: 'ambiguous',
+      top_similarity_score: 0.54,
+      confidence_score: 0.54,
+      candidate_student_ids: candidates,
+      event_type: 'entry',
+      camera_id: 'cam-01',
+      gate_id: 'gate-01',
+    });
+
+    expect(ambiguousEvent.status).toBe('ambiguous');
+    expect(ambiguousEvent.student_id).toBeNull();
+    expect(ambiguousEvent.student_name).toBe('Ambiguous Match');
+    expect(ambiguousEvent.candidate_student_ids).toHaveLength(2);
+    expect(ambiguousEvent.candidate_student_ids?.[0]?.similarity).toBe(0.54);
+
+    const allEvents = await mockRecognitionAdapter.getEvents();
+    const found = allEvents.find(e => e.id === ambiguousEvent.id);
+    expect(found).toBeDefined();
+    expect(found?.status).toBe('ambiguous');
+    expect(found?.candidate_student_ids).toEqual(candidates);
+  });
 });
+

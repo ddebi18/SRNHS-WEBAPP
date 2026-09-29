@@ -16,7 +16,7 @@ export interface RecognitionAdapter {
     subject_title?: string;
   }): Promise<RecognitionEvent>;
   logRecognitionEvent(eventData: {
-    student_id: string;
+    student_id?: string | null;
     student_name?: string;
     student_lrn?: string;
     student_photo?: string;
@@ -27,6 +27,9 @@ export interface RecognitionAdapter {
     room_id?: string;
     room_name?: string;
     confidence_score: number;
+    status?: RecognitionEvent['status'];
+    top_similarity_score?: number;
+    candidate_student_ids?: RecognitionEvent['candidate_student_ids'];
+    captured_image_path?: string | null;
   }): Promise<RecognitionEvent>;
-  simulateScan(eventData: Partial<RecognitionEvent>): Promise<RecognitionEvent>;
 }

@@ -59,7 +59,6 @@ export interface UseFaceRecognitionReturn {
   recognitionBox: FaceRecognitionBox | null;
   isLive: boolean;
   isAnalyzing: boolean;
-  triggerInstantScan: () => Promise<RecognizedStudent | null>;
   assignCameraFaceToStudent: (targetStudentId?: string) => Promise<boolean>;
   diagnosticInfo: string;
   nativeIOD: number;
@@ -153,42 +152,6 @@ export function useFaceRecognition(
       confidence: result.confidence,
     };
   }, []);
-
-  const triggerInstantScan = useCallback(async (): Promise<RecognizedStudent | null> => {
-    const video = videoRef.current;
-    if (!video || galleryRef.current.length === 0 || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-      return null;
-    }
-
-    setIsAnalyzing(true);
-    try {
-      const detection = await detectAccurateFace(video);
-      if (!detection) return null;
-
-      applyDetectionOverlay(detection, video);
-      const locked = lastConfirmedMatchRef.current;
-      const lockedGallery = locked
-        ? galleryRef.current.find(entry => entry.label === locked.student.id)
-        : undefined;
-      if (locked && lockedGallery && !isSameEnrolledPerson(detection.descriptor, lockedGallery.descriptors)) {
-        return null;
-      }
-
-      const matchObj = resolveMatch(detection.descriptor);
-      if (!matchObj) return null;
-
-      lastConfirmedMatchRef.current = { student: matchObj, timestamp: Date.now() };
-      setMatchedStudent(matchObj);
-      setIsLive(true);
-      isLiveRef.current = true;
-      return matchObj;
-    } catch (err) {
-      console.warn('[FaceRecognition] Instant scan warning:', err);
-      return null;
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }, [applyDetectionOverlay, resolveMatch, videoRef]);
 
   const assignCameraFaceToStudent = useCallback(async (targetStudentId?: string): Promise<boolean> => {
     const video = videoRef.current;
@@ -516,7 +479,6 @@ export function useFaceRecognition(
     recognitionBox,
     isLive,
     isAnalyzing,
-    triggerInstantScan,
     diagnosticInfo,
     assignCameraFaceToStudent,
     nativeIOD,

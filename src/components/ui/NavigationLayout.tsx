@@ -13,7 +13,6 @@ import {
   LogOut,
   Menu,
   X,
-  Zap,
   Sun,
   Moon,
   MapPin,
@@ -22,7 +21,6 @@ import {
 import { SITE_CONFIG } from '@/config/siteConfig';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import { RecognitionSimulatorWidget } from '@/features/attendance/components/RecognitionSimulatorWidget';
 import { cn } from '@/lib/utils';
 
 /* ── Page title mapping ──────────────────────────────────────── */
@@ -43,7 +41,6 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [simulatorOpen, setSimulatorOpen] = useState(false);
   const isAdmin = role === 'admin';
 
   const currentPageTitle = PAGE_TITLES[location.pathname] || 'Dashboard';
@@ -258,7 +255,7 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
               </div>
             </div>
 
-            {/* Right: Theme + Simulate */}
+            {/* Right: Theme */}
             <div className="flex items-center gap-2">
               {/* Theme Toggle */}
               <button
@@ -273,15 +270,6 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
                   ? <><Sun className="w-3.5 h-3.5 text-amber-400" /> <span className="hidden sm:inline">Light</span></>
                   : <><Moon className="w-3.5 h-3.5 text-slate-500" /> <span className="hidden sm:inline">Dark</span></>
                 }
-              </button>
-
-              {/* Test Scan Simulator */}
-              <button
-                onClick={() => setSimulatorOpen(true)}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-primary text-white text-xs font-medium shadow-sm hover:bg-primary-light transition-colors"
-              >
-                <Zap className="w-3.5 h-3.5 fill-white text-white" />
-                <span className="hidden sm:inline">Simulate Scan</span>
               </button>
             </div>
           </div>
@@ -404,9 +392,6 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
             <span className="text-[11px] tracking-tight">More</span>
           </button>
         </nav>
-
-      {/* Recognition Simulator Modal */}
-      <RecognitionSimulatorWidget isOpen={simulatorOpen} onClose={() => setSimulatorOpen(false)} />
     </div>
   );
 };

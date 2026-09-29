@@ -90,9 +90,18 @@ export interface Student {
   updated_at: string;
 }
 
+export type RecognitionStatus = 'matched' | 'unidentified' | 'ambiguous';
+
+export interface CandidateStudent {
+  student_id: string;
+  student_name: string;
+  lrn: string;
+  similarity: number;
+}
+
 export interface RecognitionEvent {
   id: string;
-  student_id: string;
+  student_id?: string | null;
   student_name?: string;
   student_lrn?: string;
   student_photo?: string;
@@ -107,6 +116,12 @@ export interface RecognitionEvent {
   confidence_score: number;
   source: EventSource;
   captured_at: string;
+  status?: RecognitionStatus;
+  top_similarity_score?: number;
+  candidate_student_ids?: CandidateStudent[];
+  captured_image_path?: string | null;
+  captured_image_url?: string | null;
+  detection_count?: number;
 }
 
 export interface ClassroomAttendanceRecord {

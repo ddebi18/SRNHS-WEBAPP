@@ -67,38 +67,79 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
         return localEvents;
       }
 
-      const dbEvents: RecognitionEvent[] = (data || []).map((row: any) => ({
-        id: row.id,
-        student_id: row.student_id,
-        student_name: row.students ? `${row.students.first_name} ${row.students.last_name}` : 'Student',
-        student_lrn: row.students?.lrn || '',
-        student_photo: row.students?.photo_urls?.[0],
-        event_type: row.event_type,
-        camera_id: 'cam-01',
-        gate_id: 'gate-01',
-        room_name: row.rooms?.name || 'Main Gate Turnstile',
-        subject_title: row.subjects?.title,
-        confidence_score: row.confidence_score ?? 0.95,
-        source: row.source || 'camera',
-        captured_at: row.captured_at,
-      }));
+      // Batch resolve signed URLs for private unidentified captures
+      const signedUrlMap = new Map<string, string>();
+      const capturePaths = (data || [])
+        .map((r: any) => r.captured_image_path)
+        .filter((p: any): p is string => Boolean(p));
+
+      if (capturePaths.length > 0) {
+        try {
+          const { data: signedResults } = await supabase.storage
+            .from('unidentified-captures')
+            .createSignedUrls(capturePaths, 3600);
+          signedResults?.forEach((item: any) => {
+            if (item.path && item.signedUrl) {
+              signedUrlMap.set(item.path, item.signedUrl);
+            }
+          });
+        } catch (storageErr) {
+          console.warn('[Supabase] Storage signed URL note:', storageErr);
+        }
+      }
+
+      const dbEvents: RecognitionEvent[] = (data || []).map((row: any) => {
+        const status = (row.status as RecognitionEvent['status']) || 'matched';
+        let defaultName = 'Student';
+        let defaultLrn = '';
+        if (status === 'unidentified') {
+          defaultName = 'Unidentified Individual';
+          defaultLrn = 'Threshold Unmet';
+        } else if (status === 'ambiguous') {
+          defaultName = 'Ambiguous Match';
+          defaultLrn = `${row.candidate_student_ids?.length || 2} Candidates`;
+        }
+
+        return {
+          id: row.id,
+          student_id: row.student_id,
+          student_name: row.students ? `${row.students.first_name} ${row.students.last_name}` : defaultName,
+          student_lrn: row.students?.lrn || defaultLrn,
+          student_photo: row.students?.photo_urls?.[0],
+          event_type: row.event_type,
+          camera_id: 'cam-01',
+          gate_id: row.gate || 'gate-01',
+          room_name: row.rooms?.name || row.gate || 'Main Gate Turnstile',
+          subject_title: row.subjects?.title,
+          confidence_score: row.confidence_score ?? 0.95,
+          top_similarity_score: row.top_similarity_score ?? row.confidence_score ?? 0.95,
+          status,
+          candidate_student_ids: row.candidate_student_ids || [],
+          captured_image_path: row.captured_image_path,
+          captured_image_url: row.captured_image_path ? (signedUrlMap.get(row.captured_image_path) || null) : null,
+          detection_count: row.detection_count || 1,
+          source: row.source || 'camera',
+          captured_at: row.captured_at,
+        };
+      });
 
       // cloudOnly: return raw Supabase rows sorted by time, no local merge or dedup.
       if (filters?.cloudOnly) {
         return dbEvents;
       }
 
-      // Default: merge cloud events with local events, deduplicated by student + type + date
+      // Default: merge cloud events with local events
       const mergedMap = new Map<string, RecognitionEvent>();
       localEvents.forEach(e => {
-        const dateStr = new Date(e.captured_at).toDateString();
-        const key = `${e.student_id}_${e.event_type}_${dateStr}`;
+        const key = (e.status && e.status !== 'matched')
+          ? `security_${e.id}`
+          : `${e.student_id}_${e.event_type}_${new Date(e.captured_at).toDateString()}`;
         mergedMap.set(key, e);
       });
       dbEvents.forEach(e => {
-        const dateStr = new Date(e.captured_at).toDateString();
-        const key = `${e.student_id}_${e.event_type}_${dateStr}`;
-        // If local already exists, prefer local (which has high-res photos and rich section names)
+        const key = (e.status && e.status !== 'matched')
+          ? `security_${e.id}`
+          : `${e.student_id}_${e.event_type}_${new Date(e.captured_at).toDateString()}`;
         if (!mergedMap.has(key)) {
           mergedMap.set(key, e);
         }
@@ -128,6 +169,7 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
             room_id: (eventData.room_id && isValidUUID(eventData.room_id)) ? eventData.room_id : null,
             subject_id: (eventData.subject_id && isValidUUID(eventData.subject_id)) ? eventData.subject_id : null,
             confidence_score: 1.0,
+            status: 'matched',
             source: 'manual_override',
           });
       }
@@ -138,12 +180,8 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
     return localEvent;
   }
 
-  async simulateScan(eventData: Partial<RecognitionEvent>): Promise<RecognitionEvent> {
-    return mockRecognitionAdapter.simulateScan(eventData);
-  }
-
   async logRecognitionEvent(eventData: {
-    student_id: string;
+    student_id?: string | null;
     student_name?: string;
     student_lrn?: string;
     student_photo?: string;
@@ -154,22 +192,33 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
     room_id?: string;
     room_name?: string;
     confidence_score: number;
+    status?: RecognitionEvent['status'];
+    top_similarity_score?: number;
+    candidate_student_ids?: RecognitionEvent['candidate_student_ids'];
+    captured_image_path?: string | null;
   }): Promise<RecognitionEvent> {
     // 1. ALWAYS log to local adapter first (updates UI, logs to localStorage, sends SMS)
-    const localEvent = await mockRecognitionAdapter.simulateScan(eventData);
+    const localEvent = await mockRecognitionAdapter.logRecognitionEvent(eventData);
 
     if (!supabase) return localEvent;
 
     try {
-      // 2. If student_id is a valid UUID, persist to Supabase recognition_events
-      if (isValidUUID(eventData.student_id)) {
+      const isSecurityEvent = eventData.status === 'unidentified' || eventData.status === 'ambiguous';
+      const hasValidStudent = eventData.student_id && isValidUUID(eventData.student_id);
+
+      if (hasValidStudent || isSecurityEvent) {
         const { error: insertErr } = await supabase
           .from('recognition_events')
           .insert({
-            student_id: eventData.student_id,
+            student_id: hasValidStudent ? eventData.student_id : null,
             event_type: eventData.event_type,
             room_id: (eventData.room_id && isValidUUID(eventData.room_id)) ? eventData.room_id : null,
             confidence_score: eventData.confidence_score,
+            top_similarity_score: eventData.top_similarity_score ?? eventData.confidence_score,
+            status: eventData.status || 'matched',
+            candidate_student_ids: eventData.candidate_student_ids || [],
+            captured_image_path: eventData.captured_image_path || null,
+            gate: eventData.gate_id,
             source: 'camera',
           });
 

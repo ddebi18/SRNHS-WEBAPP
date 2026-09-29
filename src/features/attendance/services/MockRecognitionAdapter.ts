@@ -10,6 +10,10 @@ const STORAGE_KEY_EVENTS = 'srnhs_recognition_events_v2';
 function deduplicateEvents(events: RecognitionEvent[]): RecognitionEvent[] {
   const seen = new Set<string>();
   return events.filter(e => {
+    // Unidentified and ambiguous events are security logs and should not be collapsed by student ID
+    if (e.status === 'unidentified' || e.status === 'ambiguous') {
+      return true;
+    }
     // Enforce at most 1 entry and 1 exit per student per calendar date
     if (e.event_type === 'entry' || e.event_type === 'exit') {
       const dateStr = new Date(e.captured_at).toDateString();
@@ -101,26 +105,37 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     return newEvt;
   }
 
-  async simulateScan(eventData: Partial<RecognitionEvent>): Promise<RecognitionEvent> {
-    // Look up student from unified student database
-    const allStudents = getStoredStudents();
+  private async recordEvent(eventData: Partial<RecognitionEvent>): Promise<RecognitionEvent> {
+    const status = eventData.status || 'matched';
+    const isUnidentifiedOrAmbiguous = status === 'unidentified' || status === 'ambiguous';
+
+    // Look up student from unified student database if not unidentified/ambiguous
+    const allStudents = isUnidentifiedOrAmbiguous ? [] : getStoredStudents();
     const student = allStudents.find(
       s => s.id === eventData.student_id || s.studentNumber === eventData.student_id || s.name.toLowerCase() === (eventData.student_name || '').toLowerCase()
     );
 
-    const studentId = eventData.student_id || student?.id || `std-${Date.now()}`;
-    const studentName = eventData.student_name || student?.name || 'Student';
-    const studentLrn = eventData.student_lrn || student?.studentNumber || '109823456701';
-    const studentPhoto = eventData.student_photo || student?.registeredPhotos?.front || student?.photoUrl;
-    const sectionName = eventData.section_name || student?.sectionName || 'Grade 10 – Sampaguita';
+    const studentId = isUnidentifiedOrAmbiguous ? null : (eventData.student_id || student?.id || `std-${Date.now()}`);
+    let studentName = eventData.student_name || student?.name || 'Student';
+    let studentLrn = eventData.student_lrn || student?.studentNumber || '109823456701';
+    let studentPhoto = isUnidentifiedOrAmbiguous ? undefined : (eventData.student_photo || student?.registeredPhotos?.front || student?.photoUrl);
+    let sectionName = isUnidentifiedOrAmbiguous ? '—' : (eventData.section_name || student?.sectionName || 'Grade 10 – Sampaguita');
+
+    if (status === 'unidentified') {
+      studentName = 'Unidentified Individual';
+      studentLrn = 'Threshold Unmet';
+    } else if (status === 'ambiguous') {
+      studentName = 'Ambiguous Match';
+      studentLrn = `${eventData.candidate_student_ids?.length || 2} Candidates`;
+    }
+
     const guardianPhone = student?.guardianPhone || '+639171234567';
     const locationName = eventData.room_name || 'Main Gate Turnstile 01';
     const eventType = eventData.event_type || 'entry';
     const todayDateStr = new Date().toDateString();
 
-    // ── Enforce 1 Time-In and 1 Time-Out per student per day ───────────
-    // If student already has an entry or exit logged today, skip creating duplicate records and skip duplicate SMS
-    if (eventType === 'entry' || eventType === 'exit') {
+    // ── Enforce 1 Time-In and 1 Time-Out per student per day (only for matched events) ───────────
+    if (!isUnidentifiedOrAmbiguous && (eventType === 'entry' || eventType === 'exit')) {
       const existingToday = this.events.find(e => {
         const isSameStudent = e.student_id === studentId ||
           (e.student_lrn && studentLrn && e.student_lrn === studentLrn) ||
@@ -147,7 +162,12 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
       event_type: eventType,
       room_name: locationName,
       subject_title: eventData.subject_title,
-      confidence_score: eventData.confidence_score ?? Number((0.95 + Math.random() * 0.048).toFixed(4)),
+      confidence_score: eventData.confidence_score ?? (isUnidentifiedOrAmbiguous ? 0.42 : Number((0.95 + Math.random() * 0.048).toFixed(4))),
+      top_similarity_score: eventData.top_similarity_score ?? (isUnidentifiedOrAmbiguous ? 0.42 : 0.95),
+      status,
+      candidate_student_ids: eventData.candidate_student_ids,
+      captured_image_path: eventData.captured_image_path,
+      captured_image_url: eventData.captured_image_url,
       source: eventData.source || 'camera',
       captured_at: new Date().toISOString(),
     };
@@ -157,28 +177,30 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     saveStoredEvents(this.events);
     this.notifyListeners(newEvt);
 
-    // Automatically send real-time SMS notification to the student's guardian
-    try {
-      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const actionText = eventType === 'exit' ? 'exited campus via' : 'entered campus via';
-      const smsType = eventType === 'exit' ? 'gate_exit' : 'gate_entry';
+    // Automatically send real-time SMS notification ONLY for matched students (Never for unidentified/ambiguous)
+    if (!isUnidentifiedOrAmbiguous) {
+      try {
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const actionText = eventType === 'exit' ? 'exited campus via' : 'entered campus via';
+        const smsType = eventType === 'exit' ? 'gate_exit' : 'gate_entry';
 
-      activeNotificationAdapter.sendAlert({
-        student_id: newEvt.student_id,
-        student_name: studentName,
-        guardian_phone: guardianPhone,
-        message: `[SRNHS] ${studentName} (LRN: ${studentLrn}) ${actionText} ${locationName} at ${timeStr}. - San Roque National High School`,
-        event_type: smsType,
-      }).catch(err => console.warn('SMS dispatch notice:', err));
-    } catch (smsErr) {
-      console.warn('SMS dispatch error:', smsErr);
+        activeNotificationAdapter.sendAlert({
+          student_id: newEvt.student_id || '',
+          student_name: studentName,
+          guardian_phone: guardianPhone,
+          message: `[SRNHS] ${studentName} (LRN: ${studentLrn}) ${actionText} ${locationName} at ${timeStr}. - San Roque National High School`,
+          event_type: smsType,
+        }).catch(err => console.warn('SMS dispatch notice:', err));
+      } catch (smsErr) {
+        console.warn('SMS dispatch error:', smsErr);
+      }
     }
 
     return newEvt;
   }
 
   async logRecognitionEvent(eventData: {
-    student_id: string;
+    student_id?: string | null;
     student_name?: string;
     student_lrn?: string;
     student_photo?: string;
@@ -189,19 +211,12 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     room_id?: string;
     room_name?: string;
     confidence_score: number;
+    status?: RecognitionEvent['status'];
+    top_similarity_score?: number;
+    candidate_student_ids?: RecognitionEvent['candidate_student_ids'];
+    captured_image_path?: string | null;
   }): Promise<RecognitionEvent> {
-    return this.simulateScan({
-      student_id: eventData.student_id,
-      student_name: eventData.student_name,
-      student_lrn: eventData.student_lrn,
-      student_photo: eventData.student_photo,
-      section_name: eventData.section_name,
-      event_type: eventData.event_type,
-      camera_id: eventData.camera_id,
-      gate_id: eventData.gate_id,
-      room_name: eventData.room_name || 'Main Gate Turnstile 01',
-      confidence_score: eventData.confidence_score,
-    });
+    return this.recordEvent(eventData);
   }
 
   private notifyListeners(event: RecognitionEvent) {
