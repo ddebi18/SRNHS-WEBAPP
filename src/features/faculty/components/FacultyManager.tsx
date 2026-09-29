@@ -5,9 +5,6 @@ import { DataTable, Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
 import { UserCheck, Calendar, Clock, Plus, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-
-const INITIAL_STAFF: StaffProfile[] = [];
-
 const INITIAL_ASSIGNMENTS: TeacherAssignment[] = [];
 
 export const FacultyManager: React.FC = () => {

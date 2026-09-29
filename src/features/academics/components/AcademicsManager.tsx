@@ -79,6 +79,7 @@ export const AcademicsManager: React.FC = () => {
   // ── Teacher list for section adviser dropdown ────────────────────────────────
   const [teachers, setTeachers] = useState<{ id: string; full_name: string }[]>([]);
   useEffect(() => {
+    if (!supabase) return;
     supabase
       .from('staff_profiles')
       .select('id, full_name')
