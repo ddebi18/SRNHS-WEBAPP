@@ -55,7 +55,7 @@ const STATUS_ACTIONS: { status: AttendanceStatus; label: string; icon: React.Rea
 ];
 
 export const ClassroomAttendanceBoard: React.FC = () => {
-  const { user, isTeacher, isAdmin } = useRole();
+  const { user, isTeacher, isAdmin, canMarkAttendance } = useRole();
   const [sections, setSections] = useState<Section[]>([]);
   const [selectedSection, setSelectedSection] = useState('');
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -190,7 +190,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
 
   // ponytail: localStorage overrides only; move to DB when classroom_attendance table is in use
   const handleStatusChange = async (studentId: string, newStatus: AttendanceStatus) => {
-    if (!isTeacher) return; // Only teachers may mark attendance
+    if (!canMarkAttendance) return; // Only teachers may mark attendance
     const updated = {
       ...manualOverrides,
       [studentId]: {
@@ -264,6 +264,13 @@ export const ClassroomAttendanceBoard: React.FC = () => {
                 </span>
               )}
             </div>
+
+            {/* Teacher empty-state: no sections assigned yet */}
+            {isTeacher && authorizedSections.length === 0 && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200">
+                No sections assigned yet. Please contact the administrator.
+              </div>
+            )}
 
             <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#06180F] rounded-md border border-slate-200 dark:border-emerald-800/40 px-3 py-2">
               <BookOpen className="w-4 h-4 text-primary dark:text-emerald-400 shrink-0" />
@@ -376,7 +383,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
               {selectedSubject ? `, ${selectedSubject}` : ''}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              {new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} · {rows.length} Enrolled Students
+              {new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} Â· {rows.length} Enrolled Students
             </p>
           </div>
           <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
@@ -389,7 +396,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
           <table className="w-full text-left min-w-[680px]">
             <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800">
               <tr>
-                {['Student Name', 'LRN', 'Face Recognition Assist', 'Current Status', 'Mark Attendance'].map(h => (
+                {['Student Name', 'LRN', 'Face Recognition Assist', 'Current Status', canMarkAttendance ? 'Mark Attendance' : 'Status'].map(h => (
                   <th key={h} className="px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400">{h}</th>
                 ))}
               </tr>
@@ -429,7 +436,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
                         {student.lastScanTime ? (
                           <span className="flex items-center gap-1.5 text-green-700 dark:text-green-400 font-medium">
                             <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                            {student.lastScanTime} — {student.lastScanEvent?.room_name || 'Camera Turnstile'}
+                            {student.lastScanTime} â€” {student.lastScanEvent?.room_name || 'Camera Turnstile'}
                           </span>
                         ) : (
                           <span className="text-slate-400 dark:text-slate-500">No scan detected</span>
@@ -446,7 +453,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        {isTeacher ? (
+                        {canMarkAttendance ? (
                           <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 gap-0.5 border border-slate-200 dark:border-slate-700">
                             {STATUS_ACTIONS.map(action => (
                               <button
