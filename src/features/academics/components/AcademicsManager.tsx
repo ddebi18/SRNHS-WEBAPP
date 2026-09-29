@@ -23,6 +23,7 @@ import {
   generateUUID,
 } from '@/features/faceRegistration/api';
 import { Section as FRSection } from '@/features/faceRegistration/types';
+import { supabase } from '@/lib/supabase';
 
 // ─── LocalStorage keys for rooms & subjects ───────────────────────────────────
 const LS_ROOMS = 'srnhs_academics_rooms_v1';
@@ -75,6 +76,17 @@ export const AcademicsManager: React.FC = () => {
   const { isAdmin } = useRole();
   const [activeTab, setActiveTab] = useState<'sections' | 'subjects' | 'rooms'>('sections');
 
+  // ── Teacher list for section adviser dropdown ────────────────────────────────
+  const [teachers, setTeachers] = useState<{ id: string; full_name: string }[]>([]);
+  useEffect(() => {
+    supabase
+      .from('staff_profiles')
+      .select('id, full_name')
+      .eq('role', 'teacher')
+      .eq('is_active', true)
+      .then(({ data }) => { if (data) setTeachers(data); });
+  }, []);
+
   // ── Persisted state ──────────────────────────────────────────────────────────
   const [rooms, setRooms] = useState<Room[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -116,7 +128,8 @@ export const AcademicsManager: React.FC = () => {
   // Section form fields
   const [secGrade, setSecGrade] = useState('10');
   const [secName, setSecName] = useState('');
-  const [secAdviser, setSecAdviser] = useState('');
+  const [secAdviser, setSecAdviser] = useState(''); // teacher id
+  const [secAdviserName, setSecAdviserName] = useState(''); // display name
 
   // Room form fields
   const [roomName, setRoomName] = useState('');
@@ -137,7 +150,7 @@ export const AcademicsManager: React.FC = () => {
   // ── Open modal helpers ───────────────────────────────────────────────────────
   const openAdd = () => {
     setEditingItem(null);
-    setSecGrade('10'); setSecName(''); setSecAdviser('');
+    setSecGrade('10'); setSecName(''); setSecAdviser(''); setSecAdviserName('');
     setRoomName(''); setRoomBuilding(''); setRoomCapacity('');
     setSubCode(''); setSubTitle(''); setSubDesc('');
     setIsModalOpen(true);
@@ -148,7 +161,8 @@ export const AcademicsManager: React.FC = () => {
     if (activeTab === 'sections') {
       setSecGrade(String(item.grade_level));
       setSecName(item.name);
-      setSecAdviser(item.adviser_name || '');
+      setSecAdviser(item.adviser_id || '');
+      setSecAdviserName(item.adviser_name || '');
     } else if (activeTab === 'rooms') {
       setRoomName(item.name);
       setRoomBuilding(item.building);
@@ -166,11 +180,14 @@ export const AcademicsManager: React.FC = () => {
     e.preventDefault();
     if (activeTab === 'sections') {
       const grade = parseInt(secGrade, 10) || 10;
+      const teacher = teachers.find(t => t.id === secAdviser);
+      const adviserName = teacher ? teacher.full_name : secAdviserName;
+      const adviserId = teacher ? teacher.id : null;
       if (editingItem) {
         persistSections(
           sections.map(s =>
             s.id === editingItem.id
-              ? { ...s, grade_level: grade, name: secName.trim(), adviser_name: secAdviser.trim() }
+              ? { ...s, grade_level: grade, name: secName.trim(), adviser_id: adviserId, adviser_name: adviserName }
               : s
           )
         );
@@ -179,8 +196,8 @@ export const AcademicsManager: React.FC = () => {
           id: generateUUID(),
           grade_level: grade,
           name: secName.trim(),
-          adviser_id: null,
-          adviser_name: secAdviser.trim(),
+          adviser_id: adviserId,
+          adviser_name: adviserName,
           created_at: new Date().toISOString(),
         };
         persistSections([...sections, newSec]);
@@ -535,13 +552,26 @@ export const AcademicsManager: React.FC = () => {
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                   Section Adviser <span className="font-normal text-slate-400">(optional)</span>
                 </label>
-                <input
-                  type="text"
-                  value={secAdviser}
-                  onChange={e => setSecAdviser(e.target.value)}
-                  placeholder="e.g. Mr. Juan Dela Cruz"
-                  className={inputCls}
-                />
+                {teachers.length > 0 ? (
+                  <select
+                    value={secAdviser}
+                    onChange={e => setSecAdviser(e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">— Unassigned —</option>
+                    {teachers.map(t => (
+                      <option key={t.id} value={t.id}>{t.full_name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={secAdviserName}
+                    onChange={e => setSecAdviserName(e.target.value)}
+                    placeholder="e.g. Mr. Juan Dela Cruz"
+                    className={inputCls}
+                  />
+                )}
               </div>
             </>
           )}

@@ -188,12 +188,14 @@ export const ClassroomAttendanceBoard: React.FC = () => {
     return counts;
   }, [rows]);
 
+  // ponytail: localStorage overrides only; move to DB when classroom_attendance table is in use
   const handleStatusChange = async (studentId: string, newStatus: AttendanceStatus) => {
+    if (!isTeacher) return; // Only teachers may mark attendance
     const updated = {
       ...manualOverrides,
       [studentId]: {
         status: newStatus,
-        markedBy: user?.full_name ? `${user.full_name} (${isTeacher ? 'Teacher' : 'Admin'})` : 'Faculty',
+        markedBy: user?.full_name ? `${user.full_name} (Teacher)` : 'Teacher',
       },
     };
     setManualOverrides(updated);
@@ -444,22 +446,26 @@ export const ClassroomAttendanceBoard: React.FC = () => {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 gap-0.5 border border-slate-200 dark:border-slate-700">
-                          {STATUS_ACTIONS.map(action => (
-                            <button
-                              key={action.status}
-                              onClick={() => handleStatusChange(student.student_id, action.status)}
-                              title={action.label}
-                              className={cn(
-                                'flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer',
-                                student.status === action.status ? action.active : action.inactive
-                              )}
-                            >
-                              {action.icon}
-                              <span className="hidden sm:inline">{action.label}</span>
-                            </button>
-                          ))}
-                        </div>
+                        {isTeacher ? (
+                          <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 gap-0.5 border border-slate-200 dark:border-slate-700">
+                            {STATUS_ACTIONS.map(action => (
+                              <button
+                                key={action.status}
+                                onClick={() => handleStatusChange(student.student_id, action.status)}
+                                title={action.label}
+                                className={cn(
+                                  'flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer',
+                                  student.status === action.status ? action.active : action.inactive
+                                )}
+                              >
+                                {action.icon}
+                                <span className="hidden sm:inline">{action.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">View only</span>
+                        )}
                       </td>
                     </tr>
                   );
