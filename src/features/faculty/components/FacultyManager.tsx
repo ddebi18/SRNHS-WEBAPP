@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRole } from '@/hooks/useRole';
 import { StaffProfile, TeacherAssignment } from '@/types/domain.types';
 import { DataTable, Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
-import { UserCheck, Calendar, Clock, Plus, CheckCircle, XCircle } from 'lucide-react';
+import { UserCheck, Calendar, Clock, Plus, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 const INITIAL_STAFF: StaffProfile[] = [];
 
@@ -11,8 +12,25 @@ const INITIAL_ASSIGNMENTS: TeacherAssignment[] = [];
 
 export const FacultyManager: React.FC = () => {
   const { isAdmin, user } = useRole();
-  const [staff, setStaff] = useState<StaffProfile[]>(INITIAL_STAFF);
+  const [staff, setStaff] = useState<StaffProfile[]>([]);
+  const [staffLoading, setStaffLoading] = useState(true);
+  const [staffError, setStaffError] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<TeacherAssignment[]>(INITIAL_ASSIGNMENTS);
+
+  // Fetch real teacher profiles from Supabase on mount
+  useEffect(() => {
+    if (!supabase) { setStaffLoading(false); return; }
+    supabase
+      .from('staff_profiles')
+      .select('id, email, full_name, role, department, is_active, created_at, updated_at')
+      .eq('is_active', true)
+      .order('full_name')
+      .then(({ data, error }) => {
+        if (error) setStaffError(error.message);
+        else setStaff((data as StaffProfile[]) || []);
+        setStaffLoading(false);
+      });
+  }, []);
 
   // Provision Staff Modal State
   const [provisionModalOpen, setProvisionModalOpen] = useState(false);
@@ -259,10 +277,27 @@ export const FacultyManager: React.FC = () => {
         <form onSubmit={handleAssignmentSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Faculty Member</label>
-            <select value={targetTeacherId} onChange={e => setTargetTeacherId(e.target.value)} className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">
-              {staff.filter(s => s.role === 'teacher').map(t => (
-                <option key={t.id} value={t.id}>{t.full_name} ({t.email})</option>
-              ))}
+            {staffError && (
+              <div className="flex items-center gap-1.5 text-xs text-rose-600 dark:text-rose-400 mb-1">
+                <AlertCircle className="w-3.5 h-3.5" />
+                {staffError}
+              </div>
+            )}
+            <select
+              value={targetTeacherId}
+              onChange={e => setTargetTeacherId(e.target.value)}
+              disabled={staffLoading || staff.filter(s => s.role === 'teacher').length === 0}
+              className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 disabled:opacity-50"
+            >
+              {staffLoading ? (
+                <option value="">Loading teachers…</option>
+              ) : staff.filter(s => s.role === 'teacher').length === 0 ? (
+                <option value="">No teacher accounts found</option>
+              ) : (
+                staff.filter(s => s.role === 'teacher').map(t => (
+                  <option key={t.id} value={t.id}>{t.full_name} ({t.email})</option>
+                ))
+              )}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">

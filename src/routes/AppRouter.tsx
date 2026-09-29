@@ -103,7 +103,7 @@ const router = createBrowserRouter([
   {
     path: '/classroom',
     element: (
-      <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+      <ProtectedRoute allowedRoles={['teacher']}>
         <Suspense fallback={<LoadingSpinner />}>
           <ClassroomAttendancePage />
         </Suspense>

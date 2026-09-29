@@ -48,7 +48,7 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
   const allNavItems = [
     { label: 'Overview',               path: '/',                  icon: LayoutDashboard, allowed: ['admin', 'teacher'] },
     { label: 'Live Gate Log',           path: '/gate-log',          icon: DoorOpen,        allowed: ['admin'] },
-    { label: 'Classroom Attendance',    path: '/classroom',         icon: ClipboardList,   allowed: ['admin', 'teacher'] },
+    { label: 'Classroom Attendance',    path: '/classroom',         icon: ClipboardList,   allowed: ['teacher'] },
     { label: 'Face Registration',      path: '/face-registration', icon: Camera,          allowed: ['admin', 'teacher'] },
     { label: 'Students & Guardians',    path: '/students',          icon: Users,           allowed: ['admin', 'teacher'] },
     { label: 'Faculty & Schedules',     path: '/faculty',           icon: UserCheck,       allowed: ['admin', 'teacher'] },
@@ -62,7 +62,7 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
   const mobileBottomTabs = [
     { label: 'Overview',   path: '/',          icon: LayoutDashboard },
     ...(isAdmin ? [{ label: 'Gate Log', path: '/gate-log', icon: DoorOpen }] : []),
-    { label: 'Classroom',  path: '/classroom', icon: ClipboardList },
+    ...(isAdmin ? [] : [{ label: 'Classroom', path: '/classroom', icon: ClipboardList }]),
     { label: 'Students',   path: '/students',  icon: Users },
   ];
 
@@ -320,7 +320,7 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
                 <div>
                   <div className="text-[10px] font-semibold text-white/40 uppercase tracking-widest mb-3">Quick Links</div>
                   <div className="space-y-1.5">
-                    {['Dashboard Overview', 'Classroom Attendance', 'Student Records', 'Faculty Management'].map(link => (
+                    {['Dashboard Overview', 'Student Records', 'Faculty Management'].map(link => (
                       <div key={link} className="text-xs text-white/60 hover:text-white transition-colors cursor-pointer">
                         {link}
                       </div>
