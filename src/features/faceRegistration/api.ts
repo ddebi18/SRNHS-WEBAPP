@@ -503,8 +503,8 @@ export async function addNewStudent(studentData: {
     lastRegisteredAt: existingIndex >= 0 ? students[existingIndex]!.lastRegisteredAt : undefined,
     photoUrl: studentData.photoUrl || (existingIndex >= 0 ? students[existingIndex]!.photoUrl : undefined),
     registeredPhotos: existingIndex >= 0 ? students[existingIndex]!.registeredPhotos : undefined,
-    guardianName: studentData.guardianName?.trim() || 'Parent / Guardian',
-    guardianPhone: studentData.guardianPhone?.trim() || '+639170000000',
+    guardianName: studentData.guardianName?.trim() || undefined,
+    guardianPhone: studentData.guardianPhone?.trim() || undefined,
   };
 
   if (existingIndex >= 0) {
@@ -620,12 +620,7 @@ export function getStoredSections(): Section[] {
             return {
               ...s,
               id: sectionId,
-              teacherName:
-                s.teacherName === 'Maria Santos' ||
-                s.teacherName === 'Juan Dela Cruz' ||
-                s.teacherName === 'Elena Reyes'
-                  ? 'Unassigned'
-                  : s.teacherName,
+              teacherName: s.teacherName || 'Unassigned',
               totalStudents: 0,
               registeredStudents: 0,
             };

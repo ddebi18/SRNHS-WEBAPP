@@ -1,13 +1,17 @@
 export * from './NotificationAdapter';
 export * from './MockNotificationAdapter';
+export * from './supabaseNotificationAdapter';
 
+import { isSupabaseConfigured } from '@/lib/supabase';
 import { mockNotificationAdapter } from './MockNotificationAdapter';
+import { supabaseNotificationAdapter } from './supabaseNotificationAdapter';
 import { NotificationAdapter } from './NotificationAdapter';
 
 /**
  * Returns the active notification adapter for the frontend UI.
- * Real SMS dispatch is handled on-premise by edge_engine via the local Android SMS gateway.
- * The browser UI uses mockNotificationAdapter for audit viewing and simulation.
+ * Real SMS dispatch is logged to Supabase sms_notifications table.
  */
-export const activeNotificationAdapter: NotificationAdapter = mockNotificationAdapter;
+export const activeNotificationAdapter: NotificationAdapter = isSupabaseConfigured
+  ? supabaseNotificationAdapter
+  : mockNotificationAdapter;
 

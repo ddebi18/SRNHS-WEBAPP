@@ -5,7 +5,7 @@ import { useRole } from '@/hooks/useRole';
 import { SITE_CONFIG } from '@/config/siteConfig';
 import { RecognitionEvent } from '@/types/domain.types';
 import { supabaseRecognitionAdapter } from '@/features/attendance/services/SupabaseRecognitionAdapter';
-import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
+import { activeNotificationAdapter } from '@/features/notifications/services';
 import { getStoredStudents } from '@/features/faceRegistration/api';
 import { LiveCameraFeedCard } from '@/features/attendance/components/LiveCameraFeedCard';
 import {
@@ -75,12 +75,12 @@ export const DashboardOverviewPage: React.FC = () => {
 
   useEffect(() => {
     supabaseRecognitionAdapter.getEvents({ limit: 8 }).then(setRecentEvents);
-    mockNotificationAdapter.getSmsLogs(100).then(logs => setSmsCount(logs.length));
+    activeNotificationAdapter.getSmsLogs(100).then(logs => setSmsCount(logs.length));
 
     const unsub1 = supabaseRecognitionAdapter.subscribeToEvents(evt => {
       setRecentEvents(prev => [evt, ...prev.slice(0, 7)]);
     });
-    const unsub2 = mockNotificationAdapter.subscribeToSms(() => {
+    const unsub2 = activeNotificationAdapter.subscribeToSms(() => {
       setSmsCount(c => c + 1);
     });
     return () => { unsub1(); unsub2(); };
@@ -335,7 +335,7 @@ export const DashboardOverviewPage: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Card 1: Attendance Rate with Progress Bar */}
           <div
-            onClick={() => navigate('/classroom')}
+            onClick={() => navigate(isAdmin ? '/gate-log' : '/classroom')}
             className="group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 transition-colors cursor-pointer overflow-hidden flex flex-col justify-between"
           >
             <div className="absolute top-0 left-0 right-0 h-[3px] bg-emerald-500" />
@@ -441,7 +441,7 @@ export const DashboardOverviewPage: React.FC = () => {
                   {enrolledCount}
                 </div>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800/50">
-                  100% Registered
+                  {enrolledCount === 0 ? 'No students enrolled' : `${enrolledCount} Registered`}
                 </span>
               </div>
 
@@ -518,7 +518,15 @@ export const DashboardOverviewPage: React.FC = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {[
-              {
+              isAdmin ? {
+                title: 'Turnstile Gate Log',
+                desc: 'Inspect real-time campus gate flow & access logs',
+                icon: ShieldCheck,
+                path: '/gate-log',
+                badge: 'Live Gate',
+                color: 'text-emerald-600 dark:text-emerald-400',
+                bg: 'bg-emerald-50 dark:bg-emerald-950/60',
+              } : {
                 title: 'Classroom Attendance',
                 desc: 'Take period-by-period subject attendance',
                 icon: ClipboardList,

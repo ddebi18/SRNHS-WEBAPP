@@ -233,7 +233,7 @@ export const ViewRegisteredFaceModal: React.FC<ViewRegisteredFaceModalProps> = (
                 <div>
                   <span className="font-semibold text-slate-500 dark:text-slate-400 block text-[11px]">Guardian Consent on File</span>
                   <span className="font-bold text-slate-900 dark:text-slate-100">
-                    {student.guardianName || 'Authorized Guardian'} ({student.guardianPhone || '+639171234567'})
+                    {student.guardianName || 'Authorized Guardian'}{student.guardianPhone ? ` (${student.guardianPhone})` : ''}
                   </span>
                 </div>
               </div>

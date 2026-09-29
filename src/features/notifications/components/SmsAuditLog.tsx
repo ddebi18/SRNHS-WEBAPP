@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { SmsNotification } from '@/types/domain.types';
-import { mockNotificationAdapter } from '../services/MockNotificationAdapter';
+import { activeNotificationAdapter } from '../services';
 import { DataTable, Column } from '@/components/ui/DataTable';
 import { SmsBadge } from '@/components/ui/StatusBadge';
 import { Phone, RefreshCw } from 'lucide-react';
@@ -14,14 +14,14 @@ export const SmsAuditLog: React.FC = () => {
 
   const fetchLogs = async () => {
     setIsLoading(true);
-    const data = await mockNotificationAdapter.getSmsLogs();
+    const data = await activeNotificationAdapter.getSmsLogs();
     setLogs(data);
     setIsLoading(false);
   };
 
   useEffect(() => {
     fetchLogs();
-    const unsubscribe = mockNotificationAdapter.subscribeToSms(newSms => {
+    const unsubscribe = activeNotificationAdapter.subscribeToSms(newSms => {
       setLogs(prev => [newSms, ...prev]);
     });
     return () => unsubscribe();

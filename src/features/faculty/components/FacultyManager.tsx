@@ -38,11 +38,11 @@ export const FacultyManager: React.FC = () => {
   // Assignment Modal State
   const [assignmentModalOpen, setAssignmentModalOpen] = useState(false);
   const [targetTeacherId, setTargetTeacherId] = useState('');
-  const [sectionName, setSectionName] = useState('Grade 10 – Sampaguita');
-  const [subjectTitle, setSubjectTitle] = useState('General Mathematics');
-  const [roomName, setRoomName] = useState('Building A – Room 204');
-  const [scheduleDay, setScheduleDay] = useState('Mon, Wed, Fri');
-  const [timeRange, setTimeRange] = useState('08:00 AM - 09:00 AM');
+  const [sectionName, setSectionName] = useState('');
+  const [subjectTitle, setSubjectTitle] = useState('');
+  const [roomName, setRoomName] = useState('');
+  const [scheduleDay, setScheduleDay] = useState('');
+  const [timeRange, setTimeRange] = useState('');
 
   const toggleStaffStatus = (id: string) => {
     setStaff(prev =>
@@ -300,26 +300,26 @@ export const FacultyManager: React.FC = () => {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Section</label>
-              <input required type="text" value={sectionName} onChange={e => setSectionName(e.target.value)} className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
+              <input required type="text" value={sectionName} onChange={e => setSectionName(e.target.value)} placeholder="e.g. Grade 10 - Sampaguita" className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Subject</label>
-              <input required type="text" value={subjectTitle} onChange={e => setSubjectTitle(e.target.value)} className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
+              <input required type="text" value={subjectTitle} onChange={e => setSubjectTitle(e.target.value)} placeholder="e.g. General Mathematics" className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Room</label>
-              <input required type="text" value={roomName} onChange={e => setRoomName(e.target.value)} className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
+              <input required type="text" value={roomName} onChange={e => setRoomName(e.target.value)} placeholder="e.g. Building A - Room 204" className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Schedule Days</label>
-              <input required type="text" value={scheduleDay} onChange={e => setScheduleDay(e.target.value)} placeholder="Mon, Wed, Fri" className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
+              <input required type="text" value={scheduleDay} onChange={e => setScheduleDay(e.target.value)} placeholder="e.g. Mon, Wed, Fri" className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
             </div>
           </div>
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Time Slot</label>
-            <input required type="text" value={timeRange} onChange={e => setTimeRange(e.target.value)} placeholder="08:00 AM - 09:00 AM" className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
+            <input required type="text" value={timeRange} onChange={e => setTimeRange(e.target.value)} placeholder="e.g. 08:00 AM - 09:00 AM" className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
           </div>
           <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-700">
             <button type="button" onClick={() => setAssignmentModalOpen(false)} className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>

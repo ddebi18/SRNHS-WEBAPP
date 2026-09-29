@@ -127,7 +127,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
       return;
     }
 
-    let cleanPhone = '+639170000000';
+    let cleanPhone = '';
     if (enrollGuardianPhone.trim()) {
       const rawPhone = enrollGuardianPhone.trim().replace(/[\s-]/g, '');
       if (!/^(\+639\d{9}|09\d{9}|9\d{9})$/.test(rawPhone)) {
@@ -352,8 +352,12 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
         ) : filteredStudents.length === 0 ? (
           <div className="py-12 text-center bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-8 space-y-2">
             <Users className="w-8 h-8 text-slate-400 mx-auto" />
-            <div className="text-sm font-bold text-slate-900 dark:text-slate-100">No students match search or filter</div>
-            <p className="text-xs text-slate-500">Try clearing your search query or switching section scope.</p>
+            <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              {students.length === 0 ? 'No students enrolled yet' : 'No students match search or filter'}
+            </div>
+            <p className="text-xs text-slate-500">
+              {students.length === 0 ? "Click 'Enroll Student' above to add learners to this section." : 'Try clearing your search query or switching section scope.'}
+            </p>
           </div>
         ) : (
           filteredStudents.map(student => (
@@ -410,7 +414,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
               type="text"
               value={enrollLrn}
               onChange={e => setEnrollLrn(e.target.value)}
-              placeholder="e.g. 109823456799"
+              placeholder="e.g. 109823456789"
               className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono"
             />
           </div>
@@ -467,7 +471,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
               />
               <input
                 type="text"
-                placeholder="+639171234567"
+                placeholder="e.g. 09171234567"
                 value={enrollGuardianPhone}
                 onChange={e => setEnrollGuardianPhone(e.target.value)}
                 className="px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono"

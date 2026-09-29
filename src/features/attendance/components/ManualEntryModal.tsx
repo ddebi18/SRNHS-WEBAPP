@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { EventType } from '@/types/domain.types';
-import { mockRecognitionAdapter } from '../services/MockRecognitionAdapter';
+import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
+import { getStoredSections } from '@/features/faceRegistration/api';
 
 interface ManualEntryModalProps {
   isOpen: boolean;
@@ -12,10 +13,21 @@ interface ManualEntryModalProps {
 export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const [studentName, setStudentName] = useState('');
   const [lrn, setLrn] = useState('');
-  const [sectionName, setSectionName] = useState('Grade 10 – Sampaguita');
+  const [sectionName, setSectionName] = useState('');
+  const [availableSections, setAvailableSections] = useState<string[]>([]);
   const [eventType, setEventType] = useState<EventType>('entry');
-  const [roomName, setRoomName] = useState('Main Gate Turnstile 01');
+  const [roomName, setRoomName] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const secs = getStoredSections();
+    const names = secs.map(s => s.name);
+    setAvailableSections(names);
+    if (names.length > 0 && !sectionName) {
+      setSectionName(names[0] || '');
+    }
+  }, [isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,13 +46,15 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ isOpen, onCl
       return;
     }
 
-    await mockRecognitionAdapter.logManualEvent({
-      student_id: `std-man-${Date.now()}`,
+    await supabaseRecognitionAdapter.logRecognitionEvent({
       student_name: cleanName,
       student_lrn: cleanLrn,
-      section_name: sectionName,
+      section_name: sectionName || undefined,
       event_type: eventType,
-      room_name: roomName,
+      camera_id: 'manual-override',
+      gate_id: 'gate-manual',
+      room_name: roomName.trim() || 'Main Gate Turnstile 01',
+      confidence_score: 1.0,
     });
 
     setStudentName('');
@@ -87,7 +101,7 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ isOpen, onCl
               maxLength={12}
               value={lrn}
               onChange={e => setLrn(e.target.value)}
-              placeholder="109823456799"
+              placeholder="e.g. 109823456789"
               className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
             />
           </div>
@@ -101,10 +115,13 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ isOpen, onCl
               onChange={e => setSectionName(e.target.value)}
               className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
             >
-              <option value="Grade 10 – Sampaguita">Grade 10 – Sampaguita</option>
-              <option value="Grade 11 – STEM A">Grade 11 – STEM A</option>
-              <option value="Grade 12 – ABM A">Grade 12 – ABM A</option>
-              <option value="Grade 7 – Gumamela">Grade 7 – Gumamela</option>
+              {availableSections.length === 0 ? (
+                <option value="">No sections defined</option>
+              ) : (
+                availableSections.map(sec => (
+                  <option key={sec} value={sec}>{sec}</option>
+                ))
+              )}
             </select>
           </div>
         </div>
@@ -133,6 +150,7 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({ isOpen, onCl
               type="text"
               value={roomName}
               onChange={e => setRoomName(e.target.value)}
+              placeholder="e.g. Main Gate Turnstile 01"
               className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
             />
           </div>

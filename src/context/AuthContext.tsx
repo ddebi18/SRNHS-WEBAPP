@@ -203,8 +203,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPass = password.trim();
     const GENERIC_ERROR = 'Invalid credentials. Please verify and try again.';
 
-    // 1. Check verified reference test accounts
-    const testMatch = TEST_ACCOUNTS[cleanId];
+    // 1. Check verified reference test accounts (only when explicitly enabled via env flag)
+    const isMockAuthEnabled = import.meta.env.VITE_ENABLE_MOCK_AUTH === 'true';
+    const testMatch = isMockAuthEnabled ? TEST_ACCOUNTS[cleanId] : undefined;
     if (testMatch) {
       const passwordValid = testMatch.pass.includes(cleanPass) || !cleanPass;
       if (!passwordValid) {
