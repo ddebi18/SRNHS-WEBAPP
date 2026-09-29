@@ -65,7 +65,7 @@ class TestSMSHook(unittest.TestCase):
         self.assertNotIn("LRN", msg)
         self.assertIn("This is a system test.", msg)
 
-    def test_cooldown_enforcement(self):
+    def test_cooldown_enforcement_same_event(self):
         manager = SMSHookManager(self.config)
         manager.logs_dir = Path(self.test_dir.name)
 
@@ -75,18 +75,28 @@ class TestSMSHook(unittest.TestCase):
             manager._process_event(event1)
         self.assertEqual(manager.daily_count, 1)
 
-        # Event within 600s cooldown should be suppressed
+        # Same event_type ('entry') within 600s cooldown should be suppressed
         t1 = t0 + 100.0
-        event2 = {"student_id": "std_1", "first_name": "Maria", "event_type": "exit", "timestamp": t1}
+        event2 = {"student_id": "std_1", "first_name": "Maria", "event_type": "entry", "timestamp": t1}
         with patch("time.time", return_value=t1):
             manager._process_event(event2)
         self.assertEqual(manager.daily_count, 1)
 
-        # Event after cooldown expires (t0 + 601s) with different event_type
-        t2 = t0 + 601.0
-        event3 = {"student_id": "std_1", "first_name": "Maria", "event_type": "exit", "timestamp": t2}
-        with patch("time.time", return_value=t2):
-            manager._process_event(event3)
+    def test_entry_does_not_block_exit(self):
+        manager = SMSHookManager(self.config)
+        manager.logs_dir = Path(self.test_dir.name)
+
+        t0 = 1000.0
+        event_entry = {"student_id": "std_1", "first_name": "Maria", "event_type": "entry", "timestamp": t0}
+        with patch("time.time", return_value=t0):
+            manager._process_event(event_entry)
+        self.assertEqual(manager.daily_count, 1)
+
+        # Distinct event_type ('exit') shortly after (e.g. +30s) should proceed
+        t1 = t0 + 30.0
+        event_exit = {"student_id": "std_1", "first_name": "Maria", "event_type": "exit", "timestamp": t1}
+        with patch("time.time", return_value=t1):
+            manager._process_event(event_exit)
         self.assertEqual(manager.daily_count, 2)
 
     def test_daily_per_event_deduplication(self):

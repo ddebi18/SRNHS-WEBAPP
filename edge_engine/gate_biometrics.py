@@ -181,9 +181,15 @@ class OpenCvFaceNetEngine:
 
 
 class TurnstileGateClient:
-    def __init__(self, camera_index: int = DEFAULT_CAMERA_INDEX, gate_id: str = DEFAULT_GATE_ID):
+    def __init__(
+        self,
+        camera_index: int = DEFAULT_CAMERA_INDEX,
+        gate_id: str = DEFAULT_GATE_ID,
+        event_type: str = DEFAULT_EVENT_TYPE,
+    ):
         self.camera_index = camera_index
         self.gate_id = gate_id
+        self.event_type = event_type
         self.clahe = CLAHEPreprocessor()
         self.engine = OpenCvFaceNetEngine()
         self.similarity_engine = CosineSimilarityEngine()
@@ -359,7 +365,7 @@ class TurnstileGateClient:
                 # 1. Post to recognition_events (primary real-time event log)
                 rec_payload = {
                     "student_id": student_id,
-                    "event_type": DEFAULT_EVENT_TYPE,
+                    "event_type": self.event_type,
                     "gate": self.gate_id,
                     "confidence_score": round(confidence, 4),
                     "top_similarity_score": round(confidence, 4),
@@ -372,7 +378,7 @@ class TurnstileGateClient:
                 # 2. Legacy gate_logs table fallback
                 gate_payload = {
                     "student_id": student_id,
-                    "event_type": DEFAULT_EVENT_TYPE,
+                    "event_type": self.event_type,
                     "gate": self.gate_id,
                     "confidence": round(confidence, 4),
                     "timestamp": iso_now,
@@ -384,7 +390,7 @@ class TurnstileGateClient:
         # --- Local Android SMS Gateway dispatch (non-blocking) ---
         guardian_phone = profile.get("guardian_phone", "")
         if guardian_phone:
-            sms_text = build_attendance_message(student_name, lrn, DEFAULT_EVENT_TYPE, self.gate_id)
+            sms_text = build_attendance_message(student_name, lrn, self.event_type, self.gate_id)
             sms_ok, sms_err = send_sms(guardian_phone, sms_text)
             sms_status = "sent" if sms_ok else "failed"
             if not sms_ok:
@@ -402,7 +408,7 @@ class TurnstileGateClient:
                         "student_id": student_id,
                         "phone_number": guardian_phone,
                         "message": sms_text,
-                        "event_type": DEFAULT_EVENT_TYPE,
+                        "event_type": self.event_type,
                         "status": sms_status,
                         "sent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     }
@@ -416,7 +422,7 @@ class TurnstileGateClient:
                     print(f"[SMS] Audit log warning: {sms_log_exc}")
 
         # Temporary SMSGate recognition hook (feature-flagged)
-        notify_recognition(student_id, student_name.split()[0] if student_name else "Student", DEFAULT_EVENT_TYPE, now)
+        notify_recognition(student_id, student_name.split()[0] if student_name else "Student", self.event_type, now)
 
     def dispatch_unidentified_log(
         self,
@@ -472,7 +478,7 @@ class TurnstileGateClient:
                 }
                 payload = {
                     "student_id": None,
-                    "event_type": DEFAULT_EVENT_TYPE,
+                    "event_type": self.event_type,
                     "gate": self.gate_id,
                     "confidence_score": round(similarity, 4),
                     "top_similarity_score": round(similarity, 4),
@@ -585,8 +591,9 @@ def main():
     parser = argparse.ArgumentParser(description="SRNHS Turnstile Biometric Edge Engine (OpenCV + FaceNet)")
     parser.add_argument("--camera", type=int, default=DEFAULT_CAMERA_INDEX, help="Webcam device index (default: 0)")
     parser.add_argument("--gate", type=str, default=DEFAULT_GATE_ID, help="Gate identifier name")
+    parser.add_argument("--event-type", type=str, default=DEFAULT_EVENT_TYPE, help="Event type: entry or exit")
     args = parser.parse_args()
-    TurnstileGateClient(camera_index=args.camera, gate_id=args.gate).run()
+    TurnstileGateClient(camera_index=args.camera, gate_id=args.gate, event_type=args.event_type).run()
 
 
 if __name__ == "__main__":

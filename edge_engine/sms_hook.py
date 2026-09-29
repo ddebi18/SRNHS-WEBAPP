@@ -251,14 +251,17 @@ class SMSHookManager:
         with self.lock:
             self._reset_daily_counts_if_needed(now_dt)
 
-            # 1. Cooldown check
-            last_sent = self.last_sent_times.get(student_id, 0.0)
+            # 1. Cooldown check (per student and event type so entry doesn't block exit)
+            cooldown_key = f"{student_id}:{event_type}"
+            last_sent = self.last_sent_times.get(cooldown_key, 0.0)
             if (now - last_sent) < self.config.cooldown_seconds:
+                print(f"[SMSHook] Cooldown active for {student_id} ({event_type}). {int(self.config.cooldown_seconds - (now - last_sent))}s remaining. Suppressing SMS.")
                 return
 
             # 2. Per-day, per-event-type deduplication check
             event_key = (student_id, self.current_day, event_type)
             if event_key in self.daily_events:
+                print(f"[SMSHook] Daily dedupe: {student_id} already triggered {event_type} on {self.current_day}. Suppressing SMS.")
                 return
 
             # 3. Daily message cap check
@@ -273,7 +276,7 @@ class SMSHookManager:
 
             # Reserve slot
             self.daily_count += 1
-            self.last_sent_times[student_id] = now
+            self.last_sent_times[cooldown_key] = now
             self.daily_events.add(event_key)
 
         message_text = self._format_message_text(first_name, rec_time)
