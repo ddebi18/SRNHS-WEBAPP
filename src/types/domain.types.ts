@@ -31,8 +31,9 @@ export interface Room {
 
 export interface Subject {
   id: string;
-  code: string;
+  code?: string | null;
   title: string;
+  name?: string;
   description?: string;
   created_at: string;
 }
@@ -50,17 +51,31 @@ export interface TeacherAssignment {
   id: string;
   teacher_id: string;
   teacher_name?: string;
+  teacher_email?: string;
   section_id: string;
   section_name?: string;
+  grade_level?: number;
   subject_id: string;
   subject_code?: string;
   subject_title?: string;
   room_id: string;
   room_name?: string;
-  schedule_day: string;
+  room_building?: string;
+  days: string[];
+  schedule_day?: string;
   start_time: string;
   end_time: string;
   created_at: string;
+}
+
+export interface TeachingAssignmentInput {
+  teacher_id: string;
+  section_id: string;
+  subject_id: string;
+  room_id: string;
+  days: string[];
+  start_time: string;
+  end_time: string;
 }
 
 export interface StudentGuardian {
