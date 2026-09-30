@@ -21,16 +21,8 @@ const TEACHER_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes for teacher
 
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<StaffProfile | null>(() => {
-    const saved = localStorage.getItem('srnhs-user');
-    if (saved) {
-      try { return JSON.parse(saved); } catch { return null; }
-    }
-    return null;
-  });
-  const [sessionId, setSessionId] = useState<string | null>(() => {
-    return localStorage.getItem('srnhs-session-id');
-  });
+  const [user, setUser] = useState<StaffProfile | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const lastActivityRef = useRef<number>(Date.now());
 
@@ -53,6 +45,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const clearSession = useCallback(() => {
+    setUser(null);
+    setSessionId(null);
+    localStorage.removeItem('srnhs-user');
+    localStorage.removeItem('srnhs-session-id');
+    localStorage.removeItem('srnhs-last-activity');
+  }, []);
+
   const logout = useCallback(async () => {
     setIsLoading(true);
     if (isSupabaseConfigured && supabase) {
@@ -62,13 +62,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // ignore network error during signout
       }
     }
-    setUser(null);
-    setSessionId(null);
-    localStorage.removeItem('srnhs-user');
-    localStorage.removeItem('srnhs-session-id');
-    localStorage.removeItem('srnhs-last-activity');
+    clearSession();
     setIsLoading(false);
-  }, []);
+  }, [clearSession]);
 
   // Idle timeout monitor (Requirement 5: Admin 15m, Teacher 60m)
   useEffect(() => {
@@ -103,40 +99,72 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [user, logout]);
 
-  // Initial session restoration
+  // Session verification on mount — only trusted if confirmed by Supabase
   useEffect(() => {
-    async function initAuth() {
-      if (isSupabaseConfigured && supabase) {
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user) {
-            const { data: profile } = await supabase
-              .from('staff_profiles')
-              .select('*')
-              .eq('id', session.user.id)
-              .single();
+    let isMounted = true;
 
-            if (profile) {
-              const staffUser = profile as StaffProfile;
-              setUser(staffUser);
-              localStorage.setItem('srnhs-user', JSON.stringify(staffUser));
-            }
-          }
-        } catch (err) {
-          console.warn('[Auth] Supabase session check notice:', err);
-        }
+    async function initAuth() {
+      if (!isSupabaseConfigured || !supabase) {
+        clearSession();
+        if (isMounted) setIsLoading(false);
+        return;
       }
-      setIsLoading(false);
+
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error || !session?.user) {
+          clearSession();
+          if (isMounted) setIsLoading(false);
+          return;
+        }
+
+        const { data: profile, error: profileErr } = await supabase
+          .from('staff_profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
+        if (profileErr || !profile || !profile.is_active) {
+          await supabase.auth.signOut().catch(() => {});
+          clearSession();
+        } else if (isMounted) {
+          const staffUser = profile as StaffProfile;
+          setUser(staffUser);
+          setSessionId(session.access_token.slice(-16));
+          localStorage.setItem('srnhs-user', JSON.stringify(staffUser));
+        }
+      } catch (err) {
+        console.warn('[Auth] Supabase session check notice:', err);
+        clearSession();
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
     }
+
     initAuth();
-  }, []);
+
+    // Subscribe to auth state changes to keep client in sync with server
+    const { data: { subscription } } = supabase
+      ? supabase.auth.onAuthStateChange(async (event, session) => {
+          if (event === 'SIGNED_OUT' || !session?.user) {
+            clearSession();
+          }
+        })
+      : { data: { subscription: { unsubscribe: () => {} } } };
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [clearSession]);
 
   /**
    * Unified Authentication Handler:
-   *  - Verifies credentials
-   *  - Reads user role exclusively from database / user record (Requirement 3)
-   *  - Rejects cross-portal submissions with generic "Invalid credentials" (Requirement 3)
-   *  - Regenerates session ID on login (Requirement 5)
+   *  - Verifies credentials via Supabase Auth
+   *  - Rejects plain usernames (must be valid email)
+   *  - Reads user role exclusively from database staff_profiles record
+   *  - Rejects cross-portal submissions with generic error
+   *  - Regenerates session ID on login
    */
   const login = async (
     identifier: string,
@@ -148,61 +176,74 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPass = password.trim();
     const GENERIC_ERROR = 'Invalid credentials. Please verify and try again.';
 
-    // Attempt Supabase Auth login
-    if (isSupabaseConfigured && supabase && cleanPass) {
-      try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: cleanId,
-          password: cleanPass,
-        });
-
-        if (!error && data.user) {
-          // Read role directly from database staff_profiles record
-          const { data: profile } = await supabase
-            .from('staff_profiles')
-            .select('*')
-            .eq('id', data.user.id)
-            .single();
-
-          const dbRole: UserRole = profile?.role || (data.user.user_metadata?.role as UserRole) || 'teacher';
-
-          // Cross-portal isolation
-          if (dbRole !== portal) {
-            await supabase.auth.signOut();
-            logAuthAttempt(portal, 'failure', cleanId);
-            setIsLoading(false);
-            return { success: false, error: GENERIC_ERROR };
-          }
-
-          const staffProfile: StaffProfile = profile || {
-            id: data.user.id,
-            email: cleanId,
-            full_name: data.user.user_metadata?.full_name || cleanId.split('@')[0],
-            role: dbRole,
-            department: dbRole === 'admin' ? 'Administration' : 'Faculty',
-            is_active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-
-          const newSessionId = `sess-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-          setUser(staffProfile);
-          setSessionId(newSessionId);
-          localStorage.setItem('srnhs-user', JSON.stringify(staffProfile));
-          localStorage.setItem('srnhs-session-id', newSessionId);
-          lastActivityRef.current = Date.now();
-          logAuthAttempt(portal, 'success', cleanId);
-          setIsLoading(false);
-          return { success: true };
-        }
-      } catch (err) {
-        console.warn('[Auth] Live sign-in notice:', err);
-      }
+    // Email format sanity check — reject plain usernames immediately
+    if (!cleanId.includes('@') || !cleanPass) {
+      logAuthAttempt(portal, 'failure', cleanId);
+      setIsLoading(false);
+      return { success: false, error: GENERIC_ERROR };
     }
 
-    logAuthAttempt(portal, 'failure', cleanId);
-    setIsLoading(false);
-    return { success: false, error: GENERIC_ERROR };
+    if (!isSupabaseConfigured || !supabase) {
+      logAuthAttempt(portal, 'failure', cleanId);
+      setIsLoading(false);
+      return { success: false, error: 'Authentication service unavailable.' };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanId,
+        password: cleanPass,
+      });
+
+      if (error || !data.user) {
+        logAuthAttempt(portal, 'failure', cleanId);
+        setIsLoading(false);
+        return { success: false, error: GENERIC_ERROR };
+      }
+
+      // Fetch role strictly from database staff_profiles record
+      const { data: profile, error: profileErr } = await supabase
+        .from('staff_profiles')
+        .select('*')
+        .eq('id', data.user.id)
+        .single();
+
+      if (profileErr || !profile || !profile.is_active) {
+        await supabase.auth.signOut().catch(() => {});
+        clearSession();
+        logAuthAttempt(portal, 'failure', cleanId);
+        setIsLoading(false);
+        return { success: false, error: GENERIC_ERROR };
+      }
+
+      const dbRole: UserRole = profile.role;
+
+      // Cross-portal isolation
+      if (dbRole !== portal) {
+        await supabase.auth.signOut().catch(() => {});
+        clearSession();
+        logAuthAttempt(portal, 'failure', cleanId);
+        setIsLoading(false);
+        return { success: false, error: GENERIC_ERROR };
+      }
+
+      const staffProfile: StaffProfile = profile as StaffProfile;
+      const newSessionId = `sess-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      setUser(staffProfile);
+      setSessionId(newSessionId);
+      localStorage.setItem('srnhs-user', JSON.stringify(staffProfile));
+      localStorage.setItem('srnhs-session-id', newSessionId);
+      lastActivityRef.current = Date.now();
+      logAuthAttempt(portal, 'success', cleanId);
+      setIsLoading(false);
+      return { success: true };
+    } catch {
+      await supabase.auth.signOut().catch(() => {});
+      clearSession();
+      logAuthAttempt(portal, 'failure', cleanId);
+      setIsLoading(false);
+      return { success: false, error: GENERIC_ERROR };
+    }
   };
 
   return (

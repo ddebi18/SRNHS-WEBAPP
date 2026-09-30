@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "audit:auth": "node scripts/check-no-dummy-auth.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
