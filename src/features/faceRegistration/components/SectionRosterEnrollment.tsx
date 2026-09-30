@@ -11,24 +11,27 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { Student, Section, FaceRegistrationStatus } from '../types';
-import { fetchSections, fetchSectionRoster, addNewStudent, getStoredStudents } from '../api';
+import { fetchRegistrableSections, fetchSectionRoster, addNewStudent, getStoredStudents } from '../api';
 import { StudentRosterRow } from './StudentRosterRow';
 import { FaceCaptureModal } from './FaceCaptureModal';
 import { ViewRegisteredFaceModal } from './ViewRegisteredFaceModal';
 import { Modal } from '@/components/ui/Modal';
 import { cn } from '@/lib/utils';
+import { useRole } from '@/hooks/useRole';
 
 export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; initialStudentId?: string }> = ({
   initialSectionId,
   initialStudentId,
 }) => {
+  const { isAdmin, user } = useRole();
   const [sections, setSections] = useState<Section[]>([]);
+  const [sectionsLoading, setSectionsLoading] = useState(true);
   const [selectedSectionId, setSelectedSectionId] = useState<string>(initialSectionId || '');
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<FaceRegistrationStatus | 'all'>('all');
-  
+
   // Modal State
   const [selectedStudentForCapture, setSelectedStudentForCapture] = useState<Student | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -36,7 +39,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Enroll New Student Modal State
+  // Enroll New Student Modal State (admin only)
   const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
   const [enrollLrn, setEnrollLrn] = useState('');
   const [enrollFirstName, setEnrollFirstName] = useState('');
@@ -47,26 +50,39 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
   const [enrollError, setEnrollError] = useState<string | null>(null);
   const [isSubmittingEnroll, setIsSubmittingEnroll] = useState(false);
 
-  // Load sections on mount
+  // Load only the sections this user may register faces for.
+  // Wait for auth before fetching (user may be null during initialisation).
   useEffect(() => {
-    fetchSections().then(data => {
+    if (user === undefined) return; // auth not ready yet
+    setSectionsLoading(true);
+    fetchRegistrableSections(user?.id ?? null, isAdmin).then(data => {
       setSections(data);
+      setSectionsLoading(false);
+
       if (initialStudentId) {
         const allStudents = getStoredStudents();
         const target = allStudents.find(s => s.id === initialStudentId);
-        if (target && target.sectionId) {
+        if (target && target.sectionId && data.some(s => s.id === target.sectionId)) {
           setSelectedSectionId(target.sectionId);
           return;
         }
       }
-      if (initialSectionId) {
+
+      // If a specific sectionId was requested and the user can access it, honour it.
+      if (initialSectionId && data.some(s => s.id === initialSectionId)) {
         setSelectedSectionId(initialSectionId);
         return;
       }
-      // Default to 'all' so all enrolled students are visible immediately
-      setSelectedSectionId('all');
+
+      // Admin defaults to 'all'; teacher auto-selects their single section.
+      if (isAdmin) {
+        setSelectedSectionId('all');
+      } else {
+        setSelectedSectionId(data.length === 1 ? (data[0]?.id ?? '') : (data[0]?.id ?? ''));
+      }
     });
-  }, [initialSectionId, initialStudentId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, isAdmin]);
 
   // Fetch roster whenever selected section changes
   useEffect(() => {
@@ -155,7 +171,7 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
         reloadRoster();
       }
 
-      fetchSections().then(setSections);
+      fetchRegistrableSections(user?.id ?? null, isAdmin).then(setSections);
 
       setToastMessage(`${newStudent.name} enrolled${targetSec ? ` in ${targetSec.name}` : ''}. You can now register their face.`);
       setTimeout(() => setToastMessage(null), 5000);
@@ -228,33 +244,46 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#06180F] rounded-md border border-slate-200 dark:border-emerald-800/40 px-3 py-2">
               <BookOpen className="w-4 h-4 text-primary dark:text-emerald-400" />
-              <select
-                value={selectedSectionId}
-                onChange={e => setSelectedSectionId(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
-              >
-                <option value="all" className="dark:bg-slate-900">
-                  All Sections ({sections.reduce((acc, s) => acc + (s.totalStudents || 0), 0)} Students)
-                </option>
-                {sections.map(sec => (
-                  <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
-                    {sec.name} ({sec.gradeLevel})
-                  </option>
-                ))}
-              </select>
+              {/* Teachers see a fixed label when they have exactly one section, or a dropdown for multiple */}
+              {!isAdmin && sections.length === 1 ? (
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                  Advisory: {sections[0]!.name} ({sections[0]!.gradeLevel})
+                </span>
+              ) : (
+                <select
+                  value={selectedSectionId}
+                  onChange={e => setSelectedSectionId(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
+                >
+                  {/* "All Sections" only for admins */}
+                  {isAdmin && (
+                    <option value="all" className="dark:bg-slate-900">
+                      All Sections ({sections.reduce((acc, s) => acc + (s.totalStudents || 0), 0)} Students)
+                    </option>
+                  )}
+                  {sections.map(sec => (
+                    <option key={sec.id} value={sec.id} className="dark:bg-slate-900">
+                      {sec.name} ({sec.gradeLevel})
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
-            <button
-              onClick={() => {
-                setEnrollSectionId(selectedSectionId === 'all' ? (sections[0]?.id || '') : selectedSectionId);
-                setEnrollError(null);
-                setIsEnrollModalOpen(true);
-              }}
-              className="px-4 py-2.5 rounded-md bg-primary hover:bg-primary-light text-white text-xs font-semibold flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
-            >
-              <UserPlus className="w-4 h-4 text-emerald-100" />
-              <span>Enroll Student</span>
-            </button>
+            {/* Student enrolment is admin-only (DB policy enforces this) */}
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  setEnrollSectionId(selectedSectionId === 'all' ? (sections[0]?.id || '') : selectedSectionId);
+                  setEnrollError(null);
+                  setIsEnrollModalOpen(true);
+                }}
+                className="px-4 py-2.5 rounded-md bg-primary hover:bg-primary-light text-white text-xs font-semibold flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4 text-emerald-100" />
+                <span>Enroll Student</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -343,33 +372,50 @@ export const SectionRosterEnrollment: React.FC<{ initialSectionId?: string; init
         </div>
       </div>
 
+      {/* Teacher with no advised section — show explicit empty state */}
+      {!isAdmin && !sectionsLoading && sections.length === 0 && (
+        <div className="py-16 text-center bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-8 space-y-2">
+          <Users className="w-8 h-8 text-slate-400 mx-auto" />
+          <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
+            No Advisory Section Assigned
+          </div>
+          <p className="text-xs text-slate-500">
+            You are not assigned as class adviser of any section. Contact the administrator to be assigned as section adviser before registering student faces.
+          </p>
+        </div>
+      )}
+
       {/* Student Roster List */}
-      <div className="space-y-3">
-        {loading ? (
-          <div className="py-16 text-center text-xs font-bold text-slate-500">
-            Loading section roster records...
-          </div>
-        ) : filteredStudents.length === 0 ? (
-          <div className="py-12 text-center bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-8 space-y-2">
-            <Users className="w-8 h-8 text-slate-400 mx-auto" />
-            <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
-              {students.length === 0 ? 'No students enrolled yet' : 'No students match search or filter'}
+      {(isAdmin || sections.length > 0) && (
+        <div className="space-y-3">
+          {loading ? (
+            <div className="py-16 text-center text-xs font-bold text-slate-500">
+              Loading section roster records...
             </div>
-            <p className="text-xs text-slate-500">
-              {students.length === 0 ? "Click 'Enroll Student' above to add learners to this section." : 'Try clearing your search query or switching section scope.'}
-            </p>
-          </div>
-        ) : (
-          filteredStudents.map(student => (
-            <StudentRosterRow
-              key={student.id}
-              student={student}
-              onOpenCapture={handleOpenCaptureModal}
-              onViewFace={handleOpenViewModal}
-            />
-          ))
-        )}
-      </div>
+          ) : filteredStudents.length === 0 ? (
+            <div className="py-12 text-center bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-8 space-y-2">
+              <Users className="w-8 h-8 text-slate-400 mx-auto" />
+              <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                {students.length === 0 ? 'No students enrolled yet' : 'No students match search or filter'}
+              </div>
+              <p className="text-xs text-slate-500">
+                {students.length === 0
+                  ? isAdmin ? "Click 'Enroll Student' above to add learners to this section." : 'No students are enrolled in your advisory section yet.'
+                  : 'Try clearing your search query or switching section scope.'}
+              </p>
+            </div>
+          ) : (
+            filteredStudents.map(student => (
+              <StudentRosterRow
+                key={student.id}
+                student={student}
+                onOpenCapture={handleOpenCaptureModal}
+                onViewFace={handleOpenViewModal}
+              />
+            ))
+          )}
+        </div>
+      )}
 
       {/* Face Capture Dialog Modal */}
       <FaceCaptureModal

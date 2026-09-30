@@ -717,6 +717,48 @@ export async function fetchSections(): Promise<Section[]> {
   });
 }
 
+/**
+ * Returns sections the current user is allowed to register faces for.
+ * - Admin: all sections (same as fetchSections).
+ * - Teacher: only sections where adviser_id = userId.
+ * Falls back to localStorage if Supabase is unavailable.
+ */
+export async function fetchRegistrableSections(
+  userId: string | null,
+  isAdmin: boolean
+): Promise<Section[]> {
+  // Admin gets all sections
+  if (isAdmin) return fetchSections();
+
+  // Teacher: no userId means nothing accessible
+  if (!userId) return [];
+
+  const allSections = await fetchSections();
+
+  // If Supabase is available, use it as source of truth for adviser_id
+  if (isSupabaseConfigured && supabase) {
+    const { data, error } = await supabase
+      .from('sections')
+      .select('id, name, grade_level, adviser_id, staff_profiles(id, full_name, email)')
+      .eq('adviser_id', userId)
+      .order('grade_level');
+
+    if (!error && data && data.length > 0) {
+      const dbSections = data.map(dbRowToSection);
+      // Hydrate counts from local storage
+      return dbSections.map(sec => {
+        const local = allSections.find(s => s.id === sec.id);
+        return { ...sec, totalStudents: local?.totalStudents ?? 0, registeredStudents: local?.registeredStudents ?? 0 };
+      });
+    }
+    // If RLS returns empty (no sections) vs error, treat as teacher with no sections
+    if (!error) return [];
+  }
+
+  // Fallback: filter localStorage sections by teacherId field
+  return allSections.filter(s => s.teacherId === userId);
+}
+
 export async function fetchSectionRoster(sectionId: string): Promise<Student[]> {
   await new Promise(r => setTimeout(r, 150));
   const students = getStoredStudents();
