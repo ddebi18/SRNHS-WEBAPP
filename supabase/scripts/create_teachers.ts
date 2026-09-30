@@ -35,11 +35,16 @@ function makePassword(): string {
   return Array.from(bytes, b => chars[b % chars.length]).join('');
 }
 
-const TEACHERS = [
-  { email: 'teacher1@srnhs.example.test', full_name: 'Teacher One',   department: 'Faculty' },
-  { email: 'teacher2@srnhs.example.test', full_name: 'Teacher Two',   department: 'Faculty' },
-  { email: 'teacher3@srnhs.example.test', full_name: 'Teacher Three', department: 'Faculty' },
+// Provide real faculty members to provision. Do not commit real passwords.
+const TEACHERS: Array<{ email: string; full_name: string; department: string }> = [
+  // Example:
+  // { email: 'teacher.name@srnhs.edu.ph', full_name: 'Firstname Lastname', department: 'Faculty' },
 ];
+
+if (TEACHERS.length === 0) {
+  console.log('No faculty members defined in TEACHERS array. Add records to provision.');
+  Deno.exit(0);
+}
 
 console.log('\n=== SRNHS Teacher Account Creation ===\n');
 

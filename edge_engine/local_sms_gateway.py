@@ -20,7 +20,7 @@ REST CONTRACT (android-sms-gateway default, confirm/update per your device app):
 Environment variables (set in .env or shell before running gate_biometrics.py):
   SMS_GATEWAY_URL       http://192.168.1.x:8080   (required; no trailing slash)
   SMS_GATEWAY_USER      admin                     (Basic Auth username)
-  SMS_GATEWAY_PASSWORD  changeme                  (Basic Auth password)
+  SMS_GATEWAY_PASSWORD  <secret>                  (Basic Auth password)
 
 Attendance recording is NEVER blocked by SMS failure — all errors are caught,
 logged to stderr, and written to Supabase sms_notifications as status='failed'.
