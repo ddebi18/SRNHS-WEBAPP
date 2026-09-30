@@ -11,19 +11,20 @@
 | :--- | :--- | :--- | :--- |
 | **Core Framework** | [React](https://react.dev/) | `^18.3.1` | Component-based interactive UI library |
 | **Language** | [TypeScript](https://www.typescriptlang.org/) | `^5.6.3` | Type-safe static analysis and strict typing |
-| **Build Tool & Dev Server** | [Vite](https://vitejs.dev/) | `^6.0.3` | Next-generation frontend tooling and HMR |
+| **Build Tool & Dev Server** | [Vite](https://vitejs.dev/) + `@vitejs/plugin-react` | `^6.0.3` / `^4.3.4` | Next-generation frontend tooling, Fast Refresh & HMR |
 | **SSL Development** | `@vitejs/plugin-basic-ssl` | `^2.3.0` | Local HTTPS certificate generator for camera/biometric permissions |
 | **Routing** | [React Router DOM](https://reactrouter.com/) | `^6.28.0` | Client-side routing with role-based route guards |
 | **Server State Management** | [TanStack React Query](https://tanstack.com/query/latest) | `^5.62.0` | Asynchronous caching, synchronization, and background refetching |
+| **Cloud & BaaS Client** | [`@supabase/supabase-js`](https://supabase.com/docs/reference/javascript) | `^2.47.0` | Client for PostgreSQL PostgREST, Auth JWT, Realtime & Storage |
 | **Styling & Design System** | [Tailwind CSS](https://tailwindcss.com/) | `^3.4.16` | Utility-first styling with custom theme configurations |
 | **CSS Preprocessing** | PostCSS, Autoprefixer | `^8.4.49` / `^10.4.20` | Vendor prefixing and stylesheet transformations |
 | **Component Utilities** | `clsx`, `tailwind-merge`, `class-variance-authority` | Latest | Dynamic className composition and component variants |
 | **Icons** | [Lucide React](https://lucide.dev/) | `^0.469.0` | Vector icon system |
 | **Animations** | [Framer Motion](https://www.framer.com/motion/) | `^13.1.1` | Fluid UI transitions, micro-interactions, and modal animations |
-| **Forms & Validation** | [React Hook Form](https://react-hook-form.com/) + [Zod](https://zod.dev/) | `^7.54.0` / `^3.24.1` | Schema-driven form validation and error handling |
+| **Forms & Validation** | [React Hook Form](https://react-hook-form.com/) + `@hookform/resolvers` + [Zod](https://zod.dev/) | `^7.54.0` / `^3.9.1` / `^3.24.1` | Schema-driven form validation and error handling |
 | **Client Face AI & Vision** | [`@vladmandic/face-api`](https://github.com/vladmandic/face-api), `@mediapipe/tasks-vision` | `^1.7.15` / `^1.0.1` | Web-based face landmark detection and enrolment verification |
 | **QR Code Generation** | `qrcode.react` | `^4.2.0` | Generation of temporary access and student pass QR codes |
-| **Testing Suite** | [Vitest](https://vitest.dev/), `@testing-library/react`, `jsdom` | `^2.1.8` / `^16.1.0` | Fast unit, component, and integration testing |
+| **Testing Suite** | [Vitest](https://vitest.dev/), `@testing-library/react`, `@testing-library/jest-dom`, `jsdom` | `^2.1.8` / `^16.1.0` / `^6.6.3` / `^25.0.1` | Fast unit, component, and integration testing |
 
 ---
 
@@ -48,7 +49,9 @@
 | **Realtime Sync** | Supabase Realtime (WebSocket) | Live broadcast of turnstile attendance logs directly to staff dashboards |
 | **Authentication** | Supabase Auth (JWT & GoTrue) | Role-Based Access Control (RBAC: Admin vs. Teacher) |
 | **Object Storage** | Supabase Storage | Encrypted cloud storage for student reference portraits and compliance logs |
-| **Serverless Functions** | Supabase Edge Functions (Deno) | Backend event triggers, notification dispatchers, and report generators |
+| **Serverless Functions** | Supabase Edge Functions (Deno) | Backend event triggers, SMS dispatcher (`send-sms`), and delivery tester (`notify-test-sms`) |
+| **Admin & Migration Scripts** | TypeScript (`ts-node` / Deno) | Setup tools (`bootstrap_admin.ts`, `create_teachers.ts`, `check_schema.ts`, `reset_student_storage.ts`) |
+| **Security Auditing** | Node.js ESM (`scripts/check-no-dummy-auth.mjs`) | Automated CI gatekeeper ensuring zero dummy auth fallback in production code |
 
 ---
 

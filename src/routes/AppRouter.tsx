@@ -5,6 +5,7 @@ import { LoadingSpinner, ForbiddenState } from '@/components/ui/StateViews';
 import { useAuth } from '@/context/AuthContext';
 import { useRole } from '@/hooks/useRole';
 import { UserRole } from '@/types/domain.types';
+import { supabase } from '@/lib/supabase';
 
 const AdminLoginPage = lazy(() => import('./AdminLoginPage').then(m => ({ default: m.AdminLoginPage })));
 const TeacherLoginPage = lazy(() => import('./TeacherLoginPage').then(m => ({ default: m.TeacherLoginPage })));
@@ -19,6 +20,7 @@ const FaceRegistrationPage = lazy(() => import('./FaceRegistrationPage').then(m 
 const TempAccessPage = lazy(() => import('./TempAccessPage').then(m => ({ default: m.TempAccessPage })));
 const ForbiddenPage = lazy(() => import('./ForbiddenPage').then(m => ({ default: m.ForbiddenPage })));
 const NotFoundPage = lazy(() => import('./NotFoundPage').then(m => ({ default: m.NotFoundPage })));
+const SetPasswordPage = lazy(() => import('./SetPasswordPage').then(m => ({ default: m.SetPasswordPage })));
 
 // Protected Route Guard Wrapper: Role-based guards and targeted redirects
 const ProtectedRoute: React.FC<{
@@ -36,6 +38,18 @@ const ProtectedRoute: React.FC<{
   if (!user) {
     const isAdminOnlyRoute = allowedRoles && allowedRoles.length === 1 && allowedRoles[0] === 'admin';
     return <Navigate to={isAdminOnlyRoute ? '/admin/login' : '/teacher/login'} replace />;
+  }
+
+  // Invite guard: if the Supabase user exists but hasn't set a password yet
+  // (invited_at present, password_set metadata not true), redirect to /set-password.
+  // Admins provisioned via bootstrap_admin.ts have email_confirm=true and no invited_at.
+  if (supabase) {
+    supabase.auth.getUser().then(({ data }) => {
+      const u = data?.user;
+      if (u?.invited_at && u.user_metadata?.password_set !== true) {
+        window.location.replace('/set-password');
+      }
+    }).catch(() => { /* non-fatal */ });
   }
 
   // Wrong-role users get a 403 Forbidden state
@@ -70,6 +84,15 @@ const router = createBrowserRouter([
   {
     path: '/login',
     element: <Navigate to="/teacher/login" replace />,
+  },
+  // ── Public: Set Password (invited teachers) ──
+  {
+    path: '/set-password',
+    element: (
+      <Suspense fallback={<LoadingSpinner label="Loading..." />}>
+        <SetPasswordPage />
+      </Suspense>
+    ),
   },
   // ── Public Temporary Single-Use Student Access Route ──
   {

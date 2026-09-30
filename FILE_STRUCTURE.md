@@ -35,9 +35,15 @@ SRNHS-WEBAPP/
 ├── vercel.json                             # Vercel SPA routing and header configuration
 ├── index.html                              # HTML5 entry point template
 │
+├── docs/                                   # Architectural audit & improvement reports
+│   └── IMPROVEMENT_REPORT.md               # Hardening & enhancement report
+│
 ├── public/                                 # Static public assets
 │   ├── _redirects                          # SPA fallback redirect rule
 │   └── srnhs-seal.jpg                      # Official San Roque NHS school seal
+│
+├── scripts/                                # Project maintenance & security audit scripts
+│   └── check-no-dummy-auth.mjs             # Zero-dummy-auth CI verification script
 │
 ├── infra/                                  # Local and edge infrastructure configs
 │   └── mediamtx.yml                        # MediaMTX WebRTC (WHEP) / RTSP video streamer
@@ -68,9 +74,19 @@ SRNHS-WEBAPP/
 │
 ├── supabase/                               # Supabase backend definitions
 │   ├── functions/                          # Supabase Edge Functions (Deno / TypeScript)
-│   │   └── send-sms/
-│   │       └── index.ts                    # Cloud SMS dispatcher function
-│   └── migrations/                         # PostgreSQL schema migrations and RLS policies
+│   │   ├── notify-test-sms/                # SMS delivery test & diagnostic function
+│   │   │   ├── .env.example                # Function test environment template
+│   │   │   ├── README.md                   # Edge function deployment and test guide
+│   │   │   ├── index.ts                    # Edge function HTTP handler
+│   │   │   └── index_test.ts               # Deno unit test suite
+│   │   └── send-sms/                       # Cloud SMS dispatcher function
+│   │       └── index.ts                    # SMS dispatcher function handler
+│   ├── migrations/                         # PostgreSQL schema migrations and RLS policies
+│   └── scripts/                            # Administrative setup & maintenance scripts
+│       ├── bootstrap_admin.ts              # Initial administrator provisioning
+│       ├── check_schema.ts                 # Database schema verification
+│       ├── create_teachers.ts              # Faculty teacher bulk account generation
+│       └── reset_student_storage.ts        # Storage bucket cleanup & reset utility
 │
 └── src/                                    # Frontend Web Application Source (React 18 + TS)
     ├── main.tsx                            # React DOM entry point
@@ -185,7 +201,8 @@ SRNHS-WEBAPP/
     │   │   └── services/
     │   │       ├── index.ts                # Notification service exports
     │   │       ├── NotificationAdapter.ts  # Notification interface contract
-    │   │       └── MockNotificationAdapter.ts # Offline notification mock
+    │   │       ├── MockNotificationAdapter.ts # Offline notification mock
+    │   │       └── supabaseNotificationAdapter.ts # Supabase Edge Function SMS delivery adapter
     │   │
     │   ├── students/                       # Student registry subsystem
     │   │   ├── api.ts                      # Student CRUD and roster fetching queries
@@ -206,6 +223,7 @@ SRNHS-WEBAPP/
     └── test/                               # Frontend unit and integration tests (Vitest)
         ├── setup.ts                        # Vitest environment setup and mocks
         ├── RecognitionAdapter.test.ts      # Tests for Supabase / Mock recognition adapters
+        ├── authHardening.test.ts           # Tests for role-based authentication & route security
         ├── faceNetMatcher.test.ts          # Tests for client-side cosine similarity matching
         └── tempAccess.test.ts              # Tests for QR temporary access pass logic
 ```
