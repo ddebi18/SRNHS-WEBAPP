@@ -228,11 +228,21 @@ export const StudentManager: React.FC = () => {
       header: 'Primary Guardian Contact',
       cell: s => {
         const primaryG = s.guardians?.find(g => g.is_primary) || s.guardians?.[0];
+        if (!primaryG) {
+          return (
+            <span className="text-[11px] italic text-slate-400 dark:text-slate-500">
+              No guardian on file
+            </span>
+          );
+        }
         return (
           <div>
-            <div className="font-semibold text-xs text-slate-800 dark:text-slate-200">{primaryG?.name} ({primaryG?.relationship})</div>
+            <div className="font-semibold text-xs text-slate-800 dark:text-slate-200">
+              {primaryG.name}{primaryG.relationship ? ` (${primaryG.relationship})` : ''}
+            </div>
             <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center gap-1">
-              <Phone className="w-3 h-3 text-brand-500" /> {primaryG?.phone_number}
+              <Phone className="w-3 h-3 text-brand-500" />
+              {primaryG.phone_number || <span className="italic text-slate-400">No number on file</span>}
             </div>
           </div>
         );

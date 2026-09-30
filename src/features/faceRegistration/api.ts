@@ -4,7 +4,7 @@ import { FACE_DESCRIPTOR_VERSION } from '@/features/attendance/lib/faceNetMatche
 
 const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
 const LOCAL_STORAGE_KEY_SECTIONS = 'srnhs_face_registration_sections_v1';
-const SUPABASE_STUDENT_SELECT_BASE = 'id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at';
+const SUPABASE_STUDENT_SELECT_BASE = 'id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at, student_guardians(id, name, relationship, phone_number, is_primary)';
 
 export function isValidUUID(id?: string | null): boolean {
   if (!id || typeof id !== 'string') return false;
@@ -311,6 +311,10 @@ function dbRowToStudent(row: any, sections: Section[]): Student {
   const rightPhoto = photos[2] || undefined;
   const hasPhotos = photos.length > 0;
 
+  // Guardian from joined student_guardians (primary first, then any)
+  const guardianRows: any[] = Array.isArray(row.student_guardians) ? row.student_guardians : [];
+  const primaryG = guardianRows.find(g => g.is_primary) || guardianRows[0];
+
   return {
     id: row.id,
     name: fullName,
@@ -324,8 +328,8 @@ function dbRowToStudent(row: any, sections: Section[]): Student {
       left: leftPhoto,
       right: rightPhoto,
     } : undefined,
-    guardianName: undefined,
-    guardianPhone: undefined,
+    guardianName: primaryG?.name || undefined,
+    guardianPhone: primaryG?.phone_number || undefined,
     faceDescriptors: Array.isArray(row.face_descriptors) ? row.face_descriptors : undefined,
     faceDescriptorVersion: row.face_descriptor_version || undefined,
   };
@@ -333,12 +337,15 @@ function dbRowToStudent(row: any, sections: Section[]): Student {
 
 function dbRowToSection(row: any): Section {
   const gradeLevel = row.grade_level ? `Grade ${row.grade_level}` : 'Grade 10';
+  // staff_profiles is joined only when the authenticated user has SELECT access
+  const profile = row.staff_profiles;
+  const teacherName = profile?.full_name || undefined;
   return {
     id: row.id,
     name: row.name || '',
     gradeLevel,
     teacherId: row.adviser_id || '',
-    teacherName: 'Unassigned',
+    teacherName,
     totalStudents: 0,
     registeredStudents: 0,
   };
@@ -354,10 +361,10 @@ export async function syncFromSupabase(): Promise<{ students: number; sections: 
   try {
     const localSections = getStoredSections();
 
-    // 1. Fetch sections from Supabase
+    // 1. Fetch sections from Supabase (join adviser profile for name display)
     const { data: sectionRows, error: secErr } = await supabase
       .from('sections')
-      .select('id, name, grade_level, adviser_id')
+      .select('id, name, grade_level, adviser_id, staff_profiles(id, full_name, email)')
       .order('grade_level');
 
     if (secErr) {

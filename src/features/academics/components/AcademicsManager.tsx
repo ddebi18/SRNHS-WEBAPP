@@ -21,6 +21,7 @@ import {
   saveStoredSections,
   getStoredStudents,
   generateUUID,
+  syncFromSupabase,
 } from '@/features/faceRegistration/api';
 import { Section as FRSection } from '@/features/faceRegistration/types';
 import { supabase } from '@/lib/supabase';
@@ -93,23 +94,28 @@ export const AcademicsManager: React.FC = () => {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
 
-  // Load from localStorage on mount
+  // Load from localStorage on mount; then sync from Supabase to pick up teacher names
   useEffect(() => {
     setRooms(getStoredRooms());
     setSubjects(getStoredSubjects());
 
-    // Map faceRegistration sections → domain Section shape
-    const frSections = getStoredSections();
-    setSections(
-      frSections.map(fr => ({
-        id: fr.id,
-        grade_level: parseInt(fr.gradeLevel.replace('Grade ', ''), 10) || 10,
-        name: fr.name,
-        adviser_id: fr.teacherId || null,
-        adviser_name: fr.teacherName || '',
-        created_at: new Date().toISOString(),
-      }))
-    );
+    function loadSections() {
+      const frSections = getStoredSections();
+      setSections(
+        frSections.map(fr => ({
+          id: fr.id,
+          grade_level: parseInt(fr.gradeLevel.replace('Grade ', ''), 10) || 10,
+          name: fr.name,
+          adviser_id: fr.teacherId || null,
+          adviser_name: fr.teacherName || '',
+          created_at: new Date().toISOString(),
+        }))
+      );
+    }
+
+    loadSections();
+    // Re-sync from Supabase so teacher names from staff_profiles are fresh
+    syncFromSupabase().then(() => loadSections()).catch(() => {});
   }, []);
 
   // ── Persist helpers ──────────────────────────────────────────────────────────
@@ -371,7 +377,7 @@ export const AcademicsManager: React.FC = () => {
                             <span className="text-[11px] text-slate-400">·</span>
                             <span className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400">
                               <GraduationCap className="w-3 h-3" />
-                              {sec.adviser_name || 'No adviser'}
+                              {sec.adviser_name || 'Unassigned'}
                             </span>
                           </div>
                         </div>
