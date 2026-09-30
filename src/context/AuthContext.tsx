@@ -196,6 +196,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (error || !data.user) {
+        if (import.meta.env.DEV) {
+          console.warn('[Auth Debug] Supabase signInWithPassword failed:', error?.message);
+        }
         logAuthAttempt(portal, 'failure', cleanId);
         setIsLoading(false);
         return { success: false, error: GENERIC_ERROR };
@@ -209,6 +212,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .single();
 
       if (profileErr || !profile || !profile.is_active) {
+        if (import.meta.env.DEV) {
+          console.warn('[Auth Debug] staff_profiles row missing or inactive for UID:', data.user.id, profileErr?.message);
+        }
         await supabase.auth.signOut().catch(() => {});
         clearSession();
         logAuthAttempt(portal, 'failure', cleanId);
@@ -220,6 +226,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Cross-portal isolation
       if (dbRole !== portal) {
+        if (import.meta.env.DEV) {
+          console.warn(`[Auth Debug] Cross-portal mismatch: user is '${dbRole}', attempted '${portal}'`);
+        }
         await supabase.auth.signOut().catch(() => {});
         clearSession();
         logAuthAttempt(portal, 'failure', cleanId);
@@ -237,7 +246,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       logAuthAttempt(portal, 'success', cleanId);
       setIsLoading(false);
       return { success: true };
-    } catch {
+    } catch (err) {
+      if (import.meta.env.DEV) {
+        console.error('[Auth Debug] Unexpected login exception:', err);
+      }
       await supabase.auth.signOut().catch(() => {});
       clearSession();
       logAuthAttempt(portal, 'failure', cleanId);
