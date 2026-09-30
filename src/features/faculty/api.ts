@@ -16,7 +16,10 @@ export const facultyKeys = {
   sections: () => ['sections'] as const,
   subjects: () => ['subjects'] as const,
   rooms: () => ['rooms'] as const,
-  assignments: () => ['teaching_assignments'] as const,
+  assignments: (teacherId?: string) =>
+    teacherId
+      ? (['teaching_assignments', teacherId] as const)
+      : (['teaching_assignments', 'all'] as const),
 };
 
 // ── Fallback Seed Data ──────────────────────────────────────────────────────
@@ -48,7 +51,12 @@ export async function fetchTeachers(): Promise<StaffProfile[]> {
     .eq('is_active', true)
     .order('full_name');
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (import.meta.env.DEV) {
+      console.error('[faculty api] fetchTeachers error:', error);
+    }
+    throw new Error(error.message);
+  }
   return (data as StaffProfile[]) || [];
 }
 
@@ -82,7 +90,12 @@ export async function fetchSections(): Promise<Section[]> {
       .select('id, name, grade_level, adviser_id, created_at')
       .order('grade_level')
       .order('name');
-    if (fallback.error) throw new Error(fallback.error.message);
+    if (fallback.error) {
+      if (import.meta.env.DEV) {
+        console.error('[faculty api] fetchSections error:', fallback.error);
+      }
+      throw new Error(fallback.error.message);
+    }
     return (fallback.data as Section[]) || [];
   }
 
@@ -112,7 +125,9 @@ export async function fetchSubjects(): Promise<Subject[]> {
     .order('title');
 
   if (error) {
-    console.warn('[faculty api] subjects table query failed, using baseline:', error.message);
+    if (import.meta.env.DEV) {
+      console.warn('[faculty api] subjects query failed, using baseline:', error.message);
+    }
     return FALLBACK_SUBJECTS;
   }
   if (!data || data.length === 0) {
@@ -144,7 +159,9 @@ export async function fetchRooms(): Promise<Room[]> {
     .order('name');
 
   if (error) {
-    console.warn('[faculty api] rooms table query failed, using baseline:', error.message);
+    if (import.meta.env.DEV) {
+      console.warn('[faculty api] rooms query failed, using baseline:', error.message);
+    }
     return FALLBACK_ROOMS;
   }
   if (!data || data.length === 0) {
@@ -161,11 +178,11 @@ export function useRooms() {
 }
 
 // ── 5. Fetch Teaching Assignments ───────────────────────────────────────────
-export async function fetchTeachingAssignments(): Promise<TeacherAssignment[]> {
+export async function fetchTeachingAssignments(teacherId?: string): Promise<TeacherAssignment[]> {
   if (!supabase) return [];
 
   // Query with relational joins
-  const { data, error } = await supabase
+  let query = supabase
     .from('teaching_assignments')
     .select(`
       id,
@@ -184,22 +201,34 @@ export async function fetchTeachingAssignments(): Promise<TeacherAssignment[]> {
     `)
     .order('start_time');
 
+  if (teacherId) {
+    query = query.eq('teacher_id', teacherId);
+  }
+
+  const { data, error } = await query;
+
   if (error) {
-    // If table doesn't exist yet (before migration push), return empty array
-    if (error.message?.includes('teaching_assignments') || error.code === '42P01') {
-      console.info('[faculty api] teaching_assignments table not ready yet, run `supabase db push`');
-      return [];
+    if (import.meta.env.DEV) {
+      console.error('[faculty api] fetchTeachingAssignments error:', error);
     }
 
-    // Try a simple select without aliases if join alias failed
-    const simple = await supabase
+    // Try fallback simple select if relational join alias failed
+    let simpleQuery = supabase
       .from('teaching_assignments')
       .select('*')
       .order('start_time');
 
+    if (teacherId) {
+      simpleQuery = simpleQuery.eq('teacher_id', teacherId);
+    }
+
+    const simple = await simpleQuery;
+
     if (simple.error) {
-      console.warn('[faculty api] fetchTeachingAssignments error:', simple.error.message);
-      return [];
+      if (import.meta.env.DEV) {
+        console.error('[faculty api] simple fetchTeachingAssignments error:', simple.error);
+      }
+      throw new Error(simple.error.message);
     }
 
     return (simple.data || []).map((row: any) => ({
@@ -244,10 +273,11 @@ export async function fetchTeachingAssignments(): Promise<TeacherAssignment[]> {
   });
 }
 
-export function useTeachingAssignments() {
+export function useTeachingAssignments(teacherId?: string, enabled = true) {
   return useQuery({
-    queryKey: facultyKeys.assignments(),
-    queryFn: fetchTeachingAssignments,
+    queryKey: facultyKeys.assignments(teacherId),
+    queryFn: () => fetchTeachingAssignments(teacherId),
+    enabled,
   });
 }
 
@@ -276,7 +306,7 @@ export function useCreateAssignment() {
       return data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: facultyKeys.assignments() });
+      queryClient.invalidateQueries({ queryKey: ['teaching_assignments'] });
     },
   });
 }
@@ -307,7 +337,7 @@ export function useUpdateAssignment() {
       return data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: facultyKeys.assignments() });
+      queryClient.invalidateQueries({ queryKey: ['teaching_assignments'] });
     },
   });
 }
@@ -328,7 +358,7 @@ export function useDeleteAssignment() {
       return id;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: facultyKeys.assignments() });
+      queryClient.invalidateQueries({ queryKey: ['teaching_assignments'] });
     },
   });
 }
@@ -356,7 +386,7 @@ export function useAssignAdviser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: facultyKeys.sections() });
-      queryClient.invalidateQueries({ queryKey: facultyKeys.assignments() });
+      queryClient.invalidateQueries({ queryKey: ['teaching_assignments'] });
     },
   });
 }

@@ -7,6 +7,7 @@ import { StaffProfile, TeacherAssignment } from '@/types/domain.types';
 import { DataTable, Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { LoadingSpinner, ErrorState } from '@/components/ui/StateViews';
 import {
   UserCheck,
   Calendar,
@@ -86,6 +87,10 @@ const WEEKDAYS = [
 export const FacultyManager: React.FC = () => {
   const { isAdmin, user } = useRole();
 
+  // Wait for auth session to be confirmed before querying
+  const isAuthReady = Boolean(user);
+  const teacherIdFilter = !isAdmin && user?.id ? user.id : undefined;
+
   // ── Queries via React Query ────────────────────────────────────────────────
   const { data: teachers = [], isLoading: teachersLoading } = useTeachers();
   const { data: sections = [], isLoading: sectionsLoading } = useSections();
@@ -94,8 +99,10 @@ export const FacultyManager: React.FC = () => {
   const {
     data: assignments = [],
     isLoading: assignmentsLoading,
+    isError: assignmentsIsError,
     error: assignmentsError,
-  } = useTeachingAssignments();
+    refetch: refetchAssignments,
+  } = useTeachingAssignments(teacherIdFilter, isAuthReady);
 
   // ── Mutations via React Query ──────────────────────────────────────────────
   const createAssignmentMutation = useCreateAssignment();
@@ -631,9 +638,37 @@ export const FacultyManager: React.FC = () => {
 
   // ── Teacher view (read-only schedule) ─────────────────────────────────────
   if (!isAdmin) {
-    const teacherAssignments = assignments.filter(
-      a => a.teacher_id === user?.id || (user?.email && a.teacher_email === user.email)
-    );
+    if (assignmentsLoading || !isAuthReady) {
+      return (
+        <div className="space-y-6">
+          <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-brand-500" />
+            My Teaching Schedule &amp; Assigned Loads
+          </h2>
+          <LoadingSpinner label="Loading your assigned teaching schedule…" />
+        </div>
+      );
+    }
+
+    if (assignmentsIsError) {
+      return (
+        <div className="space-y-6">
+          <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-brand-500" />
+            My Teaching Schedule &amp; Assigned Loads
+          </h2>
+          <ErrorState
+            title="Unable to load teaching schedule"
+            message={
+              assignmentsError instanceof Error
+                ? assignmentsError.message
+                : 'Failed to retrieve your teaching assignments. Please check your network or contact the administrator.'
+            }
+            onRetry={() => refetchAssignments()}
+          />
+        </div>
+      );
+    }
 
     return (
       <div className="space-y-6">
@@ -648,7 +683,7 @@ export const FacultyManager: React.FC = () => {
         </div>
 
         <DataTable
-          data={teacherAssignments}
+          data={assignments}
           columns={scheduleColumns}
           keyExtractor={a => a.id}
           searchPlaceholder="Search my teaching schedule..."
