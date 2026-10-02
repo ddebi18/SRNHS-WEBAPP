@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Security: Content Security Policy (mirrors vercel.json headers for local dev) -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   script-src 'self' https://cdn.lordicon.com 'sha256-Foe6YRwcdFPsPYhFKg/hcCj9yW4hF1ntXJaeurlvACc=' 'sha256-WRuny6QeWGdgBnY/eoSCszb10+UBo3KfiOPzI47f7OA=';
+                   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+                   font-src 'self' https://fonts.gstatic.com;
+                   connect-src 'self' https://*.supabase.co wss://*.supabase.co https://cdn.jsdelivr.net https://storage.googleapis.com https://vladmandic.github.io https://cdn.lordicon.com https://api.qrserver.com https://app.philsms.com;
+                   img-src 'self' blob: data: https://api.qrserver.com;
+                   media-src 'self' blob: mediastream:;
+                   worker-src 'self' blob:;
+                   object-src 'none';
+                   base-uri 'self';
+                   form-action 'self';
+                   upgrade-insecure-requests">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#030712" />
+    <title>SRNHS — Student Attendance Monitoring System</title>
+    <meta name="description" content="San Roque National High School Facial Recognition Student Attendance Monitoring & Management Web Dashboard" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script type="module" crossorigin src="/assets/index-26BqEMGk.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CWojLuGk.css">
+  </head>
+  <body class="bg-cream dark:bg-[#0B0F19] text-slate-900 dark:text-slate-100 antialiased selection:bg-brand-500 selection:text-white overscroll-none">
+    <!-- Inline theme detection: runs synchronously before React renders to prevent flash -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('srnhs-theme');
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var theme = saved === 'dark' || saved === 'light' ? saved : (prefersDark ? 'dark' : 'light');
+          if (theme === 'dark') document.documentElement.classList.add('dark');
+          else document.documentElement.classList.remove('dark');
+        } catch (e) {}
+      })();
+    </script>
+    <div id="root"></div>
+  </body>
+</html>

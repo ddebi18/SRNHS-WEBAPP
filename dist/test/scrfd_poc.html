@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SCRFD Phase 0 Proof-of-Concept & Benchmark</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.all.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #38bdf8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 20px;
+    }
+    h1, h2, h3 { color: var(--text); }
+    .header { margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: #0369a1;
+      color: #e0f2fe;
+    }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+    }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 15px; }
+    label { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+    select, button, input {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    button {
+      background: #0284c7;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 600;
+      border: none;
+      transition: opacity 0.2s;
+    }
+    button:hover { opacity: 0.9; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-green { background: #16a34a; }
+    .btn-amber { background: #d97706; }
+    .canvas-container {
+      position: relative;
+      width: 100%;
+      height: 380px;
+      background: #090d16;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .log-box {
+      width: 100%;
+      height: 220px;
+      background: #090d16;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 12px;
+      overflow-y: auto;
+      color: #38bdf8;
+      white-space: pre-wrap;
+    }
+    .table-container { overflow-x: auto; margin-top: 15px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+    th, td { padding: 8px 12px; border: 1px solid var(--border); }
+    th { background: #0f172a; color: var(--text-muted); font-weight: 600; }
+    .metric-value { font-weight: 700; color: #38bdf8; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <h1>SCRFD Phase 0 Proof-of-Concept & Benchmark</h1>
+        <p style="color: var(--text-muted); font-size: 14px; margin-top: 4px;">
+          Standalone browser verification of ONNX Runtime Web, SCRFD-500M vs 2.5G, landmarks, and camera smoothness.
+        </p>
+      </div>
+      <span class="badge" id="epBadge">EP: Not Initialized</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Left Column: Controls & Visual Canvas -->
+    <div class="card">
+      <h2>1. Model & Inference Controls</h2>
+      <div class="controls" style="margin-top: 12px;">
+        <div>
+          <label>Model:</label><br>
+          <select id="modelSelect">
+            <option value="/models/scrfd/scrfd_500m_bnkps.onnx">SCRFD-500M-KPS (2.5 MB)</option>
+            <option value="/models/scrfd/scrfd_2.5g_bnkps.onnx" selected>SCRFD-2.5G-KPS (3.3 MB)</option>
+          </select>
+        </div>
+        <div>
+          <label>Execution Provider:</label><br>
+          <select id="epSelect">
+            <option value="webgl,wasm">Auto (WebGL &gt; WASM)</option>
+            <option value="webgpu,webgl,wasm">All (WebGPU &gt; WebGL &gt; WASM)</option>
+            <option value="webgl">WebGL Only</option>
+            <option value="wasm">WASM Only (CPU SIMD)</option>
+          </select>
+        </div>
+        <div>
+          <label>Confidence Threshold:</label><br>
+          <input type="number" id="confThreshold" value="0.5" step="0.05" min="0.1" max="0.9" style="width: 80px;">
+        </div>
+        <div>
+          <label>NMS IoU:</label><br>
+          <input type="number" id="nmsThreshold" value="0.4" step="0.05" min="0.1" max="0.9" style="width: 80px;">
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="btnLoadModel">Load Model</button>
+        <button id="btnBenchAutomated" class="btn-green">Run Full Automated Phase 0 Suite</button>
+      </div>
+
+      <h3 style="margin-top: 15px; margin-bottom: 8px;">Test Scenarios:</h3>
+      <div class="controls">
+        <button id="btnTest1Face" class="btn-amber">Test 1 Face</button>
+        <button id="btnTest5Faces" class="btn-amber">Test 5 Faces</button>
+        <button id="btnTest10Faces" class="btn-amber">Test 10 Faces</button>
+        <button id="btnToggleSimCam">Toggle 60 FPS Render Loop</button>
+      </div>
+
+      <div class="canvas-container" style="margin-top: 12px;">
+        <canvas id="displayCanvas" width="640" height="480"></canvas>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 13px; color: var(--text-muted); margin-top: 6px;">
+        <span id="canvasStats">Canvas: Idle</span>
+        <span id="renderFps">Render FPS: 0.0</span>
+      </div>
+    </div>
+
+    <!-- Right Column: Telemetry & Benchmark Report -->
+    <div class="card">
+      <h2>2. Telemetry & Execution Report</h2>
+      
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 12px; margin-bottom: 12px;">
+        <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid var(--border);">
+          <div style="font-size: 12px; color: var(--text-muted);">Active Provider</div>
+          <div id="statProvider" class="metric-value">None</div>
+        </div>
+        <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid var(--border);">
+          <div style="font-size: 12px; color: var(--text-muted);">Model Load Time</div>
+          <div id="statLoadTime" class="metric-value">-</div>
+        </div>
+        <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid var(--border);">
+          <div style="font-size: 12px; color: var(--text-muted);">Inference Latency</div>
+          <div id="statLatency" class="metric-value">-</div>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px;">
+        <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid var(--border);">
+          <div style="font-size: 12px; color: var(--text-muted);">Detected Faces</div>
+          <div id="statFaces" class="metric-value">0</div>
+        </div>
+        <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid var(--border);">
+          <div style="font-size: 12px; color: var(--text-muted);">Camera Loop FPS</div>
+          <div id="statCamFps" class="metric-value">0.0</div>
+        </div>
+        <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid var(--border);">
+          <div style="font-size: 12px; color: var(--text-muted);">JS Heap Memory</div>
+          <div id="statMemory" class="metric-value">-</div>
+        </div>
+      </div>
+
+      <h3 style="margin-top: 10px; margin-bottom: 6px;">Benchmark Results Table:</h3>
+      <div class="table-container">
+        <table id="resultsTable">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>EP</th>
+              <th>Faces</th>
+              <th>Latency (ms)</th>
+              <th>Detections</th>
+              <th>Landmarks OK?</th>
+              <th>Cam FPS</th>
+            </tr>
+          </thead>
+          <tbody id="resultsTableBody">
+            <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No runs recorded yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style="margin-top: 15px; margin-bottom: 6px;">Live Diagnostics Log:</h3>
+      <div id="logBox" class="log-box"></div>
+    </div>
+  </div>
+
+  <script>
+    if (typeof ort !== 'undefined') {
+      ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+      ort.env.wasm.numThreads = crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 4) : 1;
+      ort.env.wasm.simd = true;
+    }
+
+    const state = {
+      session: null,
+      currentModelUrl: '',
+      currentEp: '',
+      isInferring: false,
+      modelLoading: false,
+      lastDetections: [],
+      simCamRunning: false,
+      camFps: 0,
+      renderFrameCount: 0,
+      lastRenderTime: performance.now(),
+      benchmarkResults: []
+    };
+
+    function log(msg) {
+      const box = document.getElementById('logBox');
+      const time = new Date().toISOString().substring(11, 19);
+      box.textContent += `[${time}] ${msg}\n`;
+      box.scrollTop = box.scrollHeight;
+      console.log(`[SCRFD-POC] ${msg}`);
+    }
+
+    function updateMemoryStat() {
+      if (performance.memory) {
+        const usedMB = (performance.memory.usedJSHeapSize / (1024 * 1024)).toFixed(1);
+        const totalMB = (performance.memory.totalJSHeapSize / (1024 * 1024)).toFixed(1);
+        document.getElementById('statMemory').textContent = `${usedMB} / ${totalMB} MB`;
+      } else {
+        document.getElementById('statMemory').textContent = 'N/A (Browser)';
+      }
+    }
+
+    // -------------------------------------------------------------
+    // SCRFD Model Loading with Provider Verification & Fallback
+    // -------------------------------------------------------------
+    async function loadScrfdModel(modelUrl, epSelection) {
+      state.modelLoading = true;
+      document.getElementById('statLoadTime').textContent = 'Loading...';
+      log(`Loading model: ${modelUrl} with requested EPs: ${epSelection}`);
+
+      const providers = epSelection.split(',').map(p => p.trim());
+      let activeSession = null;
+      let usedProvider = '';
+      const startTime = performance.now();
+
+      for (const ep of providers) {
+        try {
+          log(`Attempting initialization with execution provider: [${ep}]...`);
+          const testSession = await ort.InferenceSession.create(modelUrl, {
+            executionProviders: [ep],
+            graphOptimizationLevel: 'all'
+          });
+
+          // Verification pass: run a dummy forward pass to verify all operations are supported
+          log(`Verifying all operators on [${ep}] with a test tensor...`);
+          const dummyTensor = new ort.Tensor('float32', new Float32Array(3 * 640 * 640), [1, 3, 640, 640]);
+          const feeds = {};
+          feeds[testSession.inputNames[0]] = dummyTensor;
+          await testSession.run(feeds);
+
+          activeSession = testSession;
+          usedProvider = ep;
+          log(`Verification PASSED! [${ep}] fully supports this model.`);
+          break;
+        } catch (err) {
+          log(`Failed or unsupported on EP [${ep}]: ${err.message}. Trying next fallback...`);
+        }
+      }
+
+      if (!activeSession) {
+        state.modelLoading = false;
+        document.getElementById('statLoadTime').textContent = 'Failed';
+        throw new Error('All execution providers failed to run model.');
+      }
+
+      const loadDuration = (performance.now() - startTime).toFixed(1);
+      state.session = activeSession;
+      state.currentModelUrl = modelUrl;
+      state.currentEp = usedProvider;
+      state.modelLoading = false;
+
+      document.getElementById('statLoadTime').textContent = `${loadDuration} ms`;
+      document.getElementById('statProvider').textContent = usedProvider.toUpperCase();
+      document.getElementById('epBadge').textContent = `EP: ${usedProvider.toUpperCase()}`;
+      document.getElementById('epBadge').style.background = usedProvider === 'webgpu' ? '#059669' : usedProvider === 'webgl' ? '#0284c7' : '#d97706';
+      updateMemoryStat();
+
+      log(`Model ready with EP: [${usedProvider}] in ${loadDuration} ms.`);
+      log(`Inputs: ${JSON.stringify(activeSession.inputNames)}, Outputs: ${JSON.stringify(activeSession.outputNames)}`);
+      return { session: activeSession, ep: usedProvider, loadDuration: parseFloat(loadDuration) };
+    }
+
+    // -------------------------------------------------------------
+    // Preprocessing & Decoding
+    // -------------------------------------------------------------
+    function preprocessCanvas(sourceCanvas, targetSize = 640) {
+      const srcW = sourceCanvas.width;
+      const srcH = sourceCanvas.height;
+      const scale = Math.min(targetSize / srcW, targetSize / srcH);
+      const scaledW = Math.round(srcW * scale);
+      const scaledH = Math.round(srcH * scale);
+
+      const offscreen = document.createElement('canvas');
+      offscreen.width = targetSize;
+      offscreen.height = targetSize;
+      const ctx = offscreen.getContext('2d');
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, targetSize, targetSize);
+      ctx.drawImage(sourceCanvas, 0, 0, scaledW, scaledH);
+
+      const imgData = ctx.getImageData(0, 0, targetSize, targetSize).data;
+      const floatData = new Float32Array(3 * targetSize * targetSize);
+      const area = targetSize * targetSize;
+
+      for (let i = 0; i < area; i++) {
+        const r = imgData[i * 4 + 0];
+        const g = imgData[i * 4 + 1];
+        const b = imgData[i * 4 + 2];
+        floatData[i] = (r - 127.5) / 128.0;               // R
+        floatData[area + i] = (g - 127.5) / 128.0;        // G
+        floatData[2 * area + i] = (b - 127.5) / 128.0;    // B
+      }
+
+      return {
+        tensor: new ort.Tensor('float32', floatData, [1, 3, targetSize, targetSize]),
+        scale,
+        targetSize
+      };
+    }
+
+    function decodeScrfdOutputs(outputs, outputNames, scale, confThreshold = 0.5, nmsThreshold = 0.4) {
+      const strides = [8, 16, 32];
+      const targetSize = 640;
+      const anchorsPerLocation = 2;
+      const candidates = [];
+      const strideDiagnostics = [];
+      let candidatesBeforeFilter = 0;
+      let scoreMin = Infinity;
+      let scoreMax = -Infinity;
+
+      for (let level = 0; level < strides.length; level++) {
+        const stride = strides[level];
+        const scoreName = outputNames[level];
+        const bboxName = outputNames[level + strides.length];
+        const kpsName = outputNames[level + strides.length * 2];
+        const scoreTensor = outputs[scoreName];
+        const bboxTensor = outputs[bboxName];
+        const kpsTensor = outputs[kpsName];
+        const featureWidth = targetSize / stride;
+        const anchorCount = featureWidth * featureWidth * anchorsPerLocation;
+
+        if (!scoreTensor || !bboxTensor || !kpsTensor ||
+            scoreTensor.data.length !== anchorCount ||
+            bboxTensor.data.length !== anchorCount * 4 ||
+            kpsTensor.data.length !== anchorCount * 10) {
+          throw new Error(`Unexpected SCRFD output layout at stride ${stride}: ${scoreName}, ${bboxName}, ${kpsName}`);
+        }
+
+        let strideScoreMin = Infinity;
+        let strideScoreMax = -Infinity;
+        let passedConfidence = 0;
+        candidatesBeforeFilter += anchorCount;
+
+        for (let i = 0; i < anchorCount; i++) {
+          const score = scoreTensor.data[i];
+          strideScoreMin = Math.min(strideScoreMin, score);
+          strideScoreMax = Math.max(strideScoreMax, score);
+          scoreMin = Math.min(scoreMin, score);
+          scoreMax = Math.max(scoreMax, score);
+          if (score < confThreshold) continue;
+          passedConfidence++;
+
+          const gridIndex = Math.floor(i / anchorsPerLocation);
+          const centerX = (gridIndex % featureWidth) * stride;
+          const centerY = Math.floor(gridIndex / featureWidth) * stride;
+          const boxOffset = i * 4;
+          const x1 = (centerX - bboxTensor.data[boxOffset] * stride) / scale;
+          const y1 = (centerY - bboxTensor.data[boxOffset + 1] * stride) / scale;
+          const x2 = (centerX + bboxTensor.data[boxOffset + 2] * stride) / scale;
+          const y2 = (centerY + bboxTensor.data[boxOffset + 3] * stride) / scale;
+          const landmarks = [];
+
+          for (let point = 0; point < 5; point++) {
+            const keypointOffset = i * 10 + point * 2;
+            landmarks.push([
+              (centerX + kpsTensor.data[keypointOffset] * stride) / scale,
+              (centerY + kpsTensor.data[keypointOffset + 1] * stride) / scale
+            ]);
+          }
+
+          candidates.push({
+            box: [x1, y1, x2 - x1, y2 - y1],
+            score,
+            landmarks
+          });
+        }
+
+        strideDiagnostics.push({
+          stride,
+          scoreName,
+          scoreShape: scoreTensor.dims,
+          bboxName,
+          bboxShape: bboxTensor.dims,
+          kpsName,
+          kpsShape: kpsTensor.dims,
+          anchors: anchorCount,
+          rawScoreMin: strideScoreMin,
+          rawScoreMax: strideScoreMax,
+          passedConfidence
+        });
+      }
+
+      const detections = applyNms(candidates, nmsThreshold);
+      const boxes = detections.map(({ box }) => box);
+      window.__SCRFD_DECODE_DIAGNOSTICS__ = {
+        outputOrder: outputNames,
+        scoreSemantics: 'probabilities (official SCRFD export; no sigmoid)',
+        confidenceThreshold: confThreshold,
+        nmsThreshold,
+        rawScoreMin: scoreMin,
+        rawScoreMax: scoreMax,
+        candidatesBeforeConfidenceFilter: candidatesBeforeFilter,
+        candidatesAfterConfidenceFilter: candidates.length,
+        detectionsAfterNms: detections.length,
+        decodedBoxBounds: boxes.length ? {
+          minX: Math.min(...boxes.map(box => box[0])),
+          minY: Math.min(...boxes.map(box => box[1])),
+          maxX: Math.max(...boxes.map(box => box[0] + box[2])),
+          maxY: Math.max(...boxes.map(box => box[1] + box[3]))
+        } : null,
+        strides: strideDiagnostics
+      };
+      return detections;
+    }
+
+    function applyNms(boxes, iouThreshold) {
+      if (boxes.length === 0) return [];
+      boxes.sort((a, b) => b.score - a.score);
+      const picked = [];
+
+      for (let i = 0; i < boxes.length; i++) {
+        const a = boxes[i];
+        let keep = true;
+        for (let j = 0; j < picked.length; j++) {
+          const b = picked[j];
+          const iou = calculateIoU(a.box, b.box);
+          if (iou > iouThreshold) {
+            keep = false;
+            break;
+          }
+        }
+        if (keep) picked.push(a);
+      }
+      return picked;
+    }
+
+    function calculateIoU(b1, b2) {
+      const x1 = Math.max(b1[0], b2[0]);
+      const y1 = Math.max(b1[1], b2[1]);
+      const x2 = Math.min(b1[0] + b1[2], b2[0] + b2[2]);
+      const y2 = Math.min(b1[1] + b1[3], b2[1] + b2[3]);
+      const inter = Math.max(0, x2 - x1 + 1) * Math.max(0, y2 - y1 + 1);
+      const area1 = (b1[2] + 1) * (b1[3] + 1);
+      const area2 = (b2[2] + 1) * (b2[3] + 1);
+      const union = area1 + area2 - inter;
+      return union <= 0 ? 0 : inter / union;
+    }
+
+    // -------------------------------------------------------------
+    // Inference Runner with Backpressure Mutex Lock
+    // -------------------------------------------------------------
+    async function runDetectionOnCanvas(canvas) {
+      if (!state.session) {
+        log('Error: Model not loaded yet. Click Load Model first.');
+        return [];
+      }
+      if (state.isInferring) {
+        // Drop frame if AI is currently busy (Decoupled backpressure protection)
+        return state.lastDetections;
+      }
+
+      state.isInferring = true;
+      try {
+        const conf = parseFloat(document.getElementById('confThreshold').value) || 0.5;
+        const nms = parseFloat(document.getElementById('nmsThreshold').value) || 0.4;
+
+        const preStart = performance.now();
+        const { tensor, scale } = preprocessCanvas(canvas, 640);
+        const preTime = performance.now() - preStart;
+
+        const inferStart = performance.now();
+        const feeds = {};
+        feeds[state.session.inputNames[0]] = tensor;
+        const outputs = await state.session.run(feeds);
+        const inferTime = performance.now() - inferStart;
+
+        window.__SCRFD_OUTPUT_DIAGNOSTICS__ = state.session.outputNames.map(name => {
+          const tensor = outputs[name];
+          let min = Infinity;
+          let max = -Infinity;
+          for (const value of tensor.data) {
+            if (value < min) min = value;
+            if (value > max) max = value;
+          }
+          return {
+            name,
+            dims: tensor.dims,
+            length: tensor.data.length,
+            min,
+            max,
+            sample: Array.from(tensor.data.slice(0, 6))
+          };
+        });
+
+        const postStart = performance.now();
+        const detections = decodeScrfdOutputs(outputs, state.session.outputNames, scale, conf, nms);
+        const postTime = performance.now() - postStart;
+        const totalTime = (preTime + inferTime + postTime).toFixed(1);
+
+        document.getElementById('statLatency').textContent = `${totalTime} ms`;
+        document.getElementById('statFaces').textContent = detections.length;
+        updateMemoryStat();
+        window.__SCRFD_LAST_TIMINGS__ = {
+          preprocessMs: preTime,
+          inferenceMs: inferTime,
+          postprocessMs: postTime,
+          totalMs: parseFloat(totalTime)
+        };
+
+        state.lastDetections = detections;
+        drawDetections(canvas, detections);
+        return detections;
+      } finally {
+        state.isInferring = false;
+      }
+    }
+
+    function drawDetections(sourceCanvas, detections) {
+      const display = document.getElementById('displayCanvas');
+      display.width = sourceCanvas.width;
+      display.height = sourceCanvas.height;
+      const ctx = display.getContext('2d');
+      ctx.drawImage(sourceCanvas, 0, 0);
+
+      for (let i = 0; i < detections.length; i++) {
+        const d = detections[i];
+        const [x, y, w, h] = d.box;
+
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, w, h);
+
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(x, Math.max(0, y - 22), 95, 22);
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText(`Face ${(d.score * 100).toFixed(0)}%`, x + 6, Math.max(16, y - 6));
+
+        if (d.landmarks && d.landmarks.length === 5) {
+          const colors = ['#38bdf8', '#38bdf8', '#f59e0b', '#ef4444', '#ef4444'];
+          for (let p = 0; p < 5; p++) {
+            const [lx, ly] = d.landmarks[p];
+            ctx.beginPath();
+            ctx.arc(lx, ly, 4, 0, 2 * Math.PI);
+            ctx.fillStyle = colors[p];
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    // -------------------------------------------------------------
+    // Sample Faces & Compositor
+    // -------------------------------------------------------------
+    const sampleUrls = [
+      '/test/images/face_1.jpg',
+      '/test/images/sample1.jpg',
+      '/test/images/sample2.jpg',
+      '/test/images/sample3.jpg',
+      '/test/images/sample4.jpg',
+      '/test/images/sample5.jpg'
+    ];
+
+    async function loadImages(urls) {
+      return Promise.all(urls.map(url => new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(createFallbackFaceCanvas());
+        img.src = url;
+      })));
+    }
+
+    function createFallbackFaceCanvas() {
+      const c = document.createElement('canvas');
+      c.width = 160; c.height = 200;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fbcfe8';
+      ctx.beginPath();
+      ctx.ellipse(80, 100, 60, 80, 0, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath(); ctx.arc(60, 85, 8, 0, 2 * Math.PI); ctx.fill();
+      ctx.beginPath(); ctx.arc(100, 85, 8, 0, 2 * Math.PI); ctx.fill();
+      ctx.beginPath(); ctx.arc(80, 105, 5, 0, 2 * Math.PI); ctx.fill();
+      ctx.beginPath(); ctx.arc(80, 130, 20, 0, Math.PI); ctx.stroke();
+      return c;
+    }
+
+    async function generateCompositeCanvas(faceCount) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 720;
+      const ctx = canvas.getContext('2d');
+
+      const grad = ctx.createLinearGradient(0, 0, 0, 720);
+      grad.addColorStop(0, '#1e293b');
+      grad.addColorStop(1, '#0f172a');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 1280, 720);
+
+      const images = await loadImages(sampleUrls);
+
+      if (faceCount === 1) {
+        ctx.drawImage(images[0], 480, 160, 320, 400);
+      } else if (faceCount === 5) {
+        const positions = [
+          [80, 180, 200, 260],
+          [310, 160, 210, 270],
+          [540, 190, 200, 260],
+          [770, 170, 210, 270],
+          [1000, 180, 200, 260]
+        ];
+        for (let i = 0; i < 5; i++) {
+          ctx.drawImage(images[i % images.length], positions[i][0], positions[i][1], positions[i][2], positions[i][3]);
+        }
+      } else if (faceCount === 10) {
+        for (let i = 0; i < 10; i++) {
+          const col = i % 5;
+          const row = Math.floor(i / 5);
+          const x = 70 + col * 235;
+          const y = 80 + row * 310;
+          ctx.drawImage(images[i % images.length], x, y, 180, 240);
+        }
+      }
+      return canvas;
+    }
+
+    // -------------------------------------------------------------
+    // Decoupled Camera / Render Loop Simulation (rAF 60 FPS)
+    // -------------------------------------------------------------
+    let simCamAnimId = null;
+
+    function startSimulatedCameraLoop() {
+      if (state.simCamRunning) return;
+      state.simCamRunning = true;
+      document.getElementById('btnToggleSimCam').textContent = 'Stop 60 FPS Render Loop';
+      log('Started decoupled UI render loop (requestAnimationFrame @ 60 FPS)');
+
+      let lastFpsCheck = performance.now();
+      let frames = 0;
+      let particleX = 0;
+
+      const display = document.getElementById('displayCanvas');
+      const ctx = display.getContext('2d');
+
+      function renderFrame(now) {
+        if (!state.simCamRunning) return;
+        frames++;
+        if (now - lastFpsCheck >= 1000) {
+          state.camFps = (frames * 1000 / (now - lastFpsCheck)).toFixed(1);
+          document.getElementById('renderFps').textContent = `Render FPS: ${state.camFps}`;
+          document.getElementById('statCamFps').textContent = state.camFps;
+          frames = 0;
+          lastFpsCheck = now;
+        }
+
+        particleX = (particleX + 5) % display.width;
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, 160, 30);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(particleX, display.height - 8, 50, 8);
+
+        // Async inference trigger - non-blocking, drops frame if busy
+        if (state.session && !state.isInferring) {
+          runDetectionOnCanvas(display).catch(() => {});
+        }
+
+        simCamAnimId = requestAnimationFrame(renderFrame);
+      }
+      simCamAnimId = requestAnimationFrame(renderFrame);
+    }
+
+    function stopSimulatedCameraLoop() {
+      state.simCamRunning = false;
+      if (simCamAnimId) cancelAnimationFrame(simCamAnimId);
+      document.getElementById('btnToggleSimCam').textContent = 'Toggle 60 FPS Render Loop';
+      document.getElementById('renderFps').textContent = 'Render FPS: 0.0';
+      log('Stopped UI render loop.');
+    }
+
+    // -------------------------------------------------------------
+    // Full Automated Phase 0 Suite
+    // -------------------------------------------------------------
+    async function runAutomatedBenchmarkSuite() {
+      const suiteBtn = document.getElementById('btnBenchAutomated');
+      suiteBtn.disabled = true;
+      suiteBtn.textContent = 'Running Benchmark Suite...';
+      log('==================================================');
+      log('STARTING PHASE 0 SCRFD COMPREHENSIVE BENCHMARK');
+      log('==================================================');
+
+      const modelsToTest = [
+        { name: 'SCRFD-500M-KPS', url: '/models/scrfd/scrfd_500m_bnkps.onnx' },
+        { name: 'SCRFD-2.5G-KPS', url: '/models/scrfd/scrfd_2.5g_bnkps.onnx' }
+      ];
+
+      const faceCounts = [1, 5, 10];
+      const results = [];
+      const epSelection = document.getElementById('epSelect').value;
+
+      for (const model of modelsToTest) {
+        log(`\n>>> Evaluating Model: ${model.name}`);
+        try {
+          const loadRes = await loadScrfdModel(model.url, epSelection);
+
+          // Warmup pass
+          const warmupCanvas = await generateCompositeCanvas(1);
+          await runDetectionOnCanvas(warmupCanvas);
+          log('Warmup pass completed.');
+
+          for (const count of faceCounts) {
+            log(`Testing with ${count} face(s)...`);
+            const canvas = await generateCompositeCanvas(count);
+            
+            const latencies = [];
+            let lastDets = [];
+            for (let iter = 0; iter < 4; iter++) {
+              const t0 = performance.now();
+              lastDets = await runDetectionOnCanvas(canvas);
+              latencies.push(performance.now() - t0);
+            }
+            latencies.sort((a, b) => a - b);
+            const medianLat = latencies[Math.floor(latencies.length / 2)].toFixed(1);
+
+            let landmarksOk = false;
+            if (lastDets.length > 0 && lastDets[0].landmarks && lastDets[0].landmarks.length === 5) {
+              const lm = lastDets[0].landmarks;
+              const leftEye = lm[0];
+              const rightEye = lm[1];
+              const mouthLeft = lm[3];
+              if (leftEye[0] < rightEye[0] && mouthLeft[1] > leftEye[1]) {
+                landmarksOk = true;
+              }
+            }
+
+            const record = {
+              model: model.name,
+              ep: loadRes.ep.toUpperCase(),
+              loadTimeMs: loadRes.loadDuration,
+              faceCount: count,
+              detectedCount: lastDets.length,
+              latencyMs: parseFloat(medianLat),
+              landmarksValid: landmarksOk,
+              outputs: window.__SCRFD_OUTPUT_DIAGNOSTICS__,
+              detectionSample: lastDets.slice(0, 10).map(({ box, score, landmarks }) => ({ box, score, landmarks })),
+              decodeDiagnostics: window.__SCRFD_DECODE_DIAGNOSTICS__,
+              outputDiagnostics: window.__SCRFD_OUTPUT_DIAGNOSTICS__,
+              detectionSample: lastDets.slice(0, 10).map(({ box, score, landmarks }) => ({ box, score, landmarks })),
+              falseDetections: Math.max(0, lastDets.length - count),
+              missedDetections: Math.max(0, count - lastDets.length),
+              camFpsWhileInferring: state.camFps > 0 ? parseFloat(state.camFps) : null
+            };
+
+            results.push(record);
+            appendResultRow(record);
+            log(`[${model.name}] ${count} Faces: Detected=${lastDets.length}/${count}, Latency=${medianLat} ms, LandmarksValid=${landmarksOk}`);
+          }
+        } catch (err) {
+          log(`Error evaluating ${model.name}: ${err.message}`);
+        }
+      }
+
+      state.benchmarkResults = results;
+      window.__PHASE0_REPORT__ = {
+        timestamp: new Date().toISOString(),
+        userAgent: navigator.userAgent,
+        hardwareConcurrency: navigator.hardwareConcurrency,
+        results
+      };
+
+      log('\n==================================================');
+      log('PHASE 0 BENCHMARK SUITE COMPLETED SUCCESSFULLY');
+      log(`Total Runs: ${results.length}. Report stored in window.__PHASE0_REPORT__`);
+      log('==================================================');
+
+      suiteBtn.disabled = false;
+      suiteBtn.textContent = 'Run Full Automated Phase 0 Suite';
+    }
+
+    function appendResultRow(r) {
+      const tbody = document.getElementById('resultsTableBody');
+      if (tbody.children.length === 1 && tbody.children[0].children.length === 1) {
+        tbody.innerHTML = '';
+      }
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><strong>${r.model}</strong></td>
+        <td><span class="badge" style="background:#0284c7;font-size:11px;">${r.ep}</span></td>
+        <td>${r.faceCount}</td>
+        <td class="metric-value">${r.latencyMs} ms</td>
+        <td style="color:${r.detectedCount === r.faceCount ? '#22c55e' : '#f59e0b'}">${r.detectedCount} / ${r.faceCount}</td>
+        <td>${r.landmarksValid ? '<span style="color:#22c55e">✓ Valid</span>' : '<span style="color:#ef4444">✗ Invalid</span>'}</td>
+        <td>${r.camFpsWhileInferring}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    // -------------------------------------------------------------
+    // Event Listeners
+    // -------------------------------------------------------------
+    document.getElementById('btnLoadModel').addEventListener('click', () => {
+      const modelUrl = document.getElementById('modelSelect').value;
+      const ep = document.getElementById('epSelect').value;
+      loadScrfdModel(modelUrl, ep);
+    });
+
+    document.getElementById('btnTest1Face').addEventListener('click', async () => {
+      const canvas = await generateCompositeCanvas(1);
+      document.getElementById('canvasStats').textContent = 'Test: 1 Face';
+      await runDetectionOnCanvas(canvas);
+    });
+
+    document.getElementById('btnTest5Faces').addEventListener('click', async () => {
+      const canvas = await generateCompositeCanvas(5);
+      document.getElementById('canvasStats').textContent = 'Test: 5 Faces';
+      await runDetectionOnCanvas(canvas);
+    });
+
+    document.getElementById('btnTest10Faces').addEventListener('click', async () => {
+      const canvas = await generateCompositeCanvas(10);
+      document.getElementById('canvasStats').textContent = 'Test: 10 Faces';
+      await runDetectionOnCanvas(canvas);
+    });
+
+    document.getElementById('btnToggleSimCam').addEventListener('click', () => {
+      if (state.simCamRunning) stopSimulatedCameraLoop();
+      else startSimulatedCameraLoop();
+    });
+
+    document.getElementById('btnBenchAutomated').addEventListener('click', runAutomatedBenchmarkSuite);
+
+    log('SCRFD Phase 0 Proof-of-Concept initialized.');
+    log(`Hardware Concurrency: ${navigator.hardwareConcurrency || 'unknown'} CPU cores`);
+    updateMemoryStat();
+  </script>
+</body>
+</html>

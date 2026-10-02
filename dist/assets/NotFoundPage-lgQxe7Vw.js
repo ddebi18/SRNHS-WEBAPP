@@ -1,0 +1,6 @@
+import{c as s,a,j as e}from"./index-26BqEMGk.js";import{A as r}from"./arrow-left-BjOMoDxX.js";/**
+ * @license lucide-react v0.469.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const l=s("FileQuestion",[["path",{d:"M12 17h.01",key:"p32p05"}],["path",{d:"M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z",key:"1mlx9k"}],["path",{d:"M9.1 9a3 3 0 0 1 5.82 1c0 2-3 3-3 3",key:"mhlwft"}]]),x=()=>{const t=a();return e.jsxs("div",{className:"flex flex-col items-center justify-center text-center py-20 px-6",children:[e.jsx("div",{className:"w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-4",children:e.jsx(l,{className:"w-8 h-8"})}),e.jsx("h2",{className:"text-2xl font-bold text-slate-900 dark:text-slate-100 mb-1",children:"Page Not Found"}),e.jsx("p",{className:"text-xs text-slate-500 max-w-sm mb-6",children:"The requested system route does not exist or has been relocated."}),e.jsxs("button",{onClick:()=>t("/"),className:"px-4 py-2 text-xs font-semibold rounded-lg bg-brand-600 hover:bg-brand-700 text-white flex items-center gap-1.5 shadow-sm",children:[e.jsx(r,{className:"w-4 h-4"}),"Return to Dashboard Overview"]})]})};export{x as NotFoundPage};
