@@ -20,99 +20,9 @@ const ADMIN_IDLE_TIMEOUT_MS = 15 * 60 * 1000;  // 15 minutes for admin
 const TEACHER_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes for teacher
 const STUDENT_IDLE_TIMEOUT_MS = 120 * 60 * 1000; // 120 minutes for student
 
-// Reference test accounts for offline/evaluation environments
-const TEST_ACCOUNTS: Record<string, { pass: string[]; profile: StaffProfile }> = {
-  admin: {
-    pass: ['admin123', 'admin'],
-    profile: {
-      id: 'usr-admin-001',
-      email: 'admin@srnhs.edu.ph',
-      full_name: 'Dr. Maria Santos',
-      role: 'admin',
-      department: 'Office of the Principal',
-      is_active: true,
-      created_at: '2026-01-01T00:00:00Z',
-      updated_at: '2026-01-01T00:00:00Z',
-    },
-  },
-  'admin@srnhs.edu.ph': {
-    pass: ['admin123', 'admin'],
-    profile: {
-      id: 'usr-admin-001',
-      email: 'admin@srnhs.edu.ph',
-      full_name: 'Dr. Maria Santos',
-      role: 'admin',
-      department: 'Office of the Principal',
-      is_active: true,
-      created_at: '2026-01-01T00:00:00Z',
-      updated_at: '2026-01-01T00:00:00Z',
-    },
-  },
-  teacher: {
-    pass: ['teacher123', 'teacher'],
-    profile: {
-      id: 'usr-teacher-101',
-      email: 'teacher@srnhs.edu.ph',
-      full_name: 'Mr. Juan Dela Cruz',
-      role: 'teacher',
-      department: 'Science & Mathematics Faculty',
-      is_active: true,
-      created_at: '2026-01-01T00:00:00Z',
-      updated_at: '2026-01-01T00:00:00Z',
-    },
-  },
-  'teacher@srnhs.edu.ph': {
-    pass: ['teacher123', 'teacher'],
-    profile: {
-      id: 'usr-teacher-101',
-      email: 'teacher@srnhs.edu.ph',
-      full_name: 'Mr. Juan Dela Cruz',
-      role: 'teacher',
-      department: 'Science & Mathematics Faculty',
-      is_active: true,
-      created_at: '2026-01-01T00:00:00Z',
-      updated_at: '2026-01-01T00:00:00Z',
-    },
-  },
-  student: {
-    pass: ['student123', 'student'],
-    profile: {
-      id: 'usr-student-201',
-      email: 'student@srnhs.edu.ph',
-      full_name: 'Ana Marie Garcia',
-      role: 'student' as const,
-      department: 'Grade 10 - Diamond',
-      is_active: true,
-      created_at: '2026-01-15T00:00:00Z',
-      updated_at: '2026-01-15T00:00:00Z',
-    },
-  },
-  'student@srnhs.edu.ph': {
-    pass: ['student123', 'student'],
-    profile: {
-      id: 'usr-student-201',
-      email: 'student@srnhs.edu.ph',
-      full_name: 'Ana Marie Garcia',
-      role: 'student' as const,
-      department: 'Grade 10 - Diamond',
-      is_active: true,
-      created_at: '2026-01-15T00:00:00Z',
-      updated_at: '2026-01-15T00:00:00Z',
-    },
-  },
-};
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<StaffProfile | null>(() => {
-    const saved = localStorage.getItem('srnhs-user');
-    if (saved) {
-      try { return JSON.parse(saved); } catch { return null; }
-    }
-    return null;
-  });
-  const [sessionId, setSessionId] = useState<string | null>(() => {
-    return localStorage.getItem('srnhs-session-id');
-  });
+  const [user, setUser] = useState<StaffProfile | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const lastActivityRef = useRef<number>(Date.now());
 
@@ -185,28 +95,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [user, logout]);
 
-  // Initial session restoration
+  // Initial session restoration & cryptographic verification
   useEffect(() => {
     async function initAuth() {
       if (isSupabaseConfigured && supabase) {
         try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user) {
-            const { data: profile } = await supabase
+          const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+          const session = sessionData?.session;
+
+          if (sessionErr || !session?.user) {
+            // No valid active Supabase session — purge any unverified local storage
+            setUser(null);
+            setSessionId(null);
+            localStorage.removeItem('srnhs-user');
+            localStorage.removeItem('srnhs-session-id');
+          } else {
+            const { data: profile, error: profileErr } = await supabase
               .from('staff_profiles')
               .select('*')
               .eq('id', session.user.id)
               .single();
 
-            if (profile) {
+            if (!profileErr && profile && profile.is_active) {
               const staffUser = profile as StaffProfile;
               setUser(staffUser);
               localStorage.setItem('srnhs-user', JSON.stringify(staffUser));
+            } else {
+              // Session exists but no active staff profile in DB
+              await supabase.auth.signOut();
+              setUser(null);
+              setSessionId(null);
+              localStorage.removeItem('srnhs-user');
+              localStorage.removeItem('srnhs-session-id');
             }
           }
         } catch (err) {
           console.warn('[Auth] Supabase session check notice:', err);
+          setUser(null);
+          setSessionId(null);
+          localStorage.removeItem('srnhs-user');
+          localStorage.removeItem('srnhs-session-id');
         }
+      } else {
+        setUser(null);
+        setSessionId(null);
+        localStorage.removeItem('srnhs-user');
+        localStorage.removeItem('srnhs-session-id');
       }
       setIsLoading(false);
     }
@@ -215,8 +149,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /**
    * Unified Authentication Handler:
-   *  - Verifies credentials
-   *  - Reads user role exclusively from database / user record (Requirement 3)
+   *  - Verifies credentials against Supabase Auth
+   *  - Reads user role exclusively from database staff_profiles record (Requirement 3)
+   *  - Enforces active status check on staff_profiles
    *  - Rejects cross-portal submissions with generic "Invalid credentials" (Requirement 3)
    *  - Regenerates session ID on login (Requirement 5)
    */
@@ -230,120 +165,68 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPass = password.trim();
     const GENERIC_ERROR = 'Invalid credentials. Please verify and try again.';
 
-    // 1. Check verified reference test accounts
-    const testMatch = TEST_ACCOUNTS[cleanId];
-    if (testMatch) {
-      const passwordValid = testMatch.pass.includes(cleanPass) || !cleanPass;
-      if (!passwordValid) {
-        logAuthAttempt(portal, 'failure', cleanId);
-        setIsLoading(false);
-        return { success: false, error: GENERIC_ERROR };
-      }
-
-      // Cross-portal isolation: Read role from account record
-      const accountRole = testMatch.profile.role;
-      if (accountRole !== portal) {
-        // Reject cross-portal login with identical generic message
-        logAuthAttempt(portal, 'failure', cleanId);
-        setIsLoading(false);
-        return { success: false, error: GENERIC_ERROR };
-      }
-
-      // Success: Regenerate session ID
-      const newSessionId = `sess-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      setUser(testMatch.profile);
-      setSessionId(newSessionId);
-      localStorage.setItem('srnhs-user', JSON.stringify(testMatch.profile));
-      localStorage.setItem('srnhs-session-id', newSessionId);
-      lastActivityRef.current = Date.now();
-      logAuthAttempt(portal, 'success', cleanId);
+    if (!cleanId || !cleanPass) {
+      logAuthAttempt(portal, 'failure', cleanId);
       setIsLoading(false);
-      return { success: true };
+      return { success: false, error: GENERIC_ERROR };
     }
 
-    // 2. Attempt Supabase Auth login
-    if (isSupabaseConfigured && supabase && cleanPass) {
+    // Attempt Supabase Auth login
+    if (isSupabaseConfigured && supabase) {
       try {
-        const { data, error } = await supabase.auth.signInWithPassword({
+        const authRes = await supabase.auth.signInWithPassword({
           email: cleanId,
           password: cleanPass,
         });
 
-        if (!error && data.user) {
-          // Read role directly from database staff_profiles record
-          const { data: profile } = await supabase
-            .from('staff_profiles')
-            .select('*')
-            .eq('id', data.user.id)
-            .single();
-
-          const dbRole: UserRole = profile?.role || (data.user.user_metadata?.role as UserRole) || 'teacher';
-
-          // Cross-portal isolation
-          if (dbRole !== portal) {
-            await supabase.auth.signOut();
-            logAuthAttempt(portal, 'failure', cleanId);
-            setIsLoading(false);
-            return { success: false, error: GENERIC_ERROR };
-          }
-
-          const staffProfile: StaffProfile = profile || {
-            id: data.user.id,
-            email: cleanId,
-            full_name: data.user.user_metadata?.full_name || cleanId.split('@')[0],
-            role: dbRole,
-            department: dbRole === 'admin' ? 'Administration' : 'Faculty',
-            is_active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-
-          const newSessionId = `sess-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-          setUser(staffProfile);
-          setSessionId(newSessionId);
-          localStorage.setItem('srnhs-user', JSON.stringify(staffProfile));
-          localStorage.setItem('srnhs-session-id', newSessionId);
-          lastActivityRef.current = Date.now();
-          logAuthAttempt(portal, 'success', cleanId);
+        if (!authRes || authRes.error || !authRes.data?.user) {
+          logAuthAttempt(portal, 'failure', cleanId);
           setIsLoading(false);
-          return { success: true };
+          return { success: false, error: GENERIC_ERROR };
         }
+
+        const authUser = authRes.data.user;
+
+        // Read role directly from database staff_profiles record
+        const { data: profile, error: profileError } = await supabase
+          .from('staff_profiles')
+          .select('*')
+          .eq('id', authUser.id)
+          .single();
+
+        // Must have an active profile in staff_profiles
+        if (profileError || !profile || !profile.is_active) {
+          await supabase.auth.signOut();
+          logAuthAttempt(portal, 'failure', cleanId);
+          setIsLoading(false);
+          return { success: false, error: GENERIC_ERROR };
+        }
+
+        const staffProfile = profile as StaffProfile;
+
+        // Cross-portal isolation: Read role exclusively from database record
+        if (staffProfile.role !== portal) {
+          await supabase.auth.signOut();
+          logAuthAttempt(portal, 'failure', cleanId);
+          setIsLoading(false);
+          return { success: false, error: GENERIC_ERROR };
+        }
+
+        const newSessionId = `sess-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        setUser(staffProfile);
+        setSessionId(newSessionId);
+        localStorage.setItem('srnhs-user', JSON.stringify(staffProfile));
+        localStorage.setItem('srnhs-session-id', newSessionId);
+        lastActivityRef.current = Date.now();
+        logAuthAttempt(portal, 'success', cleanId);
+        setIsLoading(false);
+        return { success: true };
       } catch (err) {
-        console.warn('[Auth] Live sign-in notice:', err);
-      }
-    }
-
-    // 3. Fallback direct institutional email authentication (for offline development)
-    if (cleanId.includes('@')) {
-      const isInstitutionalAdmin = cleanId.startsWith('admin') || cleanId.includes('.admin@');
-      const resolvedRole: UserRole = isInstitutionalAdmin ? 'admin' : 'teacher';
-
-      if (resolvedRole !== portal) {
+        console.warn('[Auth] Sign-in error:', err);
         logAuthAttempt(portal, 'failure', cleanId);
         setIsLoading(false);
         return { success: false, error: GENERIC_ERROR };
       }
-
-      const staffUser: StaffProfile = {
-        id: `usr-${cleanId.replace(/[^a-z0-9]/g, '-')}`,
-        email: cleanId,
-        full_name: cleanId.split('@')[0]?.replace('.', ' ').replace(/(^\w|\s\w)/g, m => m.toUpperCase()) || 'Staff Member',
-        role: resolvedRole,
-        department: resolvedRole === 'admin' ? 'Administration' : 'Faculty',
-        is_active: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      const newSessionId = `sess-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      setUser(staffUser);
-      setSessionId(newSessionId);
-      localStorage.setItem('srnhs-user', JSON.stringify(staffUser));
-      localStorage.setItem('srnhs-session-id', newSessionId);
-      lastActivityRef.current = Date.now();
-      logAuthAttempt(portal, 'success', cleanId);
-      setIsLoading(false);
-      return { success: true };
     }
 
     logAuthAttempt(portal, 'failure', cleanId);

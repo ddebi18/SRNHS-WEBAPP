@@ -5,7 +5,7 @@ import { useRole } from '@/hooks/useRole';
 import { SITE_CONFIG } from '@/config/siteConfig';
 import { RecognitionEvent } from '@/types/domain.types';
 import { supabaseRecognitionAdapter } from '@/features/attendance/services/SupabaseRecognitionAdapter';
-import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
+import { activeNotificationAdapter } from '@/features/notifications/services';
 import { getStoredStudents } from '@/features/faceRegistration/api';
 import { LiveCameraFeedCard } from '@/features/attendance/components/LiveCameraFeedCard';
 import {
@@ -75,12 +75,12 @@ export const DashboardOverviewPage: React.FC = () => {
 
   useEffect(() => {
     supabaseRecognitionAdapter.getEvents({ limit: 8 }).then(setRecentEvents);
-    mockNotificationAdapter.getSmsLogs(100).then(logs => setSmsCount(logs.length));
+    activeNotificationAdapter.getSmsLogs(100).then(logs => setSmsCount(logs.length));
 
     const unsub1 = supabaseRecognitionAdapter.subscribeToEvents(evt => {
       setRecentEvents(prev => [evt, ...prev.slice(0, 7)]);
     });
-    const unsub2 = mockNotificationAdapter.subscribeToSms(() => {
+    const unsub2 = activeNotificationAdapter.subscribeToSms(() => {
       setSmsCount(c => c + 1);
     });
     return () => { unsub1(); unsub2(); };
@@ -150,14 +150,14 @@ export const DashboardOverviewPage: React.FC = () => {
       </motion.div>
 
       {/* ── 2. The Integrated Command Center: Live Camera + Verification Kiosk ── */}
-      <motion.div variants={fadeUp} className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <motion.div variants={fadeUp} className="min-w-0 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column (7 cols): The Live Camera Feed Viewfinder */}
-        <div className="lg:col-span-7 space-y-4">
+        <div className="min-w-0 lg:col-span-7 space-y-4">
           <LiveCameraFeedCard />
         </div>
 
         {/* Right Column (5 cols): Live Recognition Kiosk & Real-time Stream */}
-        <div className="lg:col-span-5 space-y-4">
+        <div className="min-w-0 lg:col-span-5 space-y-4">
           {/* Spotlight: Latest Verified Student Scan */}
           <div className="bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm relative overflow-hidden">
             <div className="flex items-center justify-between gap-2 pb-3 mb-4 border-b border-emerald-950/5 dark:border-emerald-800/30">
@@ -335,7 +335,7 @@ export const DashboardOverviewPage: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Card 1: Attendance Rate with Progress Bar */}
           <div
-            onClick={() => navigate('/classroom')}
+            onClick={() => navigate(isAdmin ? '/gate-log' : '/classroom')}
             className="group relative bg-white dark:bg-[#0A2016] rounded-lg p-4 border border-slate-200 dark:border-emerald-800/40 shadow-sm hover:border-primary/40 transition-colors cursor-pointer overflow-hidden flex flex-col justify-between"
           >
             <div className="absolute top-0 left-0 right-0 h-[3px] bg-emerald-500" />
@@ -441,7 +441,7 @@ export const DashboardOverviewPage: React.FC = () => {
                   {enrolledCount}
                 </div>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800/50">
-                  100% Registered
+                  {enrolledCount === 0 ? 'No students enrolled' : `${enrolledCount} Registered`}
                 </span>
               </div>
 
@@ -491,7 +491,7 @@ export const DashboardOverviewPage: React.FC = () => {
             </div>
 
             <p className="text-[11px] text-slate-400 dark:text-emerald-400/70 mt-3 flex items-center justify-between">
-              <span>PhilSMS / Twilio Carrier</span>
+              <span>Local Android SMS Gateway</span>
               {isAdmin && <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-emerald-600 group-hover:translate-x-0.5 transition-transform" />}
             </p>
           </div>
@@ -518,7 +518,15 @@ export const DashboardOverviewPage: React.FC = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {[
-              {
+              isAdmin ? {
+                title: 'Turnstile Gate Log',
+                desc: 'Inspect real-time campus gate flow & access logs',
+                icon: ShieldCheck,
+                path: '/gate-log',
+                badge: 'Live Gate',
+                color: 'text-emerald-600 dark:text-emerald-400',
+                bg: 'bg-emerald-50 dark:bg-emerald-950/60',
+              } : {
                 title: 'Classroom Attendance',
                 desc: 'Take period-by-period subject attendance',
                 icon: ClipboardList,
@@ -595,52 +603,6 @@ export const DashboardOverviewPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Institutional Heritage Card (1 Col) */}
-        <div className="bg-white dark:bg-[#0A2016] rounded-lg p-5 border border-slate-200 dark:border-emerald-800/40 shadow-sm flex flex-col justify-between">
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <LordIcon src={LORD_ICONS.school} size={48} trigger="loop" />
-              <img
-                src={SITE_CONFIG.sealPath}
-                alt="SRNHS Seal"
-                className="w-12 h-12 rounded-full object-cover border-2 border-gold shadow-sm bg-white shrink-0"
-              />
-              <div className="min-w-0">
-                <div className="font-heading font-bold text-sm text-slate-900 dark:text-emerald-50 tracking-tight">
-                  {SITE_CONFIG.schoolName}
-                </div>
-                <div className="text-[11px] text-slate-500 dark:text-emerald-400/80 font-medium">
-                  {SITE_CONFIG.division}
-                </div>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-600 dark:text-emerald-300/90 leading-relaxed">
-              #15 Marigman Street, Brgy. San Roque, Antipolo City, Rizal. Public secondary school committed to academic excellence and student safety.
-            </p>
-
-            <div>
-              <div className="text-[10px] font-bold text-slate-400 dark:text-emerald-400/70 uppercase tracking-widest mb-2">
-                DepEd Core Values
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {SITE_CONFIG.coreValues.map(cv => (
-                  <span
-                    key={cv.filipino}
-                    className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-[#06180F] text-primary dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60"
-                  >
-                    {cv.filipino}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-4 mt-4 border-t border-emerald-950/5 dark:border-emerald-800/30 flex items-center justify-between text-[11px] text-slate-400 dark:text-emerald-400/60">
-            <span>School ID: 301429</span>
-            <span className="font-semibold text-primary dark:text-emerald-400">DepEd Region IV-A</span>
-          </div>
-        </div>
       </motion.div>
     </motion.div>
   );

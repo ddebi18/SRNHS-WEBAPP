@@ -54,26 +54,3 @@ export const SITE_CONFIG = {
     'Campus Journalism (English & Filipino)',
   ],
 };
-
-export const MOCK_USERS = {
-  admin: {
-    id: 'usr-admin-001',
-    email: 'principal.santos@srnhs.edu.ph',
-    full_name: 'Dr. Maria Santos',
-    role: 'admin' as const,
-    department: 'Office of the Principal',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  teacher: {
-    id: 'usr-teacher-101',
-    email: 'j.delacruz@srnhs.edu.ph',
-    full_name: 'Mr. Juan Dela Cruz',
-    role: 'teacher' as const,
-    department: 'Science & Mathematics Faculty',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-};

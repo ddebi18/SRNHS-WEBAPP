@@ -9,6 +9,7 @@ interface CameraPreviewProps {
   isLoading: boolean;
   error: string | null;
   faceBox?: FaceBox | null;
+  allFaceBoxes?: FaceBox[];
   isFaceDetected: boolean;
   isCentered: boolean;
   currentAngle: CaptureAngle | 'review';
@@ -22,6 +23,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
       isLoading,
       error,
       faceBox,
+      allFaceBoxes,
       isFaceDetected,
       isCentered,
       currentAngle,
@@ -45,7 +47,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
         {isLoading && (
           <div className="flex flex-col items-center gap-3 text-emerald-400 p-6 text-center">
             <div className="w-10 h-10 border-3 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
-            <span className="text-xs font-bold tracking-wide uppercase text-slate-300">Initializing Edge Turnstile Camera…</span>
+            <span className="text-xs font-bold tracking-wide uppercase text-slate-300">Initializing Edge SCRFD Detector Camera…</span>
           </div>
         )}
 
@@ -81,9 +83,37 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
               className="w-full h-full object-cover transform -scale-x-100" // Mirrored webcam
             />
 
+            {/* Additional Detected Multi-Faces (SCRFD) */}
+            {allFaceBoxes && allFaceBoxes.length > 0 && allFaceBoxes.map((b, idx) => {
+              const isPrimary = faceBox && (
+                Math.hypot(
+                  (b.x + b.width / 2) - (faceBox.x + faceBox.width / 2),
+                  (b.y + b.height / 2) - (faceBox.y + faceBox.height / 2)
+                ) < Math.max(28, Math.min(b.width, b.height) * 0.45)
+              );
+              if (isPrimary) return null;
+              return (
+                <div
+                  key={`multi_box_${idx}`}
+                  className="absolute border-2 border-amber-400/80 rounded-lg pointer-events-none transition-all duration-150 shadow-[0_0_10px_rgba(245,158,11,0.3)]"
+                  style={{
+                    left: `${(b.x / b.videoWidth) * 100}%`,
+                    top: `${(b.y / b.videoHeight) * 100}%`,
+                    width: `${(b.width / b.videoWidth) * 100}%`,
+                    height: `${(b.height / b.videoHeight) * 100}%`,
+                  }}
+                >
+                  <span className="absolute -top-5 left-0 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-500 text-slate-950">
+                    Background Face
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* Primary Target Face Bounding Box */}
             {faceBox && (
               <div
-                className="absolute border-2 border-emerald-400 rounded-lg pointer-events-none transition-all duration-150"
+                className="absolute border-2 border-emerald-400 rounded-lg pointer-events-none transition-all duration-150 shadow-[0_0_12px_rgba(52,211,153,0.4)]"
                 style={{
                   left: `${(faceBox.x / faceBox.videoWidth) * 100}%`,
                   top: `${(faceBox.y / faceBox.videoHeight) * 100}%`,
@@ -107,7 +137,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
                 isFaceDetected && isCentered ? 'border-emerald-400 bg-emerald-500/10' : 'border-amber-400/60 bg-black/20'
               )}>
                 <div className="text-[10px] font-mono text-emerald-300 uppercase tracking-widest bg-slate-950/80 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                  {isFaceDetected ? (isCentered ? 'Face Aligned' : 'Center Face') : 'Position Face'}
+                  {isFaceDetected ? (isCentered ? 'SCRFD Face Aligned' : 'Center Face') : 'Position Face'}
                 </div>
               </div>
 
@@ -115,7 +145,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
               <div className="absolute top-3 left-4 right-4 flex items-center justify-between text-[10px] font-mono text-white/50 bg-slate-950/70 backdrop-blur px-3 py-1 rounded-xl border border-white/10">
                 <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  LIVE 720p · ISO 200
+                  SCRFD-2.5G · ONNX Multi-Face Engine
                 </span>
                 <span className="capitalize font-bold text-amber-300">
                   Target: {currentAngle} View

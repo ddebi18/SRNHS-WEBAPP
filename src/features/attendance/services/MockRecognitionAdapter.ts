@@ -164,7 +164,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
       const smsType = eventType === 'exit' ? 'gate_exit' : 'gate_entry';
 
       activeNotificationAdapter.sendAlert({
-        student_id: newEvt.student_id,
+        student_id: newEvt.student_id || '',
         student_name: studentName,
         guardian_phone: guardianPhone,
         message: `[SRNHS] ${studentName} (LRN: ${studentLrn}) ${actionText} ${locationName} at ${timeStr}. - San Roque National High School`,

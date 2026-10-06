@@ -4,10 +4,13 @@ import { Student, StudentViolation } from '@/types/domain.types';
 import { DataTable, Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
 import { ViolationSeverityBadge } from '@/components/ui/StatusBadge';
-import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Images, Eye, CheckCircle2, AlertCircle, Trash2 } from 'lucide-react';
+import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Images, Eye, CheckCircle2, AlertCircle, Trash2, QrCode } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { addNewStudent, getStoredStudents, getStoredSections, getPhotosFromDb, deleteStudent, generateUUID } from '@/features/faceRegistration/api';
+import { addNewStudent, getStoredStudents, getStoredSections, getPhotosFromDb, deleteStudent, generateUUID, syncFromSupabase } from '@/features/faceRegistration/api';
+import { isSupabaseConfigured } from '@/lib/supabase';
 import { Section as FRSection } from '@/features/faceRegistration/types';
+import { fetchViolations, createViolation } from '@/features/students/api';
+import { GenerateAccessQrModal } from '@/features/tempAccess/components/GenerateAccessQrModal';
 
 const INITIAL_VIOLATIONS: StudentViolation[] = [];
 
@@ -45,14 +48,14 @@ async function loadUnifiedStudents(sections: FRSection[]): Promise<Student[]> {
         section_id: fs.sectionId,
         section_name: fs.sectionName || sec?.name || 'Unknown Section',
         parent_consent: true,
-        consent_date: fs.lastRegisteredAt ? fs.lastRegisteredAt.split('T')[0] : '2026-06-01',
+        consent_date: fs.lastRegisteredAt ? fs.lastRegisteredAt.split('T')[0] : undefined,
         photo_urls: photoUrls,
         guardians: fs.guardianName ? [{
           id: `g-${fs.id}`,
           student_id: fs.id,
           name: fs.guardianName,
           relationship: 'Guardian',
-          phone_number: fs.guardianPhone || '+639170000000',
+          phone_number: fs.guardianPhone || '',
           is_primary: true,
           created_at: new Date().toISOString(),
         }] : [],
@@ -84,6 +87,7 @@ export const StudentManager: React.FC = () => {
 
   // Violation Modal
   const [violationModalOpen, setViolationModalOpen] = useState(false);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
   const [violationStudentId, setViolationStudentId] = useState('');
   const [violationTitle, setViolationTitle] = useState('');
   const [violationDesc, setViolationDesc] = useState('');
@@ -102,10 +106,19 @@ export const StudentManager: React.FC = () => {
   };
 
   useEffect(() => {
-    const secs = getStoredSections();
-    setStoredSections(secs);
-    if (secs.length > 0) setSectionId(secs[0]!.id);
-    refreshStudents(secs);
+    async function init() {
+      if (isSupabaseConfigured) {
+        try {
+          await syncFromSupabase();
+        } catch {}
+      }
+      const secs = getStoredSections();
+      setStoredSections(secs);
+      if (secs.length > 0) setSectionId(secs[0]!.id);
+      refreshStudents(secs);
+      fetchViolations().then(setViolations);
+    }
+    init();
   }, []);
 
   const handleCreateStudent = async (e: React.FormEvent) => {
@@ -128,7 +141,7 @@ export const StudentManager: React.FC = () => {
     }
 
     // Rule 1: Validate / normalize phone number if provided
-    let cleanPhone = '+639170000000';
+    let cleanPhone = '';
     if (guardianPhone.trim()) {
       const rawPhone = guardianPhone.trim().replace(/[\s-]/g, '');
       if (!/^(\+639\d{9}|09\d{9}|9\d{9})$/.test(rawPhone)) {
@@ -170,24 +183,22 @@ export const StudentManager: React.FC = () => {
     }
   };
 
-  const handleCreateViolation = (e: React.FormEvent) => {
+  const handleCreateViolation = async (e: React.FormEvent) => {
     e.preventDefault();
     const student = students.find(s => s.id === violationStudentId);
 
-    const newV: StudentViolation = {
-      id: `v-${Date.now()}`,
+    const created = await createViolation({
       student_id: violationStudentId,
       student_name: student ? `${student.first_name} ${student.last_name}` : 'Student',
-      reported_by: user?.id || 'usr-staff',
+      reported_by: user?.id,
       reporter_name: user?.full_name || 'Faculty Member',
       title: violationTitle.trim(),
       description: violationDesc.trim(),
       severity: violationSeverity,
       incident_date: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    };
+    });
 
-    setViolations(prev => [newV, ...prev]);
+    setViolations(prev => [created, ...prev]);
     setViolationTitle('');
     setViolationDesc('');
     setViolationModalOpen(false);
@@ -217,11 +228,21 @@ export const StudentManager: React.FC = () => {
       header: 'Primary Guardian Contact',
       cell: s => {
         const primaryG = s.guardians?.find(g => g.is_primary) || s.guardians?.[0];
+        if (!primaryG) {
+          return (
+            <span className="text-[11px] italic text-slate-400 dark:text-slate-500">
+              No guardian on file
+            </span>
+          );
+        }
         return (
           <div>
-            <div className="font-semibold text-xs text-slate-800 dark:text-slate-200">{primaryG?.name} ({primaryG?.relationship})</div>
+            <div className="font-semibold text-xs text-slate-800 dark:text-slate-200">
+              {primaryG.name}{primaryG.relationship ? ` (${primaryG.relationship})` : ''}
+            </div>
             <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center gap-1">
-              <Phone className="w-3 h-3 text-brand-500" /> {primaryG?.phone_number}
+              <Phone className="w-3 h-3 text-brand-500" />
+              {primaryG.phone_number || <span className="italic text-slate-400">No number on file</span>}
             </div>
           </div>
         );
@@ -284,7 +305,15 @@ export const StudentManager: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+          <button
+            onClick={() => setQrModalOpen(true)}
+            className="px-3.5 py-2 text-xs font-medium rounded-lg bg-neutral-900 hover:bg-neutral-800 dark:bg-neutral-100 dark:hover:bg-neutral-200 text-white dark:text-neutral-900 flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+          >
+            <QrCode className="w-4 h-4" />
+            Registration Session QR
+          </button>
+
           <button
             onClick={() => setViolationModalOpen(true)}
             className="px-3.5 py-2 text-xs font-medium rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900/60 hover:bg-rose-100 dark:hover:bg-rose-900/40 flex items-center gap-1.5 transition-colors"
@@ -325,21 +354,27 @@ export const StudentManager: React.FC = () => {
           Recent Student Conduct & Violation Log
         </h3>
         <div className="space-y-2.5">
-          {violations.map(v => (
-            <div key={v.id} className="p-3.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-xs text-slate-900 dark:text-slate-100">{v.student_name}</span>
-                  <ViolationSeverityBadge severity={v.severity} />
+          {violations.length === 0 ? (
+            <p className="text-xs text-slate-400 dark:text-slate-500 py-4 text-center bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-dashed border-slate-200 dark:border-slate-800">
+              No disciplinary records logged.
+            </p>
+          ) : (
+            violations.map(v => (
+              <div key={v.id} className="p-3.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-xs text-slate-900 dark:text-slate-100">{v.student_name}</span>
+                    <ViolationSeverityBadge severity={v.severity} />
+                  </div>
+                  <div className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-1">{v.title}</div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{v.description}</p>
                 </div>
-                <div className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-1">{v.title}</div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{v.description}</p>
+                <div className="text-right text-[11px] text-slate-400 dark:text-slate-500 font-mono">
+                  Reported by {v.reporter_name} on {new Date(v.incident_date).toLocaleDateString()}
+                </div>
               </div>
-              <div className="text-right text-[11px] text-slate-400 dark:text-slate-500 font-mono">
-                Reported by {v.reporter_name} on {new Date(v.incident_date).toLocaleDateString()}
-              </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
 
@@ -431,7 +466,7 @@ export const StudentManager: React.FC = () => {
           )}
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">LRN (Learner Reference Number - 12 Digits)</label>
-            <input required maxLength={12} type="text" value={lrn} onChange={e => setLrn(e.target.value)} placeholder="109823456799" className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
+            <input required maxLength={12} type="text" value={lrn} onChange={e => setLrn(e.target.value)} placeholder="e.g. 109823456789" className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -468,7 +503,7 @@ export const StudentManager: React.FC = () => {
             <div className="grid grid-cols-3 gap-2">
               <input type="text" placeholder="Guardian Name" value={guardianName} onChange={e => setGuardianName(e.target.value)} className="col-span-1 px-2 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
               <input type="text" placeholder="Relationship" value={guardianRel} onChange={e => setGuardianRel(e.target.value)} className="col-span-1 px-2 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
-              <input type="text" placeholder="+639170000000" value={guardianPhone} onChange={e => setGuardianPhone(e.target.value)} className="col-span-1 px-2 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono" />
+              <input type="text" placeholder="e.g. 09171234567" value={guardianPhone} onChange={e => setGuardianPhone(e.target.value)} className="col-span-1 px-2 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono" />
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-700">
@@ -511,6 +546,12 @@ export const StudentManager: React.FC = () => {
           </div>
         </form>
       </Modal>
+
+      {/* Generate Access QR Modal */}
+      <GenerateAccessQrModal
+        isOpen={qrModalOpen}
+        onClose={() => setQrModalOpen(false)}
+      />
     </div>
   );
 };

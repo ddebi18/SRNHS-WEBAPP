@@ -89,7 +89,7 @@ describe('MockRecognitionAdapter', () => {
     ).toBe('Face Detection: Waiting');
   });
 
-  it('formats verified status text with student name and match percentage', () => {
+  it('formats verified status text with the registered student name', () => {
     expect(
       getRecognitionStatusText({
         matchedStudent: { name: 'Sophia Nicole Reyes', confidence: 0.62 },
@@ -97,7 +97,7 @@ describe('MockRecognitionAdapter', () => {
         isReady: true,
         isFaceDetected: true,
       })
-    ).toBe('Verified: Sophia Nicole Reyes (62% match)');
+    ).toBe('Verified: Sophia Nicole Reyes');
   });
 
   it('enforces 1 Time-In and 1 Time-Out per student per day without duplicate records', async () => {
