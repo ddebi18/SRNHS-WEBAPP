@@ -3,11 +3,13 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { FaceBox } from '../hooks/useFaceDetection';
 import { CaptureAngle } from '../types';
 import { cn } from '@/lib/utils';
+import { mapVideoFaceBoxToViewport } from '@/lib/faceOverlayGeometry';
 
 interface CameraPreviewProps {
   stream: MediaStream | null;
   isLoading: boolean;
   error: string | null;
+  detectorError?: string | null;
   faceBox?: FaceBox | null;
   allFaceBoxes?: FaceBox[];
   isFaceDetected: boolean;
@@ -22,6 +24,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
       stream,
       isLoading,
       error,
+      detectorError,
       faceBox,
       allFaceBoxes,
       isFaceDetected,
@@ -31,6 +34,8 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
     },
     ref
   ) => {
+    const viewfinderRef = React.useRef<HTMLDivElement>(null);
+
     useEffect(() => {
       // Resolve the forwarded ref to the actual element
       const video =
@@ -41,8 +46,29 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
       }
     }, [stream, ref]);
 
+    const getOverlayStyle = (box: FaceBox): React.CSSProperties => {
+      const viewport = viewfinderRef.current?.getBoundingClientRect();
+      const mapped = viewport
+        ? mapVideoFaceBoxToViewport(
+            box,
+            { width: viewport.width, height: viewport.height },
+            'cover',
+            true
+          )
+        : null;
+
+      if (!mapped) return { display: 'none' };
+
+      return {
+        left: `${mapped.left}%`,
+        top: `${mapped.top}%`,
+        width: `${mapped.width}%`,
+        height: `${mapped.height}%`,
+      };
+    };
+
     return (
-      <div className="relative w-full h-72 sm:h-80 bg-slate-950 rounded-2xl overflow-hidden shadow-inner border border-slate-800 flex items-center justify-center">
+      <div ref={viewfinderRef} className="relative w-full h-72 sm:h-80 bg-slate-950 rounded-2xl overflow-hidden shadow-inner border border-slate-800 flex items-center justify-center">
         {/* Loading state */}
         {isLoading && (
           <div className="flex flex-col items-center gap-3 text-emerald-400 p-6 text-center">
@@ -83,6 +109,12 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
               className="w-full h-full object-cover transform -scale-x-100" // Mirrored webcam
             />
 
+            {detectorError && (
+              <div className="absolute z-20 top-14 left-3 right-3 rounded-lg border border-rose-500/60 bg-rose-950/90 px-3 py-2 text-xs font-medium text-rose-100">
+                Face detector unavailable: {detectorError}
+              </div>
+            )}
+
             {/* Additional Detected Multi-Faces (SCRFD) */}
             {allFaceBoxes && allFaceBoxes.length > 0 && allFaceBoxes.map((b, idx) => {
               const isPrimary = faceBox && (
@@ -96,12 +128,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
                 <div
                   key={`multi_box_${idx}`}
                   className="absolute border-2 border-amber-400/80 rounded-lg pointer-events-none transition-all duration-150 shadow-[0_0_10px_rgba(245,158,11,0.3)]"
-                  style={{
-                    left: `${(b.x / b.videoWidth) * 100}%`,
-                    top: `${(b.y / b.videoHeight) * 100}%`,
-                    width: `${(b.width / b.videoWidth) * 100}%`,
-                    height: `${(b.height / b.videoHeight) * 100}%`,
-                  }}
+                  style={getOverlayStyle(b)}
                 >
                   <span className="absolute -top-5 left-0 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-500 text-slate-950">
                     Background Face
@@ -114,12 +141,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
             {faceBox && (
               <div
                 className="absolute border-2 border-emerald-400 rounded-lg pointer-events-none transition-all duration-150 shadow-[0_0_12px_rgba(52,211,153,0.4)]"
-                style={{
-                  left: `${(faceBox.x / faceBox.videoWidth) * 100}%`,
-                  top: `${(faceBox.y / faceBox.videoHeight) * 100}%`,
-                  width: `${(faceBox.width / faceBox.videoWidth) * 100}%`,
-                  height: `${(faceBox.height / faceBox.videoHeight) * 100}%`,
-                }}
+                style={getOverlayStyle(faceBox)}
               />
             )}
 

@@ -35,8 +35,8 @@ PROCESS_EVERY_N_FRAMES = int(os.getenv("PROCESS_EVERY_N_FRAMES", "2"))
 DETECT_WIDTH = int(os.getenv("DETECT_WIDTH", "640"))
 
 SUPABASE_URL = os.getenv("VITE_SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
-SUPABASE_ANON_KEY = os.getenv("VITE_SUPABASE_ANON_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
-SUPABASE_READ_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_ANON_KEY)
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_READ_KEY = SUPABASE_SERVICE_ROLE_KEY
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 YUNET_PATH = os.path.join(MODELS_DIR, "face_detection_yunet_2023mar.onnx")
@@ -191,6 +191,7 @@ class TurnstileGateClient:
         print("[TurnstileNode] Fetching enrolled student roster...")
         cache_path = os.path.join(os.path.dirname(__file__), "students_cache.json")
         self.enrolled_roster = {}
+        cloud_roster_loaded = False
 
         if SUPABASE_URL and SUPABASE_READ_KEY:
             try:
@@ -207,6 +208,7 @@ class TurnstileGateClient:
                     timeout=5,
                 )
                 response.raise_for_status()
+                cloud_roster_loaded = True
                 for item in response.json():
                     descriptors = item.get("face_descriptors") or []
                     if not descriptors or item.get("face_descriptor_version") != 2:
@@ -224,7 +226,7 @@ class TurnstileGateClient:
             except Exception as exc:
                 print(f"[TurnstileNode] Supabase roster warning: {exc}")
 
-        if not self.enrolled_roster and os.path.exists(cache_path):
+        if not cloud_roster_loaded and not self.enrolled_roster and os.path.exists(cache_path):
             try:
                 with open(cache_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -280,24 +282,34 @@ class TurnstileGateClient:
         print(f" Timestamp:  {time.strftime('%Y-%m-%d %H:%M:%S')}")
         print("=======================================================\n")
 
-        if SUPABASE_URL and SUPABASE_ANON_KEY:
+        if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
             try:
                 headers = {
-                    "apikey": SUPABASE_ANON_KEY,
-                    "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
                     "Content-Type": "application/json",
                     "Prefer": "return=minimal",
                 }
                 payload = {
                     "student_id": student_id,
                     "event_type": DEFAULT_EVENT_TYPE,
-                    "gate": self.gate_id,
-                    "confidence": round(confidence, 4),
-                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "camera_id": os.getenv("CAMERA_ID", self.gate_id),
+                    "gate_id": self.gate_id,
+                    "confidence_score": round(confidence, 4),
+                    "source": "camera",
+                    "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
-                requests.post(f"{SUPABASE_URL}/rest/v1/gate_logs", json=payload, headers=headers, timeout=3)
-            except Exception as ex:
-                print(f"[TurnstileNode] Supabase logging warning: {ex}")
+                response = requests.post(
+                    f"{SUPABASE_URL}/rest/v1/recognition_events",
+                    json=payload,
+                    headers=headers,
+                    timeout=3,
+                )
+                response.raise_for_status()
+            except requests.RequestException as ex:
+                print(f"[TurnstileNode] Supabase recognition_events logging failed: {ex}")
+        elif SUPABASE_URL:
+            print("[TurnstileNode] Cloud attendance logging skipped: SUPABASE_SERVICE_ROLE_KEY is not configured.")
 
     def run(self):
         print(f"[TurnstileNode] Opening camera sensor index {self.camera_index}...")

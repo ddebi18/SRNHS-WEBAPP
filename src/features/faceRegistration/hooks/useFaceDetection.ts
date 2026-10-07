@@ -1,8 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
+import { FaceDetector } from '@mediapipe/tasks-vision';
 import * as ort from 'onnxruntime-web';
 import { CaptureAngle } from '../types';
-import { getScrfdSession, detectFacesWithScrfd, ScrfdFaceBox } from '../lib/scrfdDetector';
+import {
+  getScrfdSession,
+  detectFacesWithScrfd,
+  ScrfdFaceBox,
+  visionWasmFileset,
+} from '../lib/scrfdDetector';
 
 export interface FaceBox {
   x: number;
@@ -232,9 +237,6 @@ export function useFaceDetection(
 
       // Step B: Load MediaPipe FaceDetector as secondary fallback
       try {
-        const vision = await FilesetResolver.forVisionTasks(
-          '/node_modules/@mediapipe/tasks-vision/wasm'
-        );
         const detectorOptions = {
           baseOptions: {
             modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
@@ -247,9 +249,9 @@ export function useFaceDetection(
 
         let mpDetector: FaceDetector;
         try {
-          mpDetector = await FaceDetector.createFromOptions(vision, detectorOptions);
+          mpDetector = await FaceDetector.createFromOptions(visionWasmFileset, detectorOptions);
         } catch (gpuError) {
-          mpDetector = await FaceDetector.createFromOptions(vision, {
+          mpDetector = await FaceDetector.createFromOptions(visionWasmFileset, {
             ...detectorOptions,
             baseOptions: { ...detectorOptions.baseOptions, delegate: 'CPU' },
           });
@@ -268,8 +270,8 @@ export function useFaceDetection(
 
       if (!scrfdSessionRef.current && !mediaPipeDetectorRef.current) {
         resetDetection();
-        setDetectorError('Face detector engines could not start. Check browser permissions.');
-        setWarningMessage('Face detector could not be loaded. Check network connection and retry.');
+        setDetectorError('Face detector engines could not start. Check detector runtime/model assets and WebAssembly support.');
+        setWarningMessage('Face detector could not be loaded. Check the detector assets and retry.');
         return;
       }
 

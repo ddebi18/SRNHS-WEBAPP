@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapVideoFaceBoxToViewport } from '@/features/attendance/lib/faceOverlayGeometry';
+import { mapVideoFaceBoxToViewport } from '@/lib/faceOverlayGeometry';
 import { assignFaceDetectionTracks } from '@/features/attendance/lib/faceTracking';
 
 describe('live face tracking', () => {
@@ -73,6 +73,17 @@ describe('face overlay geometry', () => {
     expect(result?.top).toBe(0);
     expect(result?.width).toBeCloseTo(11.71875);
     expect(result?.height).toBeCloseTo(20.833333);
+  });
+
+  it('mirrors mapped boxes to match mirrored camera previews', () => {
+    expect(
+      mapVideoFaceBoxToViewport(
+        { x: 40, y: 60, width: 100, height: 100, videoWidth: 640, videoHeight: 480 },
+        { width: 640, height: 360 },
+        'cover',
+        true
+      )
+    ).toEqual({ left: 78.125, top: 0, width: 15.625, height: 27.77777777777778 });
   });
 
   it('rejects unusable source or viewport dimensions', () => {

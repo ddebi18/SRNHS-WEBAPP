@@ -306,14 +306,6 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
               >
                 {switchLabel}
               </Link>
-              {portal !== 'student' && (
-                <Link
-                  to="/student/login"
-                  className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-emerald-400 hover:underline block"
-                >
-                  Are you a student? Go to Student Sign-In
-                </Link>
-              )}
               {portal === 'student' && (
                 <Link
                   to="/admin/login"

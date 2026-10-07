@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Info,
   Zap,
+  AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcStream';
@@ -17,7 +18,7 @@ import { useFaceDetection } from '@/features/faceRegistration/hooks/useFaceDetec
 import { useFaceRecognition } from '../hooks/useFaceRecognition';
 import { getRecognitionStatusText } from '../lib/recognitionStatus';
 import { MIN_ATTENDANCE_LOG_CONFIDENCE } from '../lib/faceNetMatcher';
-import { mapVideoFaceBoxToViewport, type VideoFaceBox } from '../lib/faceOverlayGeometry';
+import { mapVideoFaceBoxToViewport, type VideoFaceBox } from '@/lib/faceOverlayGeometry';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
 import type { EventType } from '@/types/domain.types';
@@ -34,6 +35,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     type: EventType;
     time: string;
     alreadyLogged?: boolean;
+    error?: string;
   } | null>(null);
   const [dailyCompletedMap, setDailyCompletedMap] = useState<Map<string, string>>(new Map());
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
@@ -271,6 +273,13 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
       }).catch(error => {
         loggedMatchesRef.current.delete(logKey);
         console.warn('Could not log recognized turnstile entry:', error);
+        setLastScanNotice({
+          studentName: student.name,
+          type: scanMode,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          error: error instanceof Error ? error.message : 'Cloud gate log failed; the scan remains local only.',
+        });
+        setTimeout(() => setLastScanNotice(null), 6000);
       });
     }
   }, [liveMatchedStudents, isLive, scanMode, currentCam.id, currentCam.name, dailyCompletedMap]);
@@ -460,14 +469,21 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                   exit={{ opacity: 0, y: -8, scale: 0.96 }}
                   className={cn(
                     'relative z-20 mx-auto max-w-md w-full px-4 py-2 rounded-xl text-center shadow-lg border backdrop-blur-md flex items-center justify-center gap-2 text-xs font-black',
-                    lastScanNotice.alreadyLogged
+                    lastScanNotice.error
+                      ? 'bg-rose-950/95 text-rose-100 border-rose-500/70'
+                      : lastScanNotice.alreadyLogged
                       ? 'bg-amber-500/90 text-slate-950 border-amber-400/60 shadow-amber-500/20'
                       : lastScanNotice.type === 'entry'
                       ? 'bg-emerald-500/90 text-white border-emerald-400/50'
                       : 'bg-amber-500/90 text-slate-950 border-amber-400/50'
                   )}
                 >
-                  {lastScanNotice.alreadyLogged ? (
+                  {lastScanNotice.error ? (
+                    <>
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>{lastScanNotice.studentName}: {lastScanNotice.error}</span>
+                    </>
+                  ) : lastScanNotice.alreadyLogged ? (
                     <>
                       <Info className="w-4 h-4 shrink-0" />
                       <span>

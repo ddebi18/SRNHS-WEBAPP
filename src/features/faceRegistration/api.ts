@@ -760,6 +760,16 @@ export async function submitFaceRegistration(
     throw new Error('Incomplete face capture angles. Please capture all 3 required angles (front, left, right).');
   }
 
+  const students = getStoredStudents();
+  const index = students.findIndex(s => s.id === payload.studentId);
+  if (index === -1) {
+    throw new Error('Student record not found in system database.');
+  }
+
+  if (isSupabaseConfigured && supabase && (!payload.faceDescriptors || payload.faceDescriptors.length === 0)) {
+    throw new Error('Face descriptors are required before cloud face registration can be saved. Please recapture the student face.');
+  }
+
   // Convert frame blobs to compact, optimized Data URLs
   const photoMap: { front?: string; left?: string; right?: string } = {};
   for (const frame of payload.frames) {
@@ -768,53 +778,37 @@ export async function submitFaceRegistration(
     }
   }
 
-  // Save photos to IndexedDB for permanent browser persistence
-  await savePhotosToDb(payload.studentId, photoMap);
+  if (!photoMap.front || !photoMap.left || !photoMap.right) {
+    throw new Error('All three face images must be readable before registration can be saved. Please recapture the missing angle.');
+  }
 
-  // If Supabase is configured, update photo_urls on the student record
+  // Treat Supabase as authoritative when configured; do not report local success
+  // if the cloud photos or descriptors could not be persisted.
   if (isSupabaseConfigured && supabase) {
-    try {
-      const photosToSave = [photoMap.front, photoMap.left, photoMap.right].filter(Boolean) as string[];
-      if (photosToSave.length > 0) {
-        const deserializedFields = payload.faceDescriptors && payload.faceDescriptors.length > 0
-          ? {
-              face_descriptors: payload.faceDescriptors,
-              face_descriptor_version: FACE_DESCRIPTOR_VERSION,
-            }
-          : {};
+    const photosToSave = [photoMap.front, photoMap.left, photoMap.right];
+    const { data, error } = await supabase
+      .from('students')
+      .update({
+        photo_urls: photosToSave,
+        face_descriptors: payload.faceDescriptors,
+        face_descriptor_version: FACE_DESCRIPTOR_VERSION,
+      })
+      .eq('id', payload.studentId)
+      .select('id')
+      .maybeSingle();
 
-        const { error: photoErr } = await supabase
-          .from('students')
-          .update({
-            photo_urls: photosToSave,
-            ...deserializedFields,
-          })
-          .eq('id', payload.studentId);
-
-        if (photoErr) {
-          const fallback = await supabase
-            .from('students')
-            .update({ photo_urls: photosToSave })
-            .eq('id', payload.studentId);
-
-          if (fallback.error) {
-            console.warn('[Supabase] Photo update note:', photoErr.message || fallback.error.message);
-          }
-        } else {
-          console.log(`[Supabase] ✓ Updated ${photosToSave.length} face photo(s) for student in cloud`);
-        }
-      }
-    } catch (supabaseErr) {
-      console.warn('[Supabase] Synchronization note (will continue using local store):', supabaseErr);
+    if (error) {
+      throw new Error(`Face registration could not be saved to Supabase: ${error.message}`);
     }
+    if (!data) {
+      throw new Error('Face registration could not be saved: the student record was not found or is not accessible.');
+    }
+
+    console.log(`[Supabase] ✓ Updated ${photosToSave.length} face photo(s) and descriptors for student in cloud`);
   }
 
-  const students = getStoredStudents();
-  const index = students.findIndex(s => s.id === payload.studentId);
-  
-  if (index === -1) {
-    throw new Error('Student record not found in system database.');
-  }
+  // Save photos locally only after cloud persistence succeeds (when configured).
+  await savePhotosToDb(payload.studentId, photoMap);
 
   const now = new Date().toISOString();
   students[index] = {
@@ -854,20 +848,33 @@ export async function submitFaceRegistration(
   return {
     success: true,
     studentId: payload.studentId,
-    message: 'Biometric face registration successfully created and verified on DepEd turnstile edge node.',
+    message: 'Biometric face registration saved successfully.',
     qualityWarnings: [],
   };
 }
 
 export async function deleteFaceRegistration(studentId: string): Promise<void> {
   if (isSupabaseConfigured && supabase) {
-    const { error } = await supabase
+    if (!isValidUUID(studentId)) {
+      throw new Error('Face registration was not deleted: the student has no valid cloud record ID.');
+    }
+
+    const { data, error } = await supabase
       .from('students')
-      .update({ photo_urls: [] })
-      .eq('id', studentId);
+      .update({
+        photo_urls: [],
+        face_descriptors: null,
+        face_descriptor_version: null,
+      })
+      .eq('id', studentId)
+      .select('id')
+      .maybeSingle();
     if (error) {
       console.error('[Supabase] Delete face registration failed:', error.message);
       throw new Error(`Face registration was not deleted from Supabase: ${error.message}`);
+    }
+    if (!data) {
+      throw new Error('Face registration was not deleted from Supabase: the student record was not found or is not accessible.');
     }
   }
 

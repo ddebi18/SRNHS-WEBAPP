@@ -1,4 +1,8 @@
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/wasm';
+import ortWasmBinaryUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
+import ortWasmModuleUrl from 'onnxruntime-web/ort-wasm-simd-threaded.mjs?url';
+import visionWasmLoaderUrl from '@mediapipe/tasks-vision/vision_wasm_internal.js?url';
+import visionWasmBinaryUrl from '@mediapipe/tasks-vision/vision_wasm_internal.wasm?url';
 
 export interface ScrfdDetection {
   box: [number, number, number, number]; // [x, y, w, h] in video coordinates
@@ -21,9 +25,17 @@ const STRIDES = [8, 16, 32] as const;
 const ANCHORS_PER_LOCATION = 2;
 const TARGET_SIZE = 640;
 
-// Configure ONNX Runtime Web assets path for WASM
+export const visionWasmFileset = {
+  wasmLoaderPath: visionWasmLoaderUrl,
+  wasmBinaryPath: visionWasmBinaryUrl,
+};
+
+// Use Vite-resolved asset URLs so the runtimes also work in production builds.
 try {
-  ort.env.wasm.wasmPaths = '/node_modules/onnxruntime-web/dist/';
+  ort.env.wasm.wasmPaths = {
+    wasm: ortWasmBinaryUrl,
+    mjs: ortWasmModuleUrl,
+  };
   const isIsolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
   ort.env.wasm.numThreads = isIsolated ? Math.min(4, (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 1) || 1) : 1;
   ort.env.wasm.simd = true;
