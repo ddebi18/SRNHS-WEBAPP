@@ -5,6 +5,7 @@ import { FACE_DESCRIPTOR_VERSION } from '@/features/attendance/lib/faceNetMatche
 const LOCAL_STORAGE_KEY_STUDENTS = 'srnhs_face_registration_students_v1';
 const LOCAL_STORAGE_KEY_SECTIONS = 'srnhs_face_registration_sections_v1';
 const SUPABASE_STUDENT_SELECT_BASE = 'id, lrn, first_name, last_name, grade_level, section_id, photo_urls, parent_consent, created_at, student_guardians(id, name, relationship, phone_number, is_primary)';
+const SUPABASE_STUDENT_SELECT_WITH_FACE = `${SUPABASE_STUDENT_SELECT_BASE}, face_descriptors, face_descriptor_version`;
 
 export function isValidUUID(id?: string | null): boolean {
   if (!id || typeof id !== 'string') return false;
@@ -179,7 +180,7 @@ export async function fetchRegisteredStudents(): Promise<Student[]> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
       .from('students')
-      .select(SUPABASE_STUDENT_SELECT_BASE)
+      .select(SUPABASE_STUDENT_SELECT_WITH_FACE)
       .order('last_name');
 
     if (!error && data) {
