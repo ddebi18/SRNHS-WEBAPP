@@ -21,10 +21,16 @@ export function ensureFaceNetModels(): Promise<void> {
       faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL).catch(() => {
         console.warn('[FaceNet] TinyFaceDetector unavailable; SSD will be used');
       }),
-      faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-    ]).then(() => undefined);
+      faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL).catch(() => {
+        console.warn('[FaceNet] SSD Mobilenet detector unavailable; other FaceNet stages will continue when possible');
+      }),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL).catch(() => {
+        console.warn('[FaceNet] Face landmarks unavailable; landmark-based matching is disabled');
+      }),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL).catch(() => {
+        console.warn('[FaceNet] Face recognition model unavailable; descriptor extraction may fail');
+      }),
+    ]).then(() => undefined).catch(() => undefined);
   }
   return modelsPromise;
 }
@@ -399,7 +405,7 @@ export async function extractDescriptorFromImage(
 }
 
 export async function extractDescriptorsFromBlobs(blobs: Blob[]): Promise<Float32Array[]> {
-  await ensureFaceNetModels();
+  await ensureFaceNetModels().catch(() => undefined);
   const descriptors: Float32Array[] = [];
 
   for (const blob of blobs) {
@@ -408,6 +414,8 @@ export async function extractDescriptorsFromBlobs(blobs: Blob[]): Promise<Float3
       const image = await loadImage(url);
       const descriptor = await extractDescriptorFromImage(image, MIN_PHOTO_DETECTION_SCORE);
       if (descriptor) descriptors.push(descriptor);
+    } catch (error) {
+      console.warn('[FaceNet] Skipping a registration frame that could not be converted to a descriptor:', error);
     } finally {
       URL.revokeObjectURL(url);
     }
