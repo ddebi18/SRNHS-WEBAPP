@@ -1,6 +1,8 @@
 import * as faceapi from '@vladmandic/face-api';
 import {
   MIN_LIVE_DETECTION_SCORE,
+  MIN_LIVE_RECOGNITION_FACE_SIZE_PX,
+  MIN_FACE_SIZE_PX,
   MIN_PHOTO_DETECTION_SCORE,
   MIN_REGISTER_DETECTION_SCORE,
   evaluateFacePartConsistency,
@@ -102,24 +104,39 @@ type DetectionWithDescriptor = faceapi.WithFaceDescriptor<
   faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }>
 >;
 
+export interface FaceNetLiveDetection {
+  box: { x: number; y: number; width: number; height: number };
+  landmarks: Array<{ x: number; y: number }>;
+  descriptor: Float32Array;
+  score: number;
+}
+
+export interface FaceDetectionRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 function isQualityDetection(
   detection: DetectionWithDescriptor | undefined | null,
-  minScore: number
+  minScore: number,
+  minFaceSize = MIN_FACE_SIZE_PX
 ): detection is DetectionWithDescriptor {
   if (!detection) return false;
   const box = detection.detection.box;
   const score = detection.detection.score;
-  if (!isFaceBoxUsable(box.width, box.height, score, minScore)) return false;
+  if (!isFaceBoxUsable(box.width, box.height, score, minScore, minFaceSize)) return false;
   if (!evaluateFacePartConsistency(detection.landmarks.positions, box)) return false;
   return true;
 }
 
-async function hasExactlyOneFace(
+async function hasAtLeastOneFace(
   input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
   detector: faceapi.TinyFaceDetectorOptions | faceapi.SsdMobilenetv1Options
 ): Promise<boolean> {
   const detections = await faceapi.detectAllFaces(input, detector);
-  return detections.length === 1;
+  return detections.length >= 1;
 }
 
 export async function detectLiveFace(
@@ -134,7 +151,7 @@ export async function detectLiveFace(
           inputSize: 320,
           scoreThreshold: MIN_LIVE_DETECTION_SCORE,
         });
-      if (await hasExactlyOneFace(input, options)) {
+      if (await hasAtLeastOneFace(input, options)) {
         const detection = await faceapi
           .detectSingleFace(input, options)
         .withFaceLandmarks()
@@ -143,7 +160,7 @@ export async function detectLiveFace(
       }
 
       if (enhancedInput) {
-        if (await hasExactlyOneFace(enhancedInput, options)) {
+        if (await hasAtLeastOneFace(enhancedInput, options)) {
           const enhancedDetection = await faceapi
             .detectSingleFace(enhancedInput, options)
             .withFaceLandmarks()
@@ -158,6 +175,158 @@ export async function detectLiveFace(
   return null;
 }
 
+export async function detectAllLiveFaces(
+  input: HTMLVideoElement | HTMLCanvasElement,
+  minScore = MIN_LIVE_DETECTION_SCORE
+): Promise<FaceNetLiveDetection[]> {
+  const enhancedInput = shouldEnhanceLiveInput(input)
+    ? renderVideoToCanvas(input, LOW_LIGHT_GAMMA)
+    : null;
+  const target = enhancedInput || input;
+
+  const detections: DetectionWithDescriptor[] = [];
+
+  if (faceapi.nets.tinyFaceDetector.isLoaded) {
+    try {
+      const options = new faceapi.TinyFaceDetectorOptions({
+        inputSize: 416,
+        scoreThreshold: minScore,
+      });
+      const tinyDetections = await faceapi
+        .detectAllFaces(target, options)
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+      detections.push(...tinyDetections.filter(d =>
+        isQualityDetection(d, minScore, MIN_LIVE_RECOGNITION_FACE_SIZE_PX)
+      ));
+    } catch (error) {
+      console.warn('[FaceNet] TinyFaceDetector multi-face scan failed:', error);
+    }
+  }
+
+  if (faceapi.nets.ssdMobilenetv1.isLoaded) {
+    try {
+      const options = new faceapi.SsdMobilenetv1Options({ minConfidence: minScore });
+      const ssdDetections = await faceapi
+        .detectAllFaces(target, options)
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+      for (const candidate of ssdDetections.filter(d =>
+        isQualityDetection(d, minScore, MIN_LIVE_RECOGNITION_FACE_SIZE_PX)
+      )) {
+        const candidateBox = candidate.detection.box;
+        const duplicateIndex = detections.findIndex(existing => {
+          const existingBox = existing.detection.box;
+          const intersectionWidth = Math.max(
+            0,
+            Math.min(candidateBox.x + candidateBox.width, existingBox.x + existingBox.width) -
+              Math.max(candidateBox.x, existingBox.x)
+          );
+          const intersectionHeight = Math.max(
+            0,
+            Math.min(candidateBox.y + candidateBox.height, existingBox.y + existingBox.height) -
+              Math.max(candidateBox.y, existingBox.y)
+          );
+          const intersection = intersectionWidth * intersectionHeight;
+          const union = candidateBox.width * candidateBox.height +
+            existingBox.width * existingBox.height - intersection;
+          const overlap = union > 0 ? intersection / union : 0;
+          const centerDistance = Math.hypot(
+            candidateBox.x + candidateBox.width / 2 - (existingBox.x + existingBox.width / 2),
+            candidateBox.y + candidateBox.height / 2 - (existingBox.y + existingBox.height / 2)
+          );
+          return overlap >= 0.35 || centerDistance < Math.min(candidateBox.width, candidateBox.height) * 0.25;
+        });
+        if (duplicateIndex < 0) {
+          detections.push(candidate);
+        } else if (
+          (candidate.detection.score ?? 0) >
+          (detections[duplicateIndex]?.detection.score ?? 0)
+        ) {
+          detections[duplicateIndex] = candidate;
+        }
+      }
+    } catch (error) {
+      console.warn('[FaceNet] SSD multi-face scan failed:', error);
+    }
+  }
+
+  return detections.map(detection => ({
+    box: detection.detection.box,
+    landmarks: detection.landmarks.positions.map(point => ({ x: point.x, y: point.y })),
+    descriptor: detection.descriptor,
+    score: detection.detection.score,
+  }));
+}
+
+export async function describeScrfdFaceRegions(
+  input: HTMLVideoElement | HTMLCanvasElement,
+  regions: FaceDetectionRegion[],
+  minScore = MIN_LIVE_DETECTION_SCORE
+): Promise<FaceNetLiveDetection[]> {
+  const isVideo = typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement;
+  const inputWidth = isVideo ? input.videoWidth : input.width;
+  const inputHeight = isVideo ? input.videoHeight : input.height;
+  const results: FaceNetLiveDetection[] = [];
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('Could not create a canvas for SCRFD face recognition.');
+
+  for (const region of regions) {
+    const paddingX = Math.max(8, region.width * 0.2);
+    const paddingY = Math.max(8, region.height * 0.2);
+    const cropX = Math.max(0, Math.floor(region.x - paddingX));
+    const cropY = Math.max(0, Math.floor(region.y - paddingY));
+    const cropRight = Math.min(inputWidth, Math.ceil(region.x + region.width + paddingX));
+    const cropBottom = Math.min(inputHeight, Math.ceil(region.y + region.height + paddingY));
+    const cropWidth = cropRight - cropX;
+    const cropHeight = cropBottom - cropY;
+    if (cropWidth <= 0 || cropHeight <= 0) continue;
+
+    canvas.width = cropWidth;
+    canvas.height = cropHeight;
+    context.drawImage(input, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+    const options = faceapi.nets.tinyFaceDetector.isLoaded
+      ? new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: minScore })
+      : new faceapi.SsdMobilenetv1Options({ minConfidence: minScore });
+    const detection = await faceapi
+      .detectSingleFace(canvas, options)
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+    if (!isQualityDetection(detection, minScore, MIN_LIVE_RECOGNITION_FACE_SIZE_PX)) continue;
+
+    const detectedBox = detection.detection.box;
+    const detectedCenterX = cropX + detectedBox.x + detectedBox.width / 2;
+    const detectedCenterY = cropY + detectedBox.y + detectedBox.height / 2;
+    const regionCenterX = region.x + region.width / 2;
+    const regionCenterY = region.y + region.height / 2;
+    if (
+      Math.hypot(detectedCenterX - regionCenterX, detectedCenterY - regionCenterY) >
+      Math.max(region.width, region.height) * 0.45
+    ) {
+      continue;
+    }
+
+    results.push({
+      box: {
+        x: cropX + detectedBox.x,
+        y: cropY + detectedBox.y,
+        width: detectedBox.width,
+        height: detectedBox.height,
+      },
+      landmarks: detection.landmarks.positions.map(point => ({
+        x: cropX + point.x,
+        y: cropY + point.y,
+      })),
+      descriptor: detection.descriptor,
+      score: detection.detection.score,
+    });
+  }
+
+  return results;
+}
+
 export async function detectAccurateFace(
   input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
   minScore = MIN_REGISTER_DETECTION_SCORE
@@ -169,7 +338,7 @@ export async function detectAccurateFace(
   if (faceapi.nets.ssdMobilenetv1.isLoaded) {
     try {
       const options = new faceapi.SsdMobilenetv1Options({ minConfidence: minScore });
-      if (await hasExactlyOneFace(input, options)) {
+      if (await hasAtLeastOneFace(input, options)) {
         const detection = await faceapi
           .detectSingleFace(input, options)
           .withFaceLandmarks()
@@ -177,7 +346,7 @@ export async function detectAccurateFace(
         if (isQualityDetection(detection, minScore) && !enhancedInput) return detection;
       }
       if (enhancedInput) {
-        if (await hasExactlyOneFace(enhancedInput, options)) {
+        if (await hasAtLeastOneFace(enhancedInput, options)) {
           const enhancedDetection = await faceapi
             .detectSingleFace(enhancedInput, options)
             .withFaceLandmarks()
@@ -194,7 +363,7 @@ export async function detectAccurateFace(
           inputSize: 416,
           scoreThreshold: minScore,
         });
-      if (await hasExactlyOneFace(input, options)) {
+      if (await hasAtLeastOneFace(input, options)) {
         const detection = await faceapi
           .detectSingleFace(input, options)
           .withFaceLandmarks()
@@ -202,7 +371,7 @@ export async function detectAccurateFace(
         if (isQualityDetection(detection, minScore) && !enhancedInput) return detection;
       }
       if (enhancedInput) {
-        if (await hasExactlyOneFace(enhancedInput, options)) {
+        if (await hasAtLeastOneFace(enhancedInput, options)) {
           const enhancedDetection = await faceapi
             .detectSingleFace(enhancedInput, options)
             .withFaceLandmarks()

@@ -34,21 +34,21 @@ function getStoredRooms(): Room[] {
   try {
     const raw = localStorage.getItem(LS_ROOMS);
     if (raw) return JSON.parse(raw);
-  } catch {}
+  } catch { }
   return [];
 }
 function saveRooms(rooms: Room[]) {
-  try { localStorage.setItem(LS_ROOMS, JSON.stringify(rooms)); } catch {}
+  try { localStorage.setItem(LS_ROOMS, JSON.stringify(rooms)); } catch { }
 }
 function getStoredSubjects(): Subject[] {
   try {
     const raw = localStorage.getItem(LS_SUBJECTS);
     if (raw) return JSON.parse(raw);
-  } catch {}
+  } catch { }
   return [];
 }
 function saveSubjects(subjects: Subject[]) {
-  try { localStorage.setItem(LS_SUBJECTS, JSON.stringify(subjects)); } catch {}
+  try { localStorage.setItem(LS_SUBJECTS, JSON.stringify(subjects)); } catch { }
 }
 
 // Convert domain Section ↔ faceRegistration Section
@@ -278,7 +278,7 @@ export const AcademicsManager: React.FC = () => {
 
   const addLabel =
     activeTab === 'sections' ? 'Add Section' :
-    activeTab === 'subjects' ? 'Add Subject' : 'Add Room';
+      activeTab === 'subjects' ? 'Add Subject' : 'Add Room';
 
   return (
     <div className="space-y-6">

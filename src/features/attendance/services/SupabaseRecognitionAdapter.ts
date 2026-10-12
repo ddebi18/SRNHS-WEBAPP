@@ -202,39 +202,47 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
 
     if (!supabase) return localEvent;
 
-    try {
-      const isSecurityEvent = eventData.status === 'unidentified' || eventData.status === 'ambiguous';
-      const hasValidStudent = eventData.student_id && isValidUUID(eventData.student_id);
+    const isSecurityEvent = eventData.status === 'unidentified' || eventData.status === 'ambiguous';
+    const hasValidStudent = eventData.student_id && isValidUUID(eventData.student_id);
 
-      if (hasValidStudent || isSecurityEvent) {
-        const { error: insertErr } = await supabase
-          .from('recognition_events')
-          .insert({
-            student_id: hasValidStudent ? eventData.student_id : null,
-            event_type: eventData.event_type,
-            room_id: (eventData.room_id && isValidUUID(eventData.room_id)) ? eventData.room_id : null,
-            confidence_score: eventData.confidence_score,
-            top_similarity_score: eventData.top_similarity_score ?? eventData.confidence_score,
-            status: eventData.status || 'matched',
-            candidate_student_ids: eventData.candidate_student_ids || [],
-            captured_image_path: eventData.captured_image_path || null,
-            gate: eventData.gate_id,
-            source: 'camera',
-          });
-
-        if (insertErr) {
-          console.warn('[Supabase] recognition_events insert note (using local event):', insertErr.message);
-        } else {
-          console.log('[Supabase] ✓ Recognition event recorded in cloud');
-        }
-      }
-    } catch (err) {
-      console.warn('[Supabase] recognition_events network note:', err);
+    if (!isSecurityEvent && !hasValidStudent) {
+      throw new Error('Cloud gate log was not saved: the student has no valid cloud record ID. The scan remains local only.');
     }
 
+    const insertPayload: Record<string, unknown> = {
+      student_id: hasValidStudent ? eventData.student_id : null,
+      event_type: eventData.event_type,
+      camera_id: eventData.camera_id,
+      gate_id: eventData.gate_id,
+      room_id: (eventData.room_id && isValidUUID(eventData.room_id)) ? eventData.room_id : null,
+      confidence_score: eventData.confidence_score,
+      source: 'camera',
+    };
+
+    if (eventData.top_similarity_score !== undefined) {
+      insertPayload.top_similarity_score = eventData.top_similarity_score;
+    }
+    if (eventData.status !== undefined) {
+      insertPayload.status = eventData.status;
+    }
+    if (eventData.candidate_student_ids !== undefined) {
+      insertPayload.candidate_student_ids = eventData.candidate_student_ids;
+    }
+    if (eventData.captured_image_path !== undefined) {
+      insertPayload.captured_image_path = eventData.captured_image_path;
+    }
+
+    const { error: insertErr } = await supabase
+      .from('recognition_events')
+      .insert(insertPayload);
+
+    if (insertErr) {
+      throw new Error(`Cloud gate log failed; the scan remains local only: ${insertErr.message}`);
+    }
+
+    console.log('[Supabase] ✓ Recognition event recorded in cloud');
     return localEvent;
   }
 }
 
 export const supabaseRecognitionAdapter = new SupabaseRecognitionAdapterImpl();
-

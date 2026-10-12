@@ -105,7 +105,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     return newEvt;
   }
 
-  private async recordEvent(eventData: Partial<RecognitionEvent>): Promise<RecognitionEvent> {
+  async simulateScan(eventData: Partial<RecognitionEvent>): Promise<RecognitionEvent> {
     const status = eventData.status || 'matched';
     const isUnidentifiedOrAmbiguous = status === 'unidentified' || status === 'ambiguous';
 
@@ -216,7 +216,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     candidate_student_ids?: RecognitionEvent['candidate_student_ids'];
     captured_image_path?: string | null;
   }): Promise<RecognitionEvent> {
-    return this.recordEvent(eventData);
+    return this.simulateScan(eventData);
   }
 
   private notifyListeners(event: RecognitionEvent) {

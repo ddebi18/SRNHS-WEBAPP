@@ -44,7 +44,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
   const activeAngle = (currentStep === 'review' || currentStep === 'consent') ? 'front' : currentStep;
 
-  const { isFaceDetected, isCentered, faceBox } = useFaceDetection(
+  const { isFaceDetected, isCentered, faceBox, allFaceBoxes, detectorError } = useFaceDetection(
     videoRef,
     activeAngle,
     isOpen && Boolean(stream)
@@ -191,7 +191,9 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               stream={stream}
               isLoading={isCameraLoading}
               error={errorMessage}
+              detectorError={detectorError}
               faceBox={faceBox}
+              allFaceBoxes={allFaceBoxes}
               isFaceDetected={isFaceDetected}
               isCentered={isCentered}
               currentAngle={activeAngle}

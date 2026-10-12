@@ -26,7 +26,8 @@ export const FACENET_AMBIGUITY_MARGIN = 0.10;
 export const FACENET_DUPLICATE_DISTANCE = 0.38;
 export const SAME_PERSON_RELOCK_THRESHOLD = 0.46;
 export const MIN_FACE_SIZE_PX = 70;
-export const MIN_LIVE_DETECTION_SCORE = 0.40;
+export const MIN_LIVE_DETECTION_SCORE = 0.25;
+export const MIN_LIVE_RECOGNITION_FACE_SIZE_PX = 32;
 export const MIN_REGISTER_DETECTION_SCORE = 0.45;
 export const MIN_PHOTO_DETECTION_SCORE = 0.35;
 export const STABILITY_FRAMES_REQUIRED = 3;
@@ -269,9 +270,10 @@ export function isFaceBoxUsable(
   width: number,
   height: number,
   score?: number,
-  minScore = MIN_LIVE_DETECTION_SCORE
+  minScore = MIN_LIVE_DETECTION_SCORE,
+  minFaceSize = MIN_FACE_SIZE_PX
 ): boolean {
-  if (width < MIN_FACE_SIZE_PX || height < MIN_FACE_SIZE_PX) return false;
+  if (width < minFaceSize || height < minFaceSize) return false;
   if (typeof score === 'number' && score < minScore) return false;
   return true;
 }

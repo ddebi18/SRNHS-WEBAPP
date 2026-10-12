@@ -301,6 +301,14 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
               >
                 {switchLabel}
               </Link>
+              {portal === 'student' && (
+                <Link
+                  to="/admin/login"
+                  className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-emerald-400 hover:underline block"
+                >
+                  Administrator? Go to Admin Sign-In
+                </Link>
+              )}
             </div>
           </motion.div>
         </motion.div>

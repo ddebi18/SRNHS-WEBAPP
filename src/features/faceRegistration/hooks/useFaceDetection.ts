@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
+import { FaceDetector } from '@mediapipe/tasks-vision';
+import * as ort from 'onnxruntime-web';
 import { CaptureAngle } from '../types';
+import {
+  getScrfdSession,
+  detectFacesWithScrfd,
+  ScrfdFaceBox,
+  visionWasmFileset,
+} from '../lib/scrfdDetector';
 
 export interface FaceBox {
   x: number;
@@ -9,31 +16,46 @@ export interface FaceBox {
   height: number;
   videoWidth: number;
   videoHeight: number;
+  score?: number;
+  landmarks?: [number, number][];
 }
 
 export interface UseFaceDetectionReturn {
   isFaceDetected: boolean;
   isCentered: boolean;
   faceBox: FaceBox | null;
+  allFaceBoxes: FaceBox[];
+  allFaceBoxesRef: React.MutableRefObject<FaceBox[]>;
   warningMessage: string | null;
   detectorError: string | null;
 }
+
+const LIVE_FACE_SCAN_INTERVAL_MS = 200;
 
 export function useFaceDetection(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   currentAngle: CaptureAngle,
   active: boolean,
-  options?: { maxMissedFrames?: number }
+  options?: {
+    maxMissedFrames?: number;
+    useMediaPipeFallback?: boolean;
+    modelUrl?: string;
+  }
 ): UseFaceDetectionReturn {
   const [isFaceDetected, setIsFaceDetected] = useState(false);
   const [isCentered, setIsCentered] = useState(false);
   const [faceBox, setFaceBox] = useState<FaceBox | null>(null);
+  const [allFaceBoxes, setAllFaceBoxes] = useState<FaceBox[]>([]);
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
   const [detectorError, setDetectorError] = useState<string | null>(null);
-  const detectorRef = useRef<FaceDetector | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const allFaceBoxesRef = useRef<FaceBox[]>([]);
+  const scrfdSessionRef = useRef<ort.InferenceSession | null>(null);
+  const mediaPipeDetectorRef = useRef<FaceDetector | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const missedFramesRef = useRef(0);
   const faceBoxRef = useRef<FaceBox | null>(null);
+  const isProcessingRef = useRef(false);
 
   const MAX_MISSED_FRAMES = options?.maxMissedFrames ?? 4;
 
@@ -43,9 +65,11 @@ export function useFaceDetection(
     const resetDetection = () => {
       missedFramesRef.current = 0;
       faceBoxRef.current = null;
+      allFaceBoxesRef.current = [];
       setIsFaceDetected(false);
       setIsCentered(false);
       setFaceBox(null);
+      setAllFaceBoxes(current => current.length === 0 ? current : []);
     };
 
     if (!active || !videoRef.current) {
@@ -55,33 +79,77 @@ export function useFaceDetection(
       return;
     }
 
-    const checkFace = () => {
+    const checkFace = async () => {
       const video = videoRef.current;
-      const detector = detectorRef.current;
-      if (!video || !detector || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      if (isProcessingRef.current) return;
+
+      isProcessingRef.current = true;
 
       try {
         const vw = video.videoWidth || 640;
         const vh = video.videoHeight || 480;
-        const result = detector.detectForVideo(video, performance.now());
+        let detectedBoxes: FaceBox[] = [];
+        let scrfdFailed = false;
 
-        // Find best candidate face anywhere in the camera frame (center, side, tilted):
-        // Prioritizes the user's face by bounding box area and continuity with the previous frame.
-        let bestBox: { originX: number; originY: number; width: number; height: number } | null = null;
+        // 1. Try SCRFD ONNX Detection
+        if (scrfdSessionRef.current) {
+          try {
+            const rawScrfdBoxes: ScrfdFaceBox[] = await detectFacesWithScrfd(scrfdSessionRef.current, video, 0.25, 0.4);
+            detectedBoxes = rawScrfdBoxes.map((b) => ({
+              x: b.x,
+              y: b.y,
+              width: b.width,
+              height: b.height,
+              videoWidth: b.videoWidth,
+              videoHeight: b.videoHeight,
+              score: b.score,
+              landmarks: b.landmarks,
+            }));
+          } catch (scrfdErr) {
+            scrfdFailed = true;
+            console.warn('[FaceDetection] SCRFD inference tick failed, falling back to MediaPipe:', scrfdErr);
+          }
+        }
+
+        // Avoid running a second model on every empty SCRFD frame in the live camera.
+        const shouldUseMediaPipe =
+          scrfdFailed ||
+          !scrfdSessionRef.current ||
+          options?.useMediaPipeFallback !== false;
+        if (detectedBoxes.length === 0 && shouldUseMediaPipe && mediaPipeDetectorRef.current) {
+          const result = mediaPipeDetectorRef.current.detectForVideo(video, performance.now());
+          if (result.detections && result.detections.length > 0) {
+            for (const det of result.detections) {
+              const b = det.boundingBox;
+              if (b && b.width > 0 && b.height > 0) {
+                detectedBoxes.push({
+                  x: b.originX,
+                  y: b.originY,
+                  width: b.width,
+                  height: b.height,
+                  videoWidth: vw,
+                  videoHeight: vh,
+                  score: det.categories?.[0]?.score || 0.8,
+                });
+              }
+            }
+          }
+        }
+
+        // Find primary locked face by size and frame-to-frame continuity
+        let bestBox: FaceBox | null = null;
         let maxScore = -1;
         const prevBox = faceBoxRef.current;
 
-        if (result.detections && result.detections.length > 0) {
-          for (const det of result.detections) {
-            const b = det.boundingBox;
-            if (!b || b.width <= 0 || b.height <= 0) continue;
-            const area = b.width * b.height;
+        if (detectedBoxes.length > 0) {
+          for (const box of detectedBoxes) {
+            const area = box.width * box.height;
             let score = area;
 
-            // Continuity bonus: if already tracking this face, keep locked even if moving to the side
             if (prevBox) {
-              const cx = b.originX + b.width / 2;
-              const cy = b.originY + b.height / 2;
+              const cx = box.x + box.width / 2;
+              const cy = box.y + box.height / 2;
               const prevCx = prevBox.x + prevBox.width / 2;
               const prevCy = prevBox.y + prevBox.height / 2;
               const dist = Math.hypot(cx - prevCx, cy - prevCy);
@@ -92,7 +160,7 @@ export function useFaceDetection(
 
             if (score > maxScore) {
               maxScore = score;
-              bestBox = b;
+              bestBox = box;
             }
           }
         }
@@ -100,41 +168,35 @@ export function useFaceDetection(
         if (bestBox) {
           missedFramesRef.current = 0;
 
-          // Adaptive velocity-sensitive smoothing:
-          // Fast movements track responsively with high alpha; subtle movements smooth with lower alpha
+          // Velocity-sensitive exponential smoothing
           const prev = faceBoxRef.current;
           let targetBox: FaceBox;
           if (prev && prev.videoWidth === vw && prev.videoHeight === vh) {
-            const moveDelta = Math.hypot(bestBox.originX - prev.x, bestBox.originY - prev.y);
+            const moveDelta = Math.hypot(bestBox.x - prev.x, bestBox.y - prev.y);
             const alpha = moveDelta > 30 ? 0.85 : moveDelta > 12 ? 0.70 : 0.50;
 
             targetBox = {
-              x: prev.x * (1 - alpha) + bestBox.originX * alpha,
-              y: prev.y * (1 - alpha) + bestBox.originY * alpha,
+              ...bestBox,
+              x: prev.x * (1 - alpha) + bestBox.x * alpha,
+              y: prev.y * (1 - alpha) + bestBox.y * alpha,
               width: prev.width * (1 - alpha) + bestBox.width * alpha,
               height: prev.height * (1 - alpha) + bestBox.height * alpha,
               videoWidth: vw,
               videoHeight: vh,
             };
           } else {
-            targetBox = {
-              x: bestBox.originX,
-              y: bestBox.originY,
-              width: bestBox.width,
-              height: bestBox.height,
-              videoWidth: vw,
-              videoHeight: vh,
-            };
+            targetBox = { ...bestBox, videoWidth: vw, videoHeight: vh };
           }
 
           faceBoxRef.current = targetBox;
+          allFaceBoxesRef.current = detectedBoxes;
           const centerX = targetBox.x + targetBox.width / 2;
           const centerY = targetBox.y + targetBox.height / 2;
-          // Generous alignment boundaries (face can be comfortably tracked anywhere in active viewfinder)
           const isFaceCentered = Math.abs(centerX / vw - 0.5) < 0.35 && Math.abs(centerY / vh - 0.5) < 0.35;
 
           setIsFaceDetected(true);
           setFaceBox(targetBox);
+          setAllFaceBoxes(detectedBoxes);
           setIsCentered(isFaceCentered);
 
           if (currentAngle === 'front') {
@@ -145,78 +207,111 @@ export function useFaceDetection(
             setWarningMessage('Slight right tilt recognized. Hold position for capture.');
           }
         } else {
-          // Grace period for fast movement or momentary hand blur
           missedFramesRef.current += 1;
           if (missedFramesRef.current > MAX_MISSED_FRAMES) {
             resetDetection();
           }
         }
       } catch (error) {
-        setDetectorError(error instanceof Error ? error.message : 'Face detection failed while reading the camera.');
+        resetDetection();
+        setDetectorError(error instanceof Error ? error.message : 'Face detection failed while reading camera.');
+      } finally {
+        isProcessingRef.current = false;
       }
     };
 
-    const initializeDetector = async () => {
+    const initializeDetectors = async () => {
+      // Step A: Load SCRFD Session
       try {
-        const vision = await FilesetResolver.forVisionTasks(
-          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm'
+        console.log('[FaceDetection] Initializing SCRFD ONNX Detector...');
+        const scrfdSession = await getScrfdSession(
+          options?.modelUrl ?? '/models/scrfd/scrfd_2.5g_bnkps.onnx'
         );
+        if (!cancelled) {
+          scrfdSessionRef.current = scrfdSession;
+          console.log('[FaceDetection] SCRFD Detector ready.');
+        }
+      } catch (scrfdError) {
+        console.warn('[FaceDetection] SCRFD initialization failed; proceeding to MediaPipe fallback:', scrfdError);
+      }
+
+      // Step B: Load MediaPipe FaceDetector as secondary fallback
+      try {
         const detectorOptions = {
           baseOptions: {
             modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
             delegate: 'GPU' as const,
           },
           runningMode: 'VIDEO' as const,
-          minDetectionConfidence: 0.55,
+          minDetectionConfidence: 0.40,
+          minSuppressionThreshold: 0.35,
         };
-        let detector: FaceDetector;
 
+        let mpDetector: FaceDetector;
         try {
-          detector = await FaceDetector.createFromOptions(vision, detectorOptions);
+          mpDetector = await FaceDetector.createFromOptions(visionWasmFileset, detectorOptions);
         } catch (gpuError) {
-          console.warn('GPU face detector unavailable; retrying with CPU:', gpuError);
-          detector = await FaceDetector.createFromOptions(vision, {
+          mpDetector = await FaceDetector.createFromOptions(visionWasmFileset, {
             ...detectorOptions,
-            baseOptions: {
-              ...detectorOptions.baseOptions,
-              delegate: 'CPU',
-            },
+            baseOptions: { ...detectorOptions.baseOptions, delegate: 'CPU' },
           });
         }
 
         if (cancelled) {
-          detector.close();
+          mpDetector.close();
           return;
         }
-
-        detectorRef.current = detector;
-        setDetectorError(null);
-        intervalRef.current = setInterval(checkFace, 300);
-      } catch (error) {
-        if (!cancelled) {
-          resetDetection();
-          setDetectorError('Face detector could not start. Check browser camera and network permissions.');
-          setWarningMessage('Face detector could not be loaded. Check the network connection and retry.');
-          console.warn('MediaPipe face detector initialization failed:', error);
-        }
+        mediaPipeDetectorRef.current = mpDetector;
+      } catch (mpError) {
+        console.warn('[FaceDetection] MediaPipe initialization failed:', mpError);
       }
+
+      if (cancelled) return;
+
+      if (!scrfdSessionRef.current && !mediaPipeDetectorRef.current) {
+        resetDetection();
+        setDetectorError('Face detector engines could not start. Check detector runtime/model assets and WebAssembly support.');
+        setWarningMessage('Face detector could not be loaded. Check the detector assets and retry.');
+        return;
+      }
+
+      setDetectorError(null);
+      const runDetectionLoop = async () => {
+        const startedAt = performance.now();
+        await checkFace();
+        if (cancelled) return;
+        const delay = Math.max(0, LIVE_FACE_SCAN_INTERVAL_MS - (performance.now() - startedAt));
+        intervalRef.current = setTimeout(() => {
+          void runDetectionLoop();
+        }, delay);
+      };
+      void runDetectionLoop();
     };
 
-    initializeDetector();
+    initializeDetectors();
 
     return () => {
       cancelled = true;
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (intervalRef.current) clearTimeout(intervalRef.current);
       intervalRef.current = null;
-      detectorRef.current?.close();
-      detectorRef.current = null;
+      mediaPipeDetectorRef.current?.close();
+      mediaPipeDetectorRef.current = null;
     };
-  }, [active, videoRef, currentAngle, options?.maxMissedFrames]);
+  }, [
+    active,
+    videoRef,
+    currentAngle,
+    options?.maxMissedFrames,
+    options?.modelUrl,
+    options?.useMediaPipeFallback,
+  ]);
 
   return {
     isFaceDetected,
     isCentered,
     faceBox,
+    allFaceBoxes,
+    allFaceBoxesRef,
     warningMessage,
     detectorError,
   };

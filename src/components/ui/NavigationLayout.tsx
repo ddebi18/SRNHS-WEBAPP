@@ -8,6 +8,8 @@ import {
   Users,
   UserCheck,
   BookOpen,
+  Layers,
+  Building2,
   MessageSquare,
   Camera,
   LogOut,
@@ -31,7 +33,10 @@ const PAGE_TITLES: Record<string, string> = {
   '/face-registration': 'Face Registration',
   '/students': 'Students & Guardians',
   '/faculty': 'Faculty & Schedules',
-  '/academics': 'Academics Master',
+  '/sections': 'Class Sections',
+  '/subjects': 'Curriculum Subjects',
+  '/rooms': 'Rooms & Facilities',
+  '/academics': 'Class Sections',
   '/sms-log': 'SMS Audit Log',
 };
 
@@ -53,6 +58,9 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
     { label: 'Students & Guardians',    path: '/students',          icon: Users,           allowed: ['admin', 'teacher'] },
     { label: 'Faculty & Schedules',     path: '/faculty',           icon: UserCheck,       allowed: ['admin', 'teacher'] },
     { label: 'Academics Master',        path: '/academics',         icon: BookOpen,        allowed: ['admin'] },
+    { label: 'Sections',                path: '/sections',          icon: Layers,          allowed: ['admin'] },
+    { label: 'Subjects',                path: '/subjects',          icon: BookOpen,        allowed: ['admin'] },
+    { label: 'Rooms',                   path: '/rooms',             icon: Building2,       allowed: ['admin'] },
     { label: 'SMS Audit Log',           path: '/sms-log',           icon: MessageSquare,   allowed: ['admin'] },
   ];
 
@@ -60,7 +68,7 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Mobile Bottom Bar items (top 4 most critical tabs)
   const mobileBottomTabs = [
-    { label: 'Overview',   path: '/',          icon: LayoutDashboard },
+    { label: 'Overview', path: '/', icon: LayoutDashboard },
     ...(isAdmin ? [{ label: 'Gate Log', path: '/gate-log', icon: DoorOpen }] : []),
     ...(isAdmin ? [] : [{ label: 'Classroom', path: '/classroom', icon: ClipboardList }]),
     { label: 'Students',   path: '/students',  icon: Users },
@@ -361,27 +369,27 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
 
       {/* Mobile Bottom Navigation Bar */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-2 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] flex items-center justify-around shadow-lg transition-colors">
-          {mobileBottomTabs.map(tab => {
-            const Icon = tab.icon;
-            return (
-              <NavLink
-                key={tab.path}
-                to={tab.path}
-                end={tab.path === '/'}
-                className={({ isActive }) =>
-                  cn(
-                    'flex flex-col items-center justify-center min-h-11 py-1 px-2 rounded-lg transition-colors min-w-[56px] touch-manipulation',
-                    isActive
-                      ? 'text-primary dark:text-emerald-400 font-semibold'
-                      : 'text-slate-500 dark:text-slate-400 font-normal hover:text-slate-800 dark:hover:text-slate-200'
-                  )
-                }
-              >
-                <Icon className="w-4 h-4 mb-0.5" />
-                <span className="text-[11px] tracking-tight">{tab.label}</span>
-              </NavLink>
-            );
-          })}
+        {mobileBottomTabs.map(tab => {
+          const Icon = tab.icon;
+          return (
+            <NavLink
+              key={tab.path}
+              to={tab.path}
+              end={tab.path === '/'}
+              className={({ isActive }) =>
+                cn(
+                  'flex flex-col items-center justify-center min-h-11 py-1 px-2 rounded-lg transition-colors min-w-[56px] touch-manipulation',
+                  isActive
+                    ? 'text-primary dark:text-emerald-400 font-semibold'
+                    : 'text-slate-500 dark:text-slate-400 font-normal hover:text-slate-800 dark:hover:text-slate-200'
+                )
+              }
+            >
+              <Icon className="w-4 h-4 mb-0.5" />
+              <span className="text-[11px] tracking-tight">{tab.label}</span>
+            </NavLink>
+          );
+        })}
 
           {/* More / Menu Tab */}
           <button

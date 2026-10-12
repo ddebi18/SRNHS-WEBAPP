@@ -7,6 +7,8 @@ import {
   findDuplicateStudentId,
   isFaceBoxUsable,
   isSameEnrolledPerson,
+  MIN_LIVE_DETECTION_SCORE,
+  MIN_LIVE_RECOGNITION_FACE_SIZE_PX,
   scoreFaceNetMatch,
 } from '@/features/attendance/lib/faceNetMatcher';
 
@@ -95,6 +97,19 @@ describe('FaceNet matcher', () => {
     expect(isFaceBoxUsable(40, 40, 0.9)).toBe(false);
     expect(isFaceBoxUsable(120, 120, 0.2)).toBe(false);
     expect(isFaceBoxUsable(120, 120, 0.6)).toBe(true);
+  });
+
+  it('allows smaller live faces when the caller selects a lower size threshold', () => {
+    expect(isFaceBoxUsable(50, 50, 0.6, undefined, 40)).toBe(true);
+    expect(isFaceBoxUsable(39, 50, 0.6, undefined, 40)).toBe(false);
+  });
+
+  it('keeps live detection and recognition enabled for smaller faces farther from the camera', () => {
+    expect(MIN_LIVE_DETECTION_SCORE).toBe(0.25);
+    expect(MIN_LIVE_RECOGNITION_FACE_SIZE_PX).toBe(32);
+    expect(isFaceBoxUsable(32, 44, 0.26, MIN_LIVE_DETECTION_SCORE, MIN_LIVE_RECOGNITION_FACE_SIZE_PX)).toBe(true);
+    expect(isFaceBoxUsable(31, 44, 0.26, MIN_LIVE_DETECTION_SCORE, MIN_LIVE_RECOGNITION_FACE_SIZE_PX)).toBe(false);
+    expect(isFaceBoxUsable(32, 44, 0.24, MIN_LIVE_DETECTION_SCORE, MIN_LIVE_RECOGNITION_FACE_SIZE_PX)).toBe(false);
   });
 
   it('accepts a face only when the key facial landmarks are aligned', () => {

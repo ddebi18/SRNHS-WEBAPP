@@ -42,7 +42,8 @@ A student is confirmed when cosine similarity is at least `0.47` **and** the nex
 - Windows 10 or 11 (64-bit)
 - Python 3.11 installed and added to PATH
 - USB 1080p Webcam connected
-- For cloud roster loading, set `SUPABASE_URL` and the server-only `SUPABASE_SERVICE_ROLE_KEY` in the edge-engine environment. Never expose the service-role key in the frontend.
+- For cloud roster loading and attendance logging, set `SUPABASE_URL` and the server-only `SUPABASE_SERVICE_ROLE_KEY` in the edge-engine environment. Never expose the service-role key in the frontend. The edge node writes gate events to `public.recognition_events`; browser writes remain subject to the administrator-only RLS policy.
+- Optionally set `CAMERA_ID` to identify the physical camera separately from `GATE_ID`.
 
 ### Steps
 

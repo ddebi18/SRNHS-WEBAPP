@@ -14,7 +14,9 @@ const GateLogPage = lazy(() => import('./GateLogPage').then(m => ({ default: m.G
 const ClassroomAttendancePage = lazy(() => import('./ClassroomAttendancePage').then(m => ({ default: m.ClassroomAttendancePage })));
 const StudentsPage = lazy(() => import('./StudentsPage').then(m => ({ default: m.StudentsPage })));
 const FacultyPage = lazy(() => import('./FacultyPage').then(m => ({ default: m.FacultyPage })));
-const AcademicsPage = lazy(() => import('./AcademicsPage').then(m => ({ default: m.AcademicsPage })));
+const SectionsPage = lazy(() => import('./SectionsPage').then(m => ({ default: m.SectionsPage })));
+const SubjectsPage = lazy(() => import('./SubjectsPage').then(m => ({ default: m.SubjectsPage })));
+const RoomsPage = lazy(() => import('./RoomsPage').then(m => ({ default: m.RoomsPage })));
 const SmsLogPage = lazy(() => import('./SmsLogPage').then(m => ({ default: m.SmsLogPage })));
 const FaceRegistrationPage = lazy(() => import('./FaceRegistrationPage').then(m => ({ default: m.FaceRegistrationPage })));
 const TempAccessPage = lazy(() => import('./TempAccessPage').then(m => ({ default: m.TempAccessPage })));
@@ -155,10 +157,34 @@ const router = createBrowserRouter([
   },
   {
     path: '/academics',
+    element: <Navigate to="/sections" replace />,
+  },
+  {
+    path: '/sections',
     element: (
       <ProtectedRoute allowedRoles={['admin']}>
         <Suspense fallback={<LoadingSpinner />}>
-          <AcademicsPage />
+          <SectionsPage />
+        </Suspense>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/subjects',
+    element: (
+      <ProtectedRoute allowedRoles={['admin']}>
+        <Suspense fallback={<LoadingSpinner />}>
+          <SubjectsPage />
+        </Suspense>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: '/rooms',
+    element: (
+      <ProtectedRoute allowedRoles={['admin']}>
+        <Suspense fallback={<LoadingSpinner />}>
+          <RoomsPage />
         </Suspense>
       </ProtectedRoute>
     ),

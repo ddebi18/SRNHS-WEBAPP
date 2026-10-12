@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Camera,
@@ -9,6 +9,7 @@ import {
   Eye,
   CheckCircle2,
   Info,
+  AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { connectToWhepStream, WebRtcStreamConnection } from '../services/WebRtcStream';
@@ -16,6 +17,7 @@ import { useFaceDetection } from '@/features/faceRegistration/hooks/useFaceDetec
 import { useFaceRecognition } from '../hooks/useFaceRecognition';
 import { getRecognitionStatusText } from '../lib/recognitionStatus';
 import { MIN_ATTENDANCE_LOG_CONFIDENCE } from '../lib/faceNetMatcher';
+import { mapVideoFaceBoxToViewport, type VideoFaceBox } from '@/lib/faceOverlayGeometry';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
 import type { EventType } from '@/types/domain.types';
@@ -32,6 +34,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     type: EventType;
     time: string;
     alreadyLogged?: boolean;
+    error?: string;
   } | null>(null);
   const [dailyCompletedMap, setDailyCompletedMap] = useState<Map<string, string>>(new Map());
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
@@ -86,16 +89,26 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
 
   const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
-  const { isFaceDetected, faceBox, detectorError } = useFaceDetection(
+  const {
+    isFaceDetected,
+    faceBox,
+    allFaceBoxes,
+    allFaceBoxesRef,
+    detectorError,
+  } = useFaceDetection(
     videoRef,
     'front',
     hasVideoSource && isVideoReady,
-    { maxMissedFrames: 0 }
+    {
+      maxMissedFrames: 0,
+      useMediaPipeFallback: true,
+      modelUrl: '/models/scrfd/scrfd_500m_bnkps.onnx',
+    }
   );
   const {
     isLoading: isRecognitionLoading,
     isReady: isRecognitionReady,
-    matchedStudent,
+    recognizedFaces,
     error: recognitionError,
     recognitionBox,
     isLive,
@@ -103,9 +116,54 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     diagnosticInfo,
     qualityGuidance,
     qualityPassed,
-  } = useFaceRecognition(videoRef, hasVideoSource);
-  const activeBox = isFaceDetected ? (faceBox || recognitionBox) : recognitionBox;
-  const isAnyFaceDetected = isFaceDetected || Boolean(recognitionBox);
+  } = useFaceRecognition(videoRef, hasVideoSource, allFaceBoxesRef);
+  const activeBox = isFaceDetected ? (faceBox || recognitionBox) : null;
+  const liveRecognizedFaces = useMemo(() => recognizedFaces.filter(face =>
+      allFaceBoxes.some(box => {
+        const faceCenterX = face.box.x + face.box.width / 2;
+        const faceCenterY = face.box.y + face.box.height / 2;
+        const boxCenterX = box.x + box.width / 2;
+        const boxCenterY = box.y + box.height / 2;
+        return Math.hypot(faceCenterX - boxCenterX, faceCenterY - boxCenterY) <
+          Math.max(40, Math.min(face.box.width, face.box.height, box.width, box.height) * 0.75);
+      })
+    ), [recognizedFaces, allFaceBoxes]);
+  const liveMatchedStudents = useMemo(() => Array.from(
+    new Map(
+      liveRecognizedFaces
+        .map(face => face.student)
+        .filter((student): student is NonNullable<typeof student> => student !== null)
+        .map(student => [student.id, student])
+    ).values()
+  ), [liveRecognizedFaces]);
+  const liveMatchedStudent = liveRecognizedFaces.find(face => face.student)?.student ?? null;
+  const isAnyFaceDetected = isFaceDetected || allFaceBoxes.length > 0;
+
+  const getOverlayStyle = (box: VideoFaceBox): React.CSSProperties => {
+    const viewport = viewfinderRef.current?.getBoundingClientRect();
+    const mapped = viewport
+      ? mapVideoFaceBoxToViewport(
+          box,
+          { width: viewport.width, height: viewport.height },
+          isFullscreen ? 'contain' : 'cover'
+        )
+      : null;
+    if (!mapped) {
+      return {
+        left: `${(box.x / box.videoWidth) * 100}%`,
+        top: `${(box.y / box.videoHeight) * 100}%`,
+        width: `${(box.width / box.videoWidth) * 100}%`,
+        height: `${(box.height / box.videoHeight) * 100}%`,
+      };
+    }
+
+    return {
+      left: `${mapped.left}%`,
+      top: `${mapped.top}%`,
+      width: `${mapped.width}%`,
+      height: `${mapped.height}%`,
+    };
+  };
 
   useEffect(() => {
     if (!useWebcam) {
@@ -162,55 +220,66 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   }, []);
 
   useEffect(() => {
-    if (!isLive || !matchedStudent || matchedStudent.confidence < MIN_ATTENDANCE_LOG_CONFIDENCE) return;
+    if (!isLive) return;
 
-    const logKey = `${matchedStudent.id}_${scanMode}`;
-    const alreadyLoggedTime = dailyCompletedMap.get(logKey);
+    for (const student of liveMatchedStudents) {
+      if (student.confidence < MIN_ATTENDANCE_LOG_CONFIDENCE) continue;
 
-    if (alreadyLoggedTime) {
-      // Student already completed this event today: enforce 1 Time-In and 1 Time-Out per day
-      const lastNoticeCooldown = loggedMatchesRef.current.get(`${matchedStudent.id}_already_${scanMode}`) || 0;
-      if (Date.now() - lastNoticeCooldown > 15_000) {
-        loggedMatchesRef.current.set(`${matchedStudent.id}_already_${scanMode}`, Date.now());
+      const logKey = `${student.id}_${scanMode}`;
+      const alreadyLoggedTime = dailyCompletedMap.get(logKey);
+
+      if (alreadyLoggedTime) {
+        // Student already completed this event today: enforce 1 Time-In and 1 Time-Out per day
+        const lastNoticeCooldown = loggedMatchesRef.current.get(`${student.id}_already_${scanMode}`) || 0;
+        if (Date.now() - lastNoticeCooldown > 15_000) {
+          loggedMatchesRef.current.set(`${student.id}_already_${scanMode}`, Date.now());
+          setLastScanNotice({
+            studentName: student.name,
+            type: scanMode,
+            time: alreadyLoggedTime,
+            alreadyLogged: true,
+          });
+          setTimeout(() => setLastScanNotice(null), 4000);
+        }
+        continue;
+      }
+
+      const lastLoggedAt = loggedMatchesRef.current.get(logKey) || 0;
+      // 15 seconds cooldown to prevent rapid trigger during transition
+      if (Date.now() - lastLoggedAt < 15_000) continue;
+
+      loggedMatchesRef.current.set(logKey, Date.now());
+      supabaseRecognitionAdapter.logRecognitionEvent({
+        student_id: student.id,
+        student_name: student.name,
+        student_lrn: student.studentNumber,
+        event_type: scanMode,
+        camera_id: currentCam.id,
+        gate_id: currentCam.id,
+        room_name: currentCam.name,
+        confidence_score: student.confidence,
+      }).then(evt => {
+        const timeStr = new Date(evt?.captured_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         setLastScanNotice({
-          studentName: matchedStudent.name,
+          studentName: student.name,
           type: scanMode,
-          time: alreadyLoggedTime,
-          alreadyLogged: true,
+          time: timeStr,
+          alreadyLogged: false,
         });
         setTimeout(() => setLastScanNotice(null), 4000);
-      }
-      return;
-    }
-
-    const lastLoggedAt = loggedMatchesRef.current.get(logKey) || 0;
-    // 15 seconds cooldown to prevent rapid trigger during transition
-    if (Date.now() - lastLoggedAt < 15_000) return;
-
-    loggedMatchesRef.current.set(logKey, Date.now());
-    supabaseRecognitionAdapter.logRecognitionEvent({
-      student_id: matchedStudent.id,
-      student_name: matchedStudent.name,
-      student_lrn: matchedStudent.studentNumber,
-      event_type: scanMode,
-      camera_id: currentCam.id,
-      gate_id: currentCam.id,
-      room_name: currentCam.name,
-      confidence_score: matchedStudent.confidence,
-    }).then(evt => {
-      const timeStr = new Date(evt?.captured_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      setLastScanNotice({
-        studentName: matchedStudent.name,
-        type: scanMode,
-        time: timeStr,
-        alreadyLogged: false,
+      }).catch(error => {
+        loggedMatchesRef.current.delete(logKey);
+        console.warn('Could not log recognized turnstile entry:', error);
+        setLastScanNotice({
+          studentName: student.name,
+          type: scanMode,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          error: error instanceof Error ? error.message : 'Cloud gate log failed; the scan remains local only.',
+        });
+        setTimeout(() => setLastScanNotice(null), 6000);
       });
-      setTimeout(() => setLastScanNotice(null), 4000);
-    }).catch(error => {
-      loggedMatchesRef.current.delete(logKey);
-      console.warn('Could not log recognized turnstile entry:', error);
-    });
-  }, [matchedStudent, isLive, scanMode, currentCam.id, currentCam.name, dailyCompletedMap]);
+    }
+  }, [liveMatchedStudents, isLive, scanMode, currentCam.id, currentCam.name, dailyCompletedMap]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -397,14 +466,21 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                   exit={{ opacity: 0, y: -8, scale: 0.96 }}
                   className={cn(
                     'relative z-20 mx-auto max-w-md w-full px-4 py-2 rounded-xl text-center shadow-lg border backdrop-blur-md flex items-center justify-center gap-2 text-xs font-black',
-                    lastScanNotice.alreadyLogged
+                    lastScanNotice.error
+                      ? 'bg-rose-950/95 text-rose-100 border-rose-500/70'
+                      : lastScanNotice.alreadyLogged
                       ? 'bg-amber-500/90 text-slate-950 border-amber-400/60 shadow-amber-500/20'
                       : lastScanNotice.type === 'entry'
                       ? 'bg-emerald-500/90 text-white border-emerald-400/50'
                       : 'bg-amber-500/90 text-slate-950 border-amber-400/50'
                   )}
                 >
-                  {lastScanNotice.alreadyLogged ? (
+                  {lastScanNotice.error ? (
+                    <>
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>{lastScanNotice.studentName}: {lastScanNotice.error}</span>
+                    </>
+                  ) : lastScanNotice.alreadyLogged ? (
                     <>
                       <Info className="w-4 h-4 shrink-0" />
                       <span>
@@ -455,9 +531,65 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               />
             )}
 
-            {activeBox && (() => {
-              const isHighConfidence = Boolean(matchedStudent && matchedStudent.confidence >= 0.50);
-              const isRecognized = Boolean(matchedStudent);
+            {liveRecognizedFaces.map(face => (
+              <div
+                key={face.id}
+                className={cn(
+                  'absolute z-10 border-2 rounded-lg pointer-events-none transition-all duration-150',
+                  face.student
+                    ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.35)]'
+                    : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.35)]'
+                )}
+                style={getOverlayStyle(face.box)}
+              >
+                <span
+                  className={cn(
+                    'absolute -top-6 left-0 px-2 py-1 rounded-md text-[9px] sm:text-[10px] font-black whitespace-nowrap shadow-lg',
+                    face.student
+                      ? 'bg-emerald-400 text-slate-950'
+                      : 'bg-rose-500 text-white'
+                  )}
+                >
+                  {face.student
+                    ? `${face.student.name} · ${scanMode === 'entry' ? 'Time-In' : 'Time-Out'}`
+                    : face.isMatching ? 'Identifying…' : 'Unknown Face'}
+                </span>
+              </div>
+            ))}
+
+            {/* Multi-Face SCRFD Bounding Box Overlay */}
+            {allFaceBoxes && allFaceBoxes.length > 0 && allFaceBoxes.map((b, idx) => {
+              const overlapsRecognizedFace = liveRecognizedFaces.some(face =>
+                Math.hypot(
+                  (b.x + b.width / 2) - (face.box.x + face.box.width / 2),
+                  (b.y + b.height / 2) - (face.box.y + face.box.height / 2)
+                ) < Math.max(28, Math.min(b.width, b.height) * 0.45)
+              );
+              const isPrimary = liveRecognizedFaces.length === 0 && activeBox && (
+                Math.hypot(
+                  (b.x + b.width / 2) - (activeBox.x + activeBox.width / 2),
+                  (b.y + b.height / 2) - (activeBox.y + activeBox.height / 2)
+                ) < Math.max(28, Math.min(b.width, b.height) * 0.45)
+              );
+              if (overlapsRecognizedFace || isPrimary) return null;
+
+              return (
+                <div
+                  key={`multi_face_feed_${idx}`}
+                  className="absolute z-10 border-2 border-rose-400 rounded-lg pointer-events-none transition-all duration-150 shadow-[0_0_12px_rgba(244,63,94,0.35)]"
+                  style={getOverlayStyle(b)}
+                >
+                  <span className="absolute -top-5 left-0 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-rose-500 text-white shadow flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                    Unknown Face
+                  </span>
+                </div>
+              );
+            })}
+
+            {liveRecognizedFaces.length === 0 && activeBox && (() => {
+              const isHighConfidence = Boolean(liveMatchedStudent && liveMatchedStudent.confidence >= 0.50);
+              const isRecognized = Boolean(liveMatchedStudent);
               const isDetecting = !isRecognized && (isAnalyzing || !isRecognitionReady);
               const isSpoofWarning = isRecognized && !isLive;
 
@@ -471,16 +603,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                       ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
                       : isRecognized
                       ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
-                      : isDetecting
-                      ? 'border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.3)]'
                       : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)]'
                   )}
-                  style={{
-                    left: `${(activeBox.x / activeBox.videoWidth) * 100}%`,
-                    top: `${(activeBox.y / activeBox.videoHeight) * 100}%`,
-                    width: `${(activeBox.width / activeBox.videoWidth) * 100}%`,
-                    height: `${(activeBox.height / activeBox.videoHeight) * 100}%`,
-                  }}
+                  style={getOverlayStyle(activeBox)}
                 >
                   <span
                     className={cn(
@@ -491,8 +616,6 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                         ? 'bg-emerald-500 text-slate-950'
                         : isRecognized
                         ? 'bg-emerald-500 text-slate-950'
-                        : isDetecting
-                        ? 'bg-sky-400 text-slate-950'
                         : 'bg-rose-500 text-white'
                     )}
                   >
@@ -502,9 +625,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                         Verifying Liveness…
                       </>
                     ) : isRecognized ? (
-                      dailyCompletedMap.has(`${matchedStudent!.id}_${scanMode}`)
-                        ? `${matchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
-                        : `${matchedStudent!.name} · ${Math.round(matchedStudent!.confidence * 100)}% Match`
+                      dailyCompletedMap.has(`${liveMatchedStudent!.id}_${scanMode}`)
+                        ? `${liveMatchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
+                        : `${liveMatchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In' : 'Time-Out'}`
                     ) : isDetecting ? (
                       <>
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
@@ -586,7 +709,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     : detectorError
                     ? `Error: ${detectorError}`
                     : getRecognitionStatusText({
-                    matchedStudent,
+                    matchedStudent: liveMatchedStudent,
                     isLoading: isRecognitionLoading,
                     isReady: isRecognitionReady,
                     isFaceDetected: isAnyFaceDetected,

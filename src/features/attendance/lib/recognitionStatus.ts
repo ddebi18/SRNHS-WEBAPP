@@ -14,8 +14,7 @@ export function getRecognitionStatusText({
   isAnalyzing,
 }: RecognitionStatusInput): string {
   if (matchedStudent) {
-    const pct = Math.round(matchedStudent.confidence * 100);
-    return `Verified: ${matchedStudent.name} (${pct}% match)`;
+    return `Verified: ${matchedStudent.name}`;
   }
 
   if (isLoading) {

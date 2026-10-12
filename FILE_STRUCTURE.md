@@ -163,6 +163,8 @@ SRNHS-WEBAPP/
     │   │   ├── lib/
     │   │   │   ├── faceNetEngine.ts        # Client-side face descriptor extraction
     │   │   │   ├── faceNetMatcher.ts       # Cosine similarity vector matcher
+    │   │   │   ├── faceTracking.ts         # Motion-predicted one-to-one face track assignment
+    │   │   │   ├── faceOverlayGeometry.ts  # Bounding-box alignment for cover/contain video
     │   │   │   ├── recognitionStatus.ts    # Biometric match status definitions
     │   │   │   └── tesdaQualityEngine.ts   # Image illumination and clarity scoring
     │   │   └── services/
@@ -174,10 +176,12 @@ SRNHS-WEBAPP/
     │   ├── faceRegistration/               # Student biometric enrolment pipeline
     │   │   ├── api.ts                      # Biometric storage upload & profile APIs
     │   │   ├── types.ts                    # Enrolment session & landmark types
+    │   │   ├── lib/
+    │   │   │   └── scrfdDetector.ts        # ONNX multi-face boxes, landmarks, and NMS
     │   │   ├── hooks/
     │   │   │   ├── useCamera.ts            # User media webcam permissions & stream hook
     │   │   │   ├── useFaceCaptureSession.ts # 3-angle multi-frame enrolment state machine
-    │   │   │   ├── useFaceDetection.ts     # MediaPipe landmark detection hook
+    │   │   │   ├── useFaceDetection.ts     # SCRFD live multi-face detector with MediaPipe fallback
     │   │   │   └── useRegisterStudentFace.ts# Vector submission & database save mutation
     │   │   └── components/
     │   │       ├── CameraPreview.tsx       # Live enrolment camera viewfinder
@@ -225,6 +229,7 @@ SRNHS-WEBAPP/
         ├── RecognitionAdapter.test.ts      # Tests for Supabase / Mock recognition adapters
         ├── authHardening.test.ts           # Tests for role-based authentication & route security
         ├── faceNetMatcher.test.ts          # Tests for client-side cosine similarity matching
+        ├── faceTracking.test.ts            # Tests for multi-face tracking and overlay geometry
         └── tempAccess.test.ts              # Tests for QR temporary access pass logic
 ```
 
