@@ -1,1 +1,0 @@
-import"./index-B4sQNSv5.js";const a=[.22,1,.36,1],i={hidden:{opacity:0},show:{opacity:1,transition:{staggerChildren:.08,delayChildren:.06}}},o={hidden:{opacity:0,y:16},show:{opacity:1,y:0,transition:{duration:.45,ease:a}}};export{o as f,i as s};

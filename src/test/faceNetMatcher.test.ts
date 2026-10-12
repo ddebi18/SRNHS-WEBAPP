@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computeCosineSimilarity,
   deserializeFaceDescriptor,
+  deserializeFaceNetDescriptor,
   euclideanDistance,
   evaluateFacePartConsistency,
   findDuplicateStudentId,
@@ -139,5 +140,10 @@ describe('FaceNet matcher', () => {
     expect(deserializeFaceDescriptor([0.1, 0.2])).toBeInstanceOf(Float32Array);
     expect(deserializeFaceDescriptor('[0.1, 0.2]')).toBeInstanceOf(Float32Array);
     expect(deserializeFaceDescriptor('not-json')).toBeNull();
+  });
+
+  it('rejects persisted vectors that are not 128-dimensional FaceNet descriptors', () => {
+    expect(deserializeFaceNetDescriptor(Array(128).fill(0.1))).toHaveLength(128);
+    expect(deserializeFaceNetDescriptor([0.1, 0.2])).toBeNull();
   });
 });

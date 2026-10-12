@@ -55,6 +55,11 @@ export function deserializeFaceDescriptor(value: unknown): Float32Array | null {
   return new Float32Array(numbers);
 }
 
+export function deserializeFaceNetDescriptor(value: unknown): Float32Array | null {
+  const descriptor = deserializeFaceDescriptor(value);
+  return descriptor?.length === 128 ? descriptor : null;
+}
+
 export interface FaceNetMatchResult {
   label: string;
   distance: number;

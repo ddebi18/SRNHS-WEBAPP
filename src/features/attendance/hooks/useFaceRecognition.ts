@@ -11,7 +11,7 @@ import {
   scoreFaceNetMatch,
   findDuplicateStudentId,
   isSameEnrolledPerson,
-  deserializeFaceDescriptor,
+  deserializeFaceNetDescriptor,
   type LabeledDescriptors,
 } from '../lib/faceNetMatcher';
 import {
@@ -126,7 +126,7 @@ export function useFaceRecognition(
   const faceTracksRef = useRef<FaceRecognitionTrack[]>([]);
   const nextFaceTrackIdRef = useRef(1);
   const processingRef = useRef(false);
-  const lastMatchResultRef = useRef<{ reason: string; distance: number } | null>(null);
+  const lastMatchResultRef = useRef<{ reason: string; distance: number; secondDistance: number } | null>(null);
   const lastBoxRef = useRef<FaceRecognitionBox | null>(null);
 
   const isLiveRef = useRef(false);
@@ -171,7 +171,11 @@ export function useFaceRecognition(
 
   const resolveMatch = useCallback((descriptor: Float32Array): RecognizedStudent | null => {
     const result = scoreFaceNetMatch(descriptor, galleryRef.current);
-    lastMatchResultRef.current = { reason: result.reason, distance: result.distance };
+    lastMatchResultRef.current = {
+      reason: result.reason,
+      distance: result.distance,
+      secondDistance: result.secondDistance,
+    };
     if (!result.accepted) return null;
     const student = studentsRef.current.find((s: any) => s.id === result.label);
     if (!student) return null;
@@ -302,10 +306,11 @@ export function useFaceRecognition(
             student.faceDescriptors.length > 0
           ) {
             const floats = student.faceDescriptors
-              .map(deserializeFaceDescriptor)
+              .map(deserializeFaceNetDescriptor)
               .filter((descriptor): descriptor is Float32Array => descriptor !== null);
-            if (floats.length === 0) return null;
-            return new faceapi.LabeledFaceDescriptors(student.id, floats);
+            if (floats.length > 0) {
+              return new faceapi.LabeledFaceDescriptors(student.id, floats);
+            }
           }
 
           const photoUrlSet = new Set<string>();
@@ -347,7 +352,11 @@ export function useFaceRecognition(
         galleryRef.current = toLabeledGallery(labeledDescriptors);
         setIsLoading(false);
         setIsReady(true);
-        const readyMsg = `Ready — FaceNet scanning ${labeledDescriptors.length} student(s), threshold ${FACENET_DISTANCE_THRESHOLD}`;
+        const descriptorCount = labeledDescriptors.reduce(
+          (total, entry) => total + entry.descriptors.length,
+          0
+        );
+        const readyMsg = `Ready — FaceNet scanning ${labeledDescriptors.length} student(s), ${descriptorCount} descriptors, threshold ${FACENET_DISTANCE_THRESHOLD}`;
         setDiagnosticInfo(readyMsg);
 
         let scrfdSession: Awaited<ReturnType<typeof getScrfdSession>> | null = null;
@@ -571,7 +580,14 @@ export function useFaceRecognition(
                 : `Detected ${detections.length} face(s); identifying...`
             );
             setDiagnosticInfo(
-              `Detected ${detections.length} face(s); recognized ${uniqueStudents.length}.`
+              `Detected ${detections.length} face(s); recognized ${uniqueStudents.length}. ` +
+              (lastMatchResultRef.current
+                ? `Match ${lastMatchResultRef.current.reason}; nearest distance ${
+                    Number.isFinite(lastMatchResultRef.current.distance)
+                      ? lastMatchResultRef.current.distance.toFixed(3)
+                      : 'n/a'
+                  } (limit ${FACENET_DISTANCE_THRESHOLD}).`
+                : '')
             );
             setIsLive(uniqueStudents.length > 0);
             isLiveRef.current = uniqueStudents.length > 0;
