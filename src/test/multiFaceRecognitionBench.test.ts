@@ -99,7 +99,7 @@ function runMultiFaceBench(faceCount: number): BenchResult {
   }));
 
   // ── Build per-frame "live" descriptors (simulating webcam frames) ────
-  const liveDescriptors = gallery.map((entry, i) =>
+  const liveDescriptors = gallery.map(entry =>
     perturbDescriptor(entry.descriptors[0] as Float32Array)
   );
 
@@ -109,8 +109,6 @@ function runMultiFaceBench(faceCount: number): BenchResult {
     stabilityCount: number;
     confirmedStudentId: string | null;
   })[] = [];
-  let nextTrackId = 1;
-
   // ── Per-face timing accumulators ─────────────────────────────────────
   const perFace: BenchResult['perFace'] = gallery.map(entry => ({
     label: entry.label,
