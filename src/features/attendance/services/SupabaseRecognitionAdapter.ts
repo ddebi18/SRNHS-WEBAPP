@@ -3,6 +3,7 @@ import { RecognitionEvent, EventType } from '@/types/domain.types';
 import { supabase } from '@/lib/supabase';
 import { mockRecognitionAdapter } from './MockRecognitionAdapter';
 import { isValidUUID } from '@/features/faceRegistration/api';
+import { attendanceEventKey } from '../lib/attendanceDedup';
 
 class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
   subscribeToEvents(callback: (event: RecognitionEvent) => void): () => void {
@@ -41,11 +42,20 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
     };
   }
 
-  async getEvents(filters?: { studentId?: string; type?: EventType; limit?: number; cloudOnly?: boolean }): Promise<RecognitionEvent[]> {
+  async getEvents(filters?: {
+    studentId?: string;
+    type?: EventType;
+    limit?: number;
+    cloudOnly?: boolean;
+    strictCloud?: boolean;
+  }): Promise<RecognitionEvent[]> {
     // cloudOnly=true: skip localStorage entirely and return all Supabase rows unfiltered.
     // Used by the admin gate log so scans from every device are visible.
     const localEvents = filters?.cloudOnly ? [] : await mockRecognitionAdapter.getEvents(filters);
-    if (!supabase) return localEvents;
+    if (!supabase) {
+      if (filters?.strictCloud) throw new Error('Supabase is not configured; cloud attendance history is unavailable.');
+      return localEvents;
+    }
 
     try {
       let query = supabase.from('recognition_events').select(`
@@ -63,6 +73,9 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
 
       const { data, error } = await query;
       if (error) {
+        if (filters?.strictCloud) {
+          throw new Error(`Cloud attendance history could not be loaded: ${error.message}`);
+        }
         console.warn('Supabase fetch error, falling back to local events:', error.message);
         return localEvents;
       }
@@ -133,13 +146,13 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
       localEvents.forEach(e => {
         const key = (e.status && e.status !== 'matched')
           ? `security_${e.id}`
-          : `${e.student_id}_${e.event_type}_${new Date(e.captured_at).toDateString()}`;
+          : attendanceEventKey(e.student_id || e.student_lrn || '', e.event_type, e.captured_at);
         mergedMap.set(key, e);
       });
       dbEvents.forEach(e => {
         const key = (e.status && e.status !== 'matched')
           ? `security_${e.id}`
-          : `${e.student_id}_${e.event_type}_${new Date(e.captured_at).toDateString()}`;
+          : attendanceEventKey(e.student_id || e.student_lrn || '', e.event_type, e.captured_at);
         if (!mergedMap.has(key)) {
           mergedMap.set(key, e);
         }
@@ -149,6 +162,7 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
       mergedList.sort((a, b) => new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime());
       return filters?.limit ? mergedList.slice(0, filters.limit) : mergedList;
     } catch (err) {
+      if (filters?.strictCloud) throw err;
       console.warn('Supabase network error, fallback to local events:', err);
       return localEvents;
     }
@@ -237,6 +251,13 @@ class SupabaseRecognitionAdapterImpl implements RecognitionAdapter {
       .insert(insertPayload);
 
     if (insertErr) {
+      if (
+        insertErr.code === '23505' &&
+        insertErr.message.includes('recognition_events_student_event_manila_day_uidx')
+      ) {
+        console.info('[Supabase] Duplicate daily attendance event suppressed by the database.');
+        return localEvent;
+      }
       throw new Error(`Cloud gate log failed; the scan remains local only: ${insertErr.message}`);
     }
 

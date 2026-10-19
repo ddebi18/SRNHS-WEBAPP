@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, AlertCircle } from 'lucide-react';
-import { Student } from '../types';
+import { CaptureAngle, Student } from '../types';
 import { useCamera } from '../hooks/useCamera';
 import { useFaceDetection } from '../hooks/useFaceDetection';
 import { useFaceCaptureSession } from '../hooks/useFaceCaptureSession';
@@ -35,6 +35,9 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
     capturedFrames,
     consentConfirmed,
     isAllCaptured,
+    hasValidDescriptor,
+    isValidatingCapture,
+    captureErrors,
     setConsentConfirmed,
     captureCurrentAngle,
     retakeAngle,
@@ -89,10 +92,13 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   const handleSubmit = async () => {
     if (!student) return;
 
-    const framesArray: { angle: any; blob: Blob }[] = [];
+    const framesArray: { angle: CaptureAngle; blob: Blob }[] = [];
     if (capturedFrames.front) framesArray.push({ angle: 'front', blob: capturedFrames.front.blob });
     if (capturedFrames.left)  framesArray.push({ angle: 'left',  blob: capturedFrames.left.blob });
     if (capturedFrames.right) framesArray.push({ angle: 'right', blob: capturedFrames.right.blob });
+    const faceDescriptors = framesArray
+      .map(frame => capturedFrames[frame.angle]?.descriptor)
+      .filter((descriptor): descriptor is number[] => Boolean(descriptor));
 
     try {
       const res = await submit({
@@ -100,6 +106,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
         sectionId: student.sectionId,
         frames: framesArray,
         consentConfirmed,
+        faceDescriptors: faceDescriptors.length > 0 ? faceDescriptors : undefined,
       });
 
       if (res.success) {
@@ -170,12 +177,23 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               <span>{submitError}</span>
             </div>
           )}
+          {Object.entries(captureErrors).length > 0 && (
+            <div role="alert" className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 font-semibold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>
+                {Object.entries(captureErrors).map(([angle, reason]) =>
+                  `${angle[0]?.toUpperCase()}${angle.slice(1)}: ${reason}`
+                ).join('. ')}. Improve lighting, keep the full face visible, and turn only slightly. Retake failed angles if needed.
+              </span>
+            </div>
+          )}
 
           {/* Step Progress Dots */}
           <CaptureProgressDots
             currentStep={currentStep}
             capturedFrames={capturedFrames}
             onStepClick={goToStep}
+            disabled={isValidatingCapture}
           />
 
           {/* Liveness Step Banner */}
@@ -206,6 +224,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             capturedFrames={capturedFrames}
             activeAngle={activeAngle}
             onRetake={retakeAngle}
+            disabled={isValidatingCapture}
           />
 
           {/* Action Controls */}
@@ -215,7 +234,9 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             isFaceDetected={isFaceDetected}
             isCentered={isCentered}
             isAllCaptured={isAllCaptured}
+            hasValidDescriptor={hasValidDescriptor}
             isSubmitting={isSubmitting}
+            isValidatingCapture={isValidatingCapture}
             onCapture={handleCaptureFrame}
             onSubmit={handleSubmit}
             onCancel={handleClose}

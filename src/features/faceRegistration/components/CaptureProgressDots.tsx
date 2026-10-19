@@ -8,12 +8,14 @@ interface CaptureProgressDotsProps {
   currentStep: SessionStep;
   capturedFrames: Record<CaptureAngle, CapturedFrame | null>;
   onStepClick: (step: SessionStep) => void;
+  disabled?: boolean;
 }
 
 export const CaptureProgressDots: React.FC<CaptureProgressDotsProps> = ({
   currentStep,
   capturedFrames,
   onStepClick,
+  disabled = false,
 }) => {
   const steps: { key: SessionStep; label: string; shortLabel: string; angle?: CaptureAngle }[] = [
     { key: 'front',  label: 'Front',  shortLabel: 'Front',  angle: 'front' },
@@ -34,6 +36,7 @@ export const CaptureProgressDots: React.FC<CaptureProgressDotsProps> = ({
               key={s.key}
               type="button"
               onClick={() => onStepClick(s.key)}
+              disabled={disabled}
               className={cn(
                 'flex items-center justify-center gap-1 sm:gap-1.5 py-1.5 px-1 sm:px-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all border min-w-0 cursor-pointer',
                 isCurrent
@@ -57,4 +60,3 @@ export const CaptureProgressDots: React.FC<CaptureProgressDotsProps> = ({
     </div>
   );
 };
-

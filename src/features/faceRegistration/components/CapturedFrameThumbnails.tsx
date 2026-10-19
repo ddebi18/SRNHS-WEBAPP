@@ -7,12 +7,14 @@ interface CapturedFrameThumbnailsProps {
   capturedFrames: Record<CaptureAngle, CapturedFrame | null>;
   activeAngle: CaptureAngle | 'review';
   onRetake: (angle: CaptureAngle) => void;
+  disabled?: boolean;
 }
 
 export const CapturedFrameThumbnails: React.FC<CapturedFrameThumbnailsProps> = ({
   capturedFrames,
   activeAngle,
   onRetake,
+  disabled = false,
 }) => {
   const angles: { key: CaptureAngle; label: string }[] = [
     { key: 'front', label: 'Front View' },
@@ -54,6 +56,7 @@ export const CapturedFrameThumbnails: React.FC<CapturedFrameThumbnailsProps> = (
                   <button
                     type="button"
                     onClick={() => onRetake(key)}
+                    disabled={disabled}
                     title={`Retake ${label}`}
                     className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 text-white text-xs font-bold backdrop-blur-xs"
                   >
@@ -72,6 +75,7 @@ export const CapturedFrameThumbnails: React.FC<CapturedFrameThumbnailsProps> = (
               <button
                 type="button"
                 onClick={() => onRetake(key)}
+                disabled={disabled}
                 className="text-[10px] font-bold text-amber-900 dark:text-amber-300 hover:underline flex items-center gap-1"
               >
                 <RefreshCw className="w-2.5 h-2.5" /> Retake Angle

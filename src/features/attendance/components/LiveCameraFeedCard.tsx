@@ -17,10 +17,12 @@ import { useFaceDetection } from '@/features/faceRegistration/hooks/useFaceDetec
 import { useFaceRecognition } from '../hooks/useFaceRecognition';
 import { getRecognitionStatusText } from '../lib/recognitionStatus';
 import { MIN_ATTENDANCE_LOG_CONFIDENCE } from '../lib/faceNetMatcher';
+import { attendanceEventKey, reserveAttendanceEvent } from '../lib/attendanceDedup';
 import { mapVideoFaceBoxToViewport, type VideoFaceBox } from '@/lib/faceOverlayGeometry';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
 import type { EventType } from '@/types/domain.types';
+import { isSupabaseConfigured } from '@/lib/supabase';
 
 interface LiveCameraFeedCardProps {
   className?: string;
@@ -37,6 +39,8 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     error?: string;
   } | null>(null);
   const [dailyCompletedMap, setDailyCompletedMap] = useState<Map<string, string>>(new Map());
+  const [dailyHistoryReady, setDailyHistoryReady] = useState(false);
+  const [dailyHistoryError, setDailyHistoryError] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [streamState, setStreamState] = useState<'standby' | 'connecting' | 'live' | 'error'>('standby');
@@ -145,12 +149,13 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
       ? mapVideoFaceBoxToViewport(
           box,
           { width: viewport.width, height: viewport.height },
-          isFullscreen ? 'contain' : 'cover'
+          isFullscreen ? 'contain' : 'cover',
+          true
         )
       : null;
     if (!mapped) {
       return {
-        left: `${(box.x / box.videoWidth) * 100}%`,
+        left: `${100 - ((box.x + box.width) / box.videoWidth) * 100}%`,
         top: `${(box.y / box.videoHeight) * 100}%`,
         width: `${(box.width / box.videoWidth) * 100}%`,
         height: `${(box.height / box.videoHeight) * 100}%`,
@@ -200,32 +205,43 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   // Sync daily completed Time-In and Time-Out events (enforcing once per day per student)
   useEffect(() => {
     const syncDailyLogs = (events: any[]) => {
-      const todayStr = new Date().toDateString();
       const map = new Map<string, string>();
       events.forEach(e => {
-        if (new Date(e.captured_at).toDateString() === todayStr) {
+        if (attendanceEventKey(e.student_id || e.student_lrn || '', e.event_type, e.captured_at) ===
+            attendanceEventKey(e.student_id || e.student_lrn || '', e.event_type, new Date())) {
           const time = new Date(e.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          if (e.student_id) map.set(`${e.student_id}_${e.event_type}`, time);
-          if (e.student_lrn) map.set(`${e.student_lrn}_${e.event_type}`, time);
+          if (e.student_id) map.set(attendanceEventKey(e.student_id, e.event_type, e.captured_at), time);
+          if (e.student_lrn) map.set(attendanceEventKey(e.student_lrn, e.event_type, e.captured_at), time);
         }
       });
       setDailyCompletedMap(map);
+      setDailyHistoryError(false);
+      setDailyHistoryReady(true);
     };
 
-    supabaseRecognitionAdapter.getEvents().then(syncDailyLogs);
+    const fetchAttendanceHistory = () => supabaseRecognitionAdapter.getEvents({
+      strictCloud: isSupabaseConfigured,
+    });
+    fetchAttendanceHistory().then(syncDailyLogs).catch(error => {
+      setDailyHistoryError(true);
+      console.error('Attendance history could not be loaded; automatic camera logging is paused:', error);
+    });
     const unsub = supabaseRecognitionAdapter.subscribeToEvents(() => {
-      supabaseRecognitionAdapter.getEvents().then(syncDailyLogs);
+      fetchAttendanceHistory().then(syncDailyLogs).catch(error => {
+        setDailyHistoryError(true);
+        console.error('Attendance history refresh failed; automatic camera logging is paused:', error);
+      });
     });
     return () => unsub();
   }, []);
 
   useEffect(() => {
-    if (!isLive) return;
+    if (!isLive || !dailyHistoryReady || dailyHistoryError) return;
 
     for (const student of liveMatchedStudents) {
       if (student.confidence < MIN_ATTENDANCE_LOG_CONFIDENCE) continue;
 
-      const logKey = `${student.id}_${scanMode}`;
+      const logKey = attendanceEventKey(student.id, scanMode, new Date());
       const alreadyLoggedTime = dailyCompletedMap.get(logKey);
 
       if (alreadyLoggedTime) {
@@ -244,11 +260,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
         continue;
       }
 
-      const lastLoggedAt = loggedMatchesRef.current.get(logKey) || 0;
-      // 15 seconds cooldown to prevent rapid trigger during transition
-      if (Date.now() - lastLoggedAt < 15_000) continue;
-
-      loggedMatchesRef.current.set(logKey, Date.now());
+      if (!reserveAttendanceEvent(loggedMatchesRef.current, logKey)) continue;
       supabaseRecognitionAdapter.logRecognitionEvent({
         student_id: student.id,
         student_name: student.name,
@@ -279,7 +291,16 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
         setTimeout(() => setLastScanNotice(null), 6000);
       });
     }
-  }, [liveMatchedStudents, isLive, scanMode, currentCam.id, currentCam.name, dailyCompletedMap]);
+  }, [
+    liveMatchedStudents,
+    isLive,
+    scanMode,
+    currentCam.id,
+    currentCam.name,
+    dailyCompletedMap,
+    dailyHistoryReady,
+    dailyHistoryError,
+  ]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -528,6 +549,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                   'absolute inset-0 z-0 w-full h-full',
                   isFullscreen ? 'object-contain' : 'object-cover'
                 )}
+                style={{ transform: 'scaleX(-1)' }}
               />
             )}
 
@@ -552,7 +574,15 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 >
                   {face.student
                     ? `${face.student.name} · ${scanMode === 'entry' ? 'Time-In' : 'Time-Out'}`
-                    : face.isMatching ? 'Identifying…' : 'Unknown Face'}
+                    : face.status === 'unknown'
+                      ? 'Unknown Face'
+                      : face.status === 'quality_rejected'
+                        ? 'Face quality rejected'
+                        : face.status === 'processing_failed'
+                          ? 'Recognition failed · retrying'
+                          : face.isMatching
+                            ? 'Identifying…'
+                            : 'Scanning face…'}
                 </span>
               </div>
             ))}
@@ -576,12 +606,12 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               return (
                 <div
                   key={`multi_face_feed_${idx}`}
-                  className="absolute z-10 border-2 border-rose-400 rounded-lg pointer-events-none transition-all duration-150 shadow-[0_0_12px_rgba(244,63,94,0.35)]"
+                  className="absolute z-10 border-2 border-amber-400 rounded-lg pointer-events-none transition-all duration-150 shadow-[0_0_12px_rgba(251,191,36,0.35)]"
                   style={getOverlayStyle(b)}
                 >
-                  <span className="absolute -top-5 left-0 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-rose-500 text-white shadow flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                    Unknown Face
+                  <span className="absolute -top-5 left-0 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-400 text-slate-950 shadow flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
+                    Scanning Face…
                   </span>
                 </div>
               );
@@ -590,7 +620,6 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             {liveRecognizedFaces.length === 0 && activeBox && (() => {
               const isHighConfidence = Boolean(liveMatchedStudent && liveMatchedStudent.confidence >= 0.50);
               const isRecognized = Boolean(liveMatchedStudent);
-              const isDetecting = !isRecognized && (isAnalyzing || !isRecognitionReady);
               const isSpoofWarning = isRecognized && !isLive;
 
               return (
@@ -625,16 +654,11 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                         Verifying Liveness…
                       </>
                     ) : isRecognized ? (
-                      dailyCompletedMap.has(`${liveMatchedStudent!.id}_${scanMode}`)
+                      dailyCompletedMap.has(attendanceEventKey(liveMatchedStudent!.id, scanMode, new Date()))
                         ? `${liveMatchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
                         : `${liveMatchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In' : 'Time-Out'}`
-                    ) : isDetecting ? (
-                      <>
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
-                        Scanning Face…
-                      </>
                     ) : (
-                      'Unknown Face'
+                      'Scanning Face…'
                     )}
                   </span>
                 </div>
@@ -687,7 +711,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             {/* Facial landmark matching guidance */}
             {hasVideoSource && isVideoReady && isAnyFaceDetected && qualityGuidance && (
               <div className={cn(
-                "relative z-10 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium flex items-center justify-between gap-2 shadow-md backdrop-blur-sm transition-all",
+                "absolute top-14 inset-x-2.5 sm:inset-x-4 z-10 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium flex items-center justify-between gap-2 shadow-md backdrop-blur-sm transition-all",
                 qualityPassed && isLive
                   ? "bg-emerald-950/85 border-emerald-500/50 text-emerald-200"
                   : "bg-amber-950/85 border-amber-500/50 text-amber-200"
@@ -704,7 +728,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               <div className="min-w-0 flex items-center gap-2 text-slate-300 max-w-full truncate">
                 <ShieldCheck className={cn('w-3.5 h-3.5 shrink-0', recognitionError ? 'text-amber-400' : isLive ? 'text-green-400' : 'text-amber-400')} />
                 <span className="truncate">
-                  {recognitionError
+                  {dailyHistoryError
+                    ? 'Attendance history unavailable; automatic logging paused'
+                    : recognitionError
                     ? 'Enrollment required for recognition'
                     : detectorError
                     ? `Error: ${detectorError}`

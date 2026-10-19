@@ -38,6 +38,7 @@ export interface CapturedFrame {
   id: string;
   angle: CaptureAngle;
   blob: Blob;
+  descriptor?: number[];
   previewUrl: string; // object URL for thumbnail display
   capturedAt: string;
 }

@@ -2,6 +2,7 @@ import { RecognitionAdapter } from './RecognitionAdapter';
 import { RecognitionEvent, EventType } from '@/types/domain.types';
 import { getStoredStudents } from '@/features/faceRegistration/api';
 import { activeNotificationAdapter } from '@/features/notifications/services';
+import { attendanceDayKey, attendanceEventKey } from '../lib/attendanceDedup';
 
 export const INITIAL_MOCK_EVENTS: RecognitionEvent[] = [];
 
@@ -16,9 +17,8 @@ function deduplicateEvents(events: RecognitionEvent[]): RecognitionEvent[] {
     }
     // Enforce at most 1 entry and 1 exit per student per calendar date
     if (e.event_type === 'entry' || e.event_type === 'exit') {
-      const dateStr = new Date(e.captured_at).toDateString();
       const id = e.student_id || e.student_lrn || e.student_name;
-      const key = `${id}_${e.event_type}_${dateStr}`;
+      const key = attendanceEventKey(id || '', e.event_type, e.captured_at);
       if (seen.has(key)) return false;
       seen.add(key);
     }
@@ -132,7 +132,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     const guardianPhone = student?.guardianPhone || '+639171234567';
     const locationName = eventData.room_name || 'Main Gate Turnstile 01';
     const eventType = eventData.event_type || 'entry';
-    const todayDateStr = new Date().toDateString();
+    const todayDateKey = attendanceDayKey(new Date());
 
     // ── Enforce 1 Time-In and 1 Time-Out per student per day (only for matched events) ───────────
     if (!isUnidentifiedOrAmbiguous && (eventType === 'entry' || eventType === 'exit')) {
@@ -141,7 +141,7 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
           (e.student_lrn && studentLrn && e.student_lrn === studentLrn) ||
           (e.student_name && studentName && e.student_name.toLowerCase() === studentName.toLowerCase());
         const isSameType = e.event_type === eventType;
-        const isToday = new Date(e.captured_at).toDateString() === todayDateStr;
+        const isToday = attendanceDayKey(e.captured_at) === todayDateKey;
         return isSameStudent && isSameType && isToday;
       });
 

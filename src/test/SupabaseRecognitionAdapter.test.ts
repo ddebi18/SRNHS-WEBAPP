@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockSupabaseState = vi.hoisted(() => ({
   insertPayload: null as Record<string, unknown> | null,
-  insertError: null as { message: string } | null,
+  insertError: null as { message: string; code?: string } | null,
+  queryError: null as { message: string } | null,
 }));
 
 vi.mock('@/lib/supabase', () => ({
@@ -13,6 +14,9 @@ vi.mock('@/lib/supabase', () => ({
         mockSupabaseState.insertPayload = payload;
         return { error: mockSupabaseState.insertError };
       },
+      select: () => ({
+        order: async () => ({ data: [], error: mockSupabaseState.queryError }),
+      }),
     }),
   },
 }));
@@ -46,6 +50,7 @@ describe('SupabaseRecognitionAdapter gate logging', () => {
   beforeEach(() => {
     mockSupabaseState.insertPayload = null;
     mockSupabaseState.insertError = null;
+    mockSupabaseState.queryError = null;
     vi.spyOn(mockRecognitionAdapter, 'simulateScan').mockResolvedValue(localEvent);
   });
 
@@ -75,6 +80,15 @@ describe('SupabaseRecognitionAdapter gate logging', () => {
     expect(mockRecognitionAdapter.simulateScan).toHaveBeenCalledOnce();
   });
 
+  it('treats a database-suppressed duplicate daily attendance event as already recorded', async () => {
+    mockSupabaseState.insertError = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "recognition_events_student_event_manila_day_uidx"',
+    };
+
+    await expect(supabaseRecognitionAdapter.logRecognitionEvent(eventData)).resolves.toEqual(localEvent);
+  });
+
   it('does not silently treat a local-only student ID as a cloud gate log', async () => {
     await expect(supabaseRecognitionAdapter.logRecognitionEvent({
       ...eventData,
@@ -82,5 +96,12 @@ describe('SupabaseRecognitionAdapter gate logging', () => {
     })).rejects.toThrow('student has no valid cloud record ID');
 
     expect(mockSupabaseState.insertPayload).toBeNull();
+  });
+
+  it('surfaces cloud history failure when strict loading is required for attendance deduplication', async () => {
+    mockSupabaseState.queryError = { message: 'network unavailable' };
+
+    await expect(supabaseRecognitionAdapter.getEvents({ strictCloud: true }))
+      .rejects.toThrow('Cloud attendance history could not be loaded: network unavailable');
   });
 });

@@ -9,7 +9,9 @@ interface CaptureControlsProps {
   isFaceDetected: boolean;
   isCentered: boolean;
   isAllCaptured: boolean;
+  hasValidDescriptor: boolean;
   isSubmitting: boolean;
+  isValidatingCapture: boolean;
   onCapture: () => void;
   onSubmit: () => void;
   onCancel: () => void;
@@ -21,13 +23,15 @@ export const CaptureControls: React.FC<CaptureControlsProps> = ({
   isFaceDetected,
   isCentered: _isCentered,
   isAllCaptured,
+  hasValidDescriptor,
   isSubmitting,
+  isValidatingCapture,
   onCapture,
   onSubmit,
   onCancel,
 }) => {
   const needsCenteredFace = currentStep === 'front';
-  const isCaptureDisabled = !consentConfirmed || !isFaceDetected || (needsCenteredFace && !_isCentered);
+  const isCaptureDisabled = !consentConfirmed || !isFaceDetected || (needsCenteredFace && !_isCentered) || isValidatingCapture;
 
   return (
     <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
@@ -54,16 +58,16 @@ export const CaptureControls: React.FC<CaptureControlsProps> = ({
             )}
           >
             <Camera className="w-4 h-4" />
-            Capture {currentStep.toUpperCase()} Angle
+            {isValidatingCapture ? 'Checking capture…' : `Capture ${currentStep.toUpperCase()} Angle`}
           </button>
         ) : (
           <button
             type="button"
             onClick={onSubmit}
-            disabled={!isAllCaptured || !consentConfirmed || isSubmitting}
+            disabled={!isAllCaptured || !hasValidDescriptor || !consentConfirmed || isSubmitting}
             className={cn(
               'px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 shadow-md transition-all cursor-pointer',
-              !isAllCaptured || !consentConfirmed || isSubmitting
+              !isAllCaptured || !hasValidDescriptor || !consentConfirmed || isSubmitting
                 ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
                 : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white hover:brightness-110 active:scale-95 shadow-md shadow-emerald-900/20'
             )}

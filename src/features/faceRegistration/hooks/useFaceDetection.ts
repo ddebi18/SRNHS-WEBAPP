@@ -280,6 +280,10 @@ export function useFaceDetection(
         const startedAt = performance.now();
         await checkFace();
         if (cancelled) return;
+        console.debug('[FaceDetection] Frame diagnostics', {
+          detectedBoxes: allFaceBoxesRef.current.length,
+          durationMs: performance.now() - startedAt,
+        });
         const delay = Math.max(0, LIVE_FACE_SCAN_INTERVAL_MS - (performance.now() - startedAt));
         intervalRef.current = setTimeout(() => {
           void runDetectionLoop();

@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { FaceRegistrationPayload, FaceRegistrationResult } from '../types';
 import { getStoredStudents, submitFaceRegistration } from '../api';
-import { extractDescriptorsFromBlobs } from '@/features/attendance/lib/faceNetEngine';
+import {
+  FACE_DESCRIPTOR_EXTRACTION_FAILURE_MESSAGES,
+  extractDescriptorsFromBlobsWithDiagnostics,
+} from '@/features/attendance/lib/faceNetEngine';
 import { findDuplicateStudentId } from '@/features/attendance/lib/faceNetMatcher';
 
 export interface UseRegisterStudentFaceReturn {
@@ -30,9 +33,17 @@ export function useRegisterStudentFace(): UseRegisterStudentFaceReturn {
     try {
       let faceDescriptors = payload.faceDescriptors;
       if (!faceDescriptors || faceDescriptors.length === 0) {
-        const extracted = await extractDescriptorsFromBlobs(payload.frames.map(frame => frame.blob));
+        const attempts = await extractDescriptorsFromBlobsWithDiagnostics(payload.frames.map(frame => frame.blob));
+        const extracted = attempts.flatMap(attempt => attempt.descriptor ? [attempt.descriptor] : []);
         if (extracted.length === 0) {
-          throw new Error('No clear FaceNet embedding could be extracted. Recapture a closer, well-lit face.');
+          const reasons = attempts.map((attempt, index) => (
+            `${payload.frames[index]?.angle ?? `Frame ${index + 1}`}: ` +
+            FACE_DESCRIPTOR_EXTRACTION_FAILURE_MESSAGES[attempt.failure ?? 'inference_failed']
+          ));
+          throw new Error(
+            `No FaceNet embedding could be extracted. ${reasons.join('; ')}. ` +
+            'Retake the indicated angle(s); keep the full face visible, close, and evenly lit.'
+          );
         }
         faceDescriptors = extracted.map(d => Array.from(d));
       }

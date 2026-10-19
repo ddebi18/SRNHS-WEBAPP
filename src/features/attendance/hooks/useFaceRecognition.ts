@@ -12,6 +12,7 @@ import {
   findDuplicateStudentId,
   isSameEnrolledPerson,
   deserializeFaceNetDescriptor,
+  type FaceNetMatchResult,
   type LabeledDescriptors,
 } from '../lib/faceNetMatcher';
 import {
@@ -23,14 +24,18 @@ import {
   loadImage,
   type FaceDetectionRegion,
   type FaceNetLiveDetection,
+  type FaceRegionRecognitionResult,
 } from '../lib/faceNetEngine';
 import { assignFaceDetectionTracks } from '../lib/faceTracking';
+import { mergeFaceRecognitionFallback } from '../lib/faceRecognitionFallback';
+import { releaseFaceScan, tryAcquireFaceScan } from '../lib/faceScanLock';
 
 export type { RecognitionStatusInput } from '../lib/recognitionStatus';
 export { computeCosineSimilarity, computeCosineDistance } from '../lib/faceNetMatcher';
 
 const SCAN_INTERVAL_MS = 200;
 const MATCH_SWITCH_STABILITY_FRAMES = 5;
+const FALLBACK_RETRY_INTERVAL_MS = 1000;
 
 export interface RecognizedStudent {
   id: string;
@@ -59,6 +64,15 @@ export interface RecognizedFaceItem {
   box: FaceRecognitionBox;
   isLive: boolean;
   isMatching: boolean;
+  status: 'scanning' | 'recognized' | 'unknown' | 'quality_rejected' | 'processing_failed';
+  diagnostic: {
+    reason?: string;
+    matchReason?: FaceNetMatchResult['reason'];
+    distance?: number;
+    cropDurationMs?: number;
+    fallbackDurationMs?: number;
+    source?: 'crop' | 'full_frame_fallback';
+  };
   score?: number;
 }
 
@@ -126,6 +140,7 @@ export function useFaceRecognition(
   const faceTracksRef = useRef<FaceRecognitionTrack[]>([]);
   const nextFaceTrackIdRef = useRef(1);
   const processingRef = useRef(false);
+  const lastFallbackAttemptAtRef = useRef(0);
   const lastMatchResultRef = useRef<{ reason: string; distance: number; secondDistance: number } | null>(null);
   const lastBoxRef = useRef<FaceRecognitionBox | null>(null);
 
@@ -169,22 +184,22 @@ export function useFaceRecognition(
     }
   }, []);
 
-  const resolveMatch = useCallback((descriptor: Float32Array): RecognizedStudent | null => {
+  const resolveMatch = useCallback((descriptor: Float32Array) => {
     const result = scoreFaceNetMatch(descriptor, galleryRef.current);
     lastMatchResultRef.current = {
       reason: result.reason,
       distance: result.distance,
       secondDistance: result.secondDistance,
     };
-    if (!result.accepted) return null;
+    if (!result.accepted) return { student: null, result };
     const student = studentsRef.current.find((s: any) => s.id === result.label);
-    if (!student) return null;
-    return {
+    if (!student) return { student: null, result };
+    return { student: {
       id: student.id,
       name: student.name,
       studentNumber: student.studentNumber,
       confidence: result.confidence,
-    };
+    }, result };
   }, []);
 
   const assignCameraFaceToStudent = useCallback(async (targetStudentId?: string): Promise<boolean> => {
@@ -381,48 +396,90 @@ export function useFaceRecognition(
             !video ||
             galleryRef.current.length === 0 ||
             video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-            processingRef.current
+            !tryAcquireFaceScan(processingRef)
           ) {
             if (!cancelled) scheduleScan(SCAN_INTERVAL_MS);
             return;
           }
 
-          processingRef.current = true;
           try {
-            let detections: FaceNetLiveDetection[] = [];
+            const recognitionStartedAt = performance.now();
+            let regions: FaceDetectionRegion[] = [];
+            let regionResults: FaceRegionRecognitionResult[] = [];
+            let frameDetections: FaceNetLiveDetection[] = [];
+            let detectorDurationMs: number | null = null;
+            let fallbackDurationMs: number | null = null;
+            let fallbackFailure: string | null = null;
+
             if (detectedFaceBoxesRef) {
-              const regions = detectedFaceBoxesRef.current;
-              if (regions.length > 0) {
-                detections = await describeScrfdFaceRegions(video, [...regions]);
-              }
+              regions = [...detectedFaceBoxesRef.current];
             } else if (scrfdSession) {
               try {
-                const regions = await detectFacesWithScrfd(scrfdSession, video, 0.25, 0.4);
-                detections = await describeScrfdFaceRegions(video, regions);
-                if (detections.length < regions.length) {
-                  const supplementalDetections = await detectAllLiveFaces(video);
-                  for (const candidate of supplementalDetections) {
-                    const candidateCenterX = candidate.box.x + candidate.box.width / 2;
-                    const candidateCenterY = candidate.box.y + candidate.box.height / 2;
-                    const alreadyIncluded = detections.some(existing => {
-                      const existingCenterX = existing.box.x + existing.box.width / 2;
-                      const existingCenterY = existing.box.y + existing.box.height / 2;
-                      return Math.hypot(candidateCenterX - existingCenterX, candidateCenterY - existingCenterY) <
-                        Math.min(candidate.box.width, candidate.box.height) * 0.4;
-                    });
-                    if (!alreadyIncluded) detections.push(candidate);
-                  }
-                }
+                const detectionStartedAt = performance.now();
+                regions = await detectFacesWithScrfd(scrfdSession, video, 0.25, 0.4);
+                detectorDurationMs = performance.now() - detectionStartedAt;
+                regions = regions.map(({ x, y, width, height }) => ({ x, y, width, height }));
               } catch (scrfdScanError) {
                 console.warn('[FaceRecognition] SCRFD recognition scan failed; using FaceNet detectors:', scrfdScanError);
-                detections = await detectAllLiveFaces(video);
+                regions = [];
               }
-            } else {
-              detections = await detectAllLiveFaces(video);
             }
-            if (detections.length === 0) {
-              faceTracksRef.current = [];
+
+            if (regions.length > 0) {
+              const frameWidth = video.videoWidth || 640;
+              const frameHeight = video.videoHeight || 480;
+              setIsAnalyzing(true);
+              setRecognizedFaces(regions.map((region, index) => ({
+                id: `scan-${Math.round(performance.now())}-${index}`,
+                student: null,
+                box: { ...region, videoWidth: frameWidth, videoHeight: frameHeight },
+                isLive: true,
+                isMatching: false,
+                status: 'scanning',
+                diagnostic: {},
+              })));
+
+              regionResults = await describeScrfdFaceRegions(video, regions);
+              if (
+                regionResults.some(result => result.status === 'failed') &&
+                performance.now() - lastFallbackAttemptAtRef.current >= FALLBACK_RETRY_INTERVAL_MS
+              ) {
+                const fallbackStartedAt = performance.now();
+                lastFallbackAttemptAtRef.current = fallbackStartedAt;
+                try {
+                  const fallbackDetections = await detectAllLiveFaces(video);
+                  fallbackDurationMs = performance.now() - fallbackStartedAt;
+                  regionResults = mergeFaceRecognitionFallback(
+                    regionResults,
+                    fallbackDetections,
+                    fallbackDurationMs
+                  );
+                } catch (fallbackError) {
+                  fallbackDurationMs = performance.now() - fallbackStartedAt;
+                  fallbackFailure = fallbackError instanceof Error
+                    ? fallbackError.message
+                    : String(fallbackError);
+                  console.warn('[FaceRecognition] Full-frame fallback failed:', fallbackError);
+                }
+              }
+            } else if (!detectedFaceBoxesRef) {
+              const frameInferenceStartedAt = performance.now();
+              frameDetections = await detectAllLiveFaces(video);
+              detectorDurationMs = performance.now() - frameInferenceStartedAt;
+              regionResults = frameDetections.map(detection => ({
+                region: detection.box,
+                status: 'descriptor',
+                detection,
+                durationMs: detectorDurationMs ?? 0,
+                source: 'full_frame_fallback',
+              }));
+            } else {
               setRecognizedFaces([]);
+            }
+
+            const attempts = regionResults;
+            if (attempts.length === 0) {
+              faceTracksRef.current = [];
               setMatchedStudents([]);
               setMatchedStudent(null);
               setRecognitionBox(null);
@@ -441,9 +498,14 @@ export function useFaceRecognition(
             const nextTracks: FaceRecognitionTrack[] = [];
             const recognizedItems: RecognizedFaceItem[] = [];
             const timestamp = Date.now();
-            const matches = detections.map(detection => resolveMatch(detection.descriptor));
+            const decisions = attempts.map(attempt =>
+              attempt.status === 'descriptor'
+                ? resolveMatch(attempt.detection.descriptor)
+                : null
+            );
+            const matches = decisions.map(decision => decision?.student ?? null);
             const trackAssignments = assignFaceDetectionTracks(
-              detections.map(detection => detection.box),
+              attempts.map(attempt => attempt.status === 'descriptor' ? attempt.detection.box : attempt.region),
               faceTracksRef.current.map(track => ({
                 ...track,
                 studentId: track.confirmedStudent?.id ?? null,
@@ -453,10 +515,11 @@ export function useFaceRecognition(
             );
             const usedTracks = new Set<number>();
 
-            for (let detectionIndex = 0; detectionIndex < detections.length; detectionIndex++) {
-              const detection = detections[detectionIndex]!;
+            for (let detectionIndex = 0; detectionIndex < attempts.length; detectionIndex++) {
+              const attempt = attempts[detectionIndex]!;
+              const detection = attempt.status === 'descriptor' ? attempt.detection : null;
               const match = matches[detectionIndex] ?? null;
-              const bounds = detection.box;
+              const bounds = detection?.box ?? attempt.region;
               const box: FaceRecognitionBox = {
                 x: bounds.x,
                 y: bounds.y,
@@ -500,15 +563,23 @@ export function useFaceRecognition(
               track.lastSeenAt = timestamp;
               track.missedFrames = 0;
 
-              if (match && track.confirmedStudent?.id === match.id) {
+              if (
+                match &&
+                attempt.status === 'descriptor' &&
+                track.confirmedStudent?.id === match.id
+              ) {
                 const enrolledFace = galleryRef.current.find(entry => entry.label === match.id);
-                if (enrolledFace && isSameEnrolledPerson(detection.descriptor, enrolledFace.descriptors)) {
+                if (
+                  enrolledFace &&
+                  attempt.status === 'descriptor' &&
+                  isSameEnrolledPerson(attempt.detection.descriptor, enrolledFace.descriptors)
+                ) {
                   track.candidateStudentId = match.id;
                   track.stabilityCount = STABILITY_FRAMES_REQUIRED;
                   track.confirmedStudent = match;
                   track.pendingSwitch = false;
                 }
-              } else if (match) {
+              } else if (match && attempt.status === 'descriptor') {
                 const changingIdentity = track.pendingSwitch ||
                   Boolean(track.confirmedStudent && track.confirmedStudent.id !== match.id);
                 track.stabilityCount = track.candidateStudentId === match.id
@@ -525,7 +596,7 @@ export function useFaceRecognition(
                   track.confirmedStudent = null;
                   track.pendingSwitch = changingIdentity;
                 }
-              } else {
+              } else if (attempt.status === 'descriptor') {
                 track.candidateStudentId = '';
                 track.stabilityCount = 0;
                 track.confirmedStudent = null;
@@ -533,13 +604,37 @@ export function useFaceRecognition(
               }
 
               nextTracks.push(track);
+              const decision = decisions[detectionIndex];
+              const status: RecognizedFaceItem['status'] =
+                attempt.status === 'failed'
+                  ? 'processing_failed'
+                  : attempt.status === 'quality_rejected'
+                    ? 'quality_rejected'
+                    : track.confirmedStudent
+                      ? 'recognized'
+                      : match
+                        ? 'scanning'
+                        : 'unknown';
               recognizedItems.push({
                 id: track.id,
-                student: track.confirmedStudent,
+                student: status === 'recognized' ? track.confirmedStudent : null,
                 box,
                 isLive: true,
-                isMatching: !track.confirmedStudent && Boolean(track.candidateStudentId),
-                score: detection.score,
+                isMatching: status === 'scanning' && Boolean(track.candidateStudentId),
+                status,
+                diagnostic: {
+                  reason: attempt.status === 'descriptor'
+                    ? undefined
+                    : [attempt.reason, fallbackFailure].filter(Boolean).join('; ') || undefined,
+                  matchReason: decision?.result.reason,
+                  distance: decision?.result.distance,
+                  cropDurationMs: attempt.durationMs,
+                  fallbackDurationMs: attempt.status === 'descriptor' && attempt.source === 'full_frame_fallback'
+                    ? attempt.fallbackDurationMs
+                    : fallbackDurationMs ?? undefined,
+                  source: attempt.status === 'descriptor' ? attempt.source : undefined,
+                },
+                score: detection?.score,
               });
             }
 
@@ -549,18 +644,30 @@ export function useFaceRecognition(
               if (track.missedFrames <= 2) nextTracks.push(track);
             });
             faceTracksRef.current = nextTracks;
-            const primaryDetection = detections.reduce((largest, current) =>
-              current.box.width * current.box.height >
-                largest.box.width * largest.box.height
-                ? current
-                : largest
-            );
-            applyDetectionOverlay(primaryDetection, video);
-            const primaryLandmarks = primaryDetection.landmarks;
-            setNativeIOD(Math.round(Math.hypot(
-              primaryLandmarks[45]!.x - primaryLandmarks[36]!.x,
-              primaryLandmarks[45]!.y - primaryLandmarks[36]!.y
-            )));
+            const primaryDetection = attempts
+              .filter((attempt): attempt is Extract<FaceRegionRecognitionResult, { status: 'descriptor' }> =>
+                attempt.status === 'descriptor'
+              )
+              .reduce<FaceRegionRecognitionResult | null>((largest, current) =>
+                !largest || current.detection.box.width * current.detection.box.height >
+                  (largest.status === 'descriptor'
+                    ? largest.detection.box.width * largest.detection.box.height
+                    : 0)
+                  ? current
+                  : largest,
+                null
+              );
+            if (primaryDetection?.status === 'descriptor') {
+              applyDetectionOverlay(primaryDetection.detection, video);
+              const primaryLandmarks = primaryDetection.detection.landmarks;
+              setNativeIOD(Math.round(Math.hypot(
+                primaryLandmarks[45]!.x - primaryLandmarks[36]!.x,
+                primaryLandmarks[45]!.y - primaryLandmarks[36]!.y
+              )));
+            } else {
+              setNativeIOD(0);
+              setLandmarks(null);
+            }
             const confirmedStudents = recognizedItems
               .map(item => item.student)
               .filter((student): student is RecognizedStudent => student !== null);
@@ -576,11 +683,12 @@ export function useFaceRecognition(
             setQualityPassed(true);
             setQualityGuidance(
               uniqueStudents.length > 0
-                ? `Recognized ${uniqueStudents.length} of ${detections.length} detected face(s).`
-                : `Detected ${detections.length} face(s); identifying...`
+                ? `Recognized ${uniqueStudents.length} of ${attempts.length} detected face(s).`
+                : `Detected ${attempts.length} face(s); scanning ${recognizedItems.filter(item => item.status === 'scanning').length}.`
             );
             setDiagnosticInfo(
-              `Detected ${detections.length} face(s); recognized ${uniqueStudents.length}. ` +
+              `Detected ${attempts.length}; descriptors ${attempts.filter(attempt => attempt.status === 'descriptor').length}; ` +
+              `recognized ${uniqueStudents.length}; ` +
               (lastMatchResultRef.current
                 ? `Match ${lastMatchResultRef.current.reason}; nearest distance ${
                     Number.isFinite(lastMatchResultRef.current.distance)
@@ -589,14 +697,51 @@ export function useFaceRecognition(
                   } (limit ${FACENET_DISTANCE_THRESHOLD}).`
                 : '')
             );
+            console.debug('[FaceRecognition] Scan diagnostics', {
+              detectedBoxes: attempts.length,
+              descriptorSuccesses: attempts.filter(attempt => attempt.status === 'descriptor').length,
+              acceptedMatchCandidates: new Set(
+                decisions
+                  .map(decision => decision?.student?.id)
+                  .filter((studentId): studentId is string => Boolean(studentId))
+              ).size,
+              recognizedIdentities: uniqueStudents.length,
+              unknownFaces: recognizedItems.filter(item => item.status === 'unknown').length,
+              qualityRejectedFaces: recognizedItems.filter(item => item.status === 'quality_rejected').length,
+              processingFailures: recognizedItems.filter(item => item.status === 'processing_failed').length,
+              detectionOrFrameInferenceMs: detectorDurationMs,
+              fallbackDurationMs,
+              totalScanDurationMs: performance.now() - recognitionStartedAt,
+              faces: recognizedItems.map(item => ({
+                trackId: item.id,
+                box: { x: item.box.x, y: item.box.y, width: item.box.width, height: item.box.height },
+                status: item.status,
+                reason: item.diagnostic.reason,
+                cropDurationMs: item.diagnostic.cropDurationMs,
+                fallbackDurationMs: item.diagnostic.fallbackDurationMs,
+                source: item.diagnostic.source,
+                matchReason: item.diagnostic.matchReason,
+                distance: item.diagnostic.distance,
+              })),
+            });
             setIsLive(uniqueStudents.length > 0);
             isLiveRef.current = uniqueStudents.length > 0;
             setIsAnalyzing(recognizedItems.some(item => item.isMatching));
           } catch (scanError) {
             setIsAnalyzing(false);
+            const reason = scanError instanceof Error ? scanError.message : String(scanError);
+            setRecognizedFaces(current => current.map(item => item.status === 'scanning'
+              ? {
+                  ...item,
+                  status: 'processing_failed',
+                  isMatching: false,
+                  diagnostic: { ...item.diagnostic, reason },
+                }
+              : item
+            ));
             console.warn('[FaceRecognition] Live scan failed:', scanError);
           } finally {
-            processingRef.current = false;
+            releaseFaceScan(processingRef);
             if (!cancelled) {
               const delay = Math.max(0, SCAN_INTERVAL_MS - (performance.now() - scanStartedAt));
               scheduleScan(delay);
@@ -623,6 +768,7 @@ export function useFaceRecognition(
       galleryRef.current = [];
       faceTracksRef.current = [];
       processingRef.current = false;
+      lastFallbackAttemptAtRef.current = 0;
       isLiveRef.current = false;
       lastMatchResultRef.current = null;
       lastConfirmedMatchRef.current = null;

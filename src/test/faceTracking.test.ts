@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mapVideoFaceBoxToViewport } from '@/lib/faceOverlayGeometry';
 import { assignFaceDetectionTracks } from '@/features/attendance/lib/faceTracking';
+import { releaseFaceScan, tryAcquireFaceScan } from '@/features/attendance/lib/faceScanLock';
 
 describe('live face tracking', () => {
   it('assigns five simultaneous detections to unique tracks', () => {
@@ -48,6 +49,17 @@ describe('live face tracking', () => {
     expect(
       assignFaceDetectionTracks(detections, tracks, ['student-a', 'student-b'], 1160)
     ).toEqual([0, 1]);
+  });
+});
+
+describe('recognition scan serialization', () => {
+  it('does not acquire a second scan while the previous scan is running', () => {
+    const lock = { current: false };
+
+    expect(tryAcquireFaceScan(lock)).toBe(true);
+    expect(tryAcquireFaceScan(lock)).toBe(false);
+    releaseFaceScan(lock);
+    expect(tryAcquireFaceScan(lock)).toBe(true);
   });
 });
 

@@ -6,7 +6,6 @@ import {
   MIN_PHOTO_DETECTION_SCORE,
   MIN_REGISTER_DETECTION_SCORE,
   evaluateFacePartConsistency,
-  isFaceBoxUsable,
 } from './faceNetMatcher';
 
 const MODEL_URL = 'https://vladmandic.github.io/face-api/model';
@@ -128,17 +127,56 @@ export interface FaceDetectionRegion {
   height: number;
 }
 
+export type FaceRegionQualityRejection =
+  | 'below_minimum_face_size'
+  | 'below_detection_confidence'
+  | 'inconsistent_landmarks';
+
+export type FaceRegionRecognitionResult =
+  | {
+      region: FaceDetectionRegion;
+      status: 'descriptor';
+      detection: FaceNetLiveDetection;
+      durationMs: number;
+      source: 'crop' | 'full_frame_fallback';
+      fallbackDurationMs?: number;
+    }
+  | {
+      region: FaceDetectionRegion;
+      status: 'quality_rejected';
+      reason: FaceRegionQualityRejection;
+      durationMs: number;
+    }
+  | {
+      region: FaceDetectionRegion;
+      status: 'failed';
+      reason: string;
+      durationMs: number;
+    };
+
+function getQualityRejection(
+  detection: DetectionWithDescriptor | undefined | null,
+  minScore: number,
+  minFaceSize: number
+): FaceRegionQualityRejection | null {
+  if (!detection) return null;
+  const box = detection.detection.box;
+  if (box.width < minFaceSize || box.height < minFaceSize) return 'below_minimum_face_size';
+  if (typeof detection.detection.score === 'number' && detection.detection.score < minScore) {
+    return 'below_detection_confidence';
+  }
+  if (!evaluateFacePartConsistency(detection.landmarks.positions, box)) {
+    return 'inconsistent_landmarks';
+  }
+  return null;
+}
+
 function isQualityDetection(
   detection: DetectionWithDescriptor | undefined | null,
   minScore: number,
   minFaceSize = MIN_FACE_SIZE_PX
 ): detection is DetectionWithDescriptor {
-  if (!detection) return false;
-  const box = detection.detection.box;
-  const score = detection.detection.score;
-  if (!isFaceBoxUsable(box.width, box.height, score, minScore, minFaceSize)) return false;
-  if (!evaluateFacePartConsistency(detection.landmarks.positions, box)) return false;
-  return true;
+  return Boolean(detection) && getQualityRejection(detection, minScore, minFaceSize) === null;
 }
 
 async function hasAtLeastOneFace(
@@ -273,77 +311,157 @@ export async function describeScrfdFaceRegions(
   input: HTMLVideoElement | HTMLCanvasElement,
   regions: FaceDetectionRegion[],
   minScore = MIN_LIVE_DETECTION_SCORE
-): Promise<FaceNetLiveDetection[]> {
+): Promise<FaceRegionRecognitionResult[]> {
   const isVideo = typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement;
   const inputWidth = isVideo ? input.videoWidth : input.width;
   const inputHeight = isVideo ? input.videoHeight : input.height;
-  const results: FaceNetLiveDetection[] = [];
+  const results: FaceRegionRecognitionResult[] = [];
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) throw new Error('Could not create a canvas for SCRFD face recognition.');
+  if (!context) {
+    return regions.map(region => ({
+      region,
+      status: 'failed',
+      reason: 'canvas_context_unavailable',
+      durationMs: 0,
+    }));
+  }
 
   for (const region of regions) {
-    const paddingX = Math.max(8, region.width * 0.2);
-    const paddingY = Math.max(8, region.height * 0.2);
-    const cropX = Math.max(0, Math.floor(region.x - paddingX));
-    const cropY = Math.max(0, Math.floor(region.y - paddingY));
-    const cropRight = Math.min(inputWidth, Math.ceil(region.x + region.width + paddingX));
-    const cropBottom = Math.min(inputHeight, Math.ceil(region.y + region.height + paddingY));
-    const cropWidth = cropRight - cropX;
-    const cropHeight = cropBottom - cropY;
-    if (cropWidth <= 0 || cropHeight <= 0) continue;
+    const startedAt = performance.now();
+    try {
+      const paddingX = Math.max(8, region.width * 0.2);
+      const paddingY = Math.max(8, region.height * 0.2);
+      const cropX = Math.max(0, Math.floor(region.x - paddingX));
+      const cropY = Math.max(0, Math.floor(region.y - paddingY));
+      const cropRight = Math.min(inputWidth, Math.ceil(region.x + region.width + paddingX));
+      const cropBottom = Math.min(inputHeight, Math.ceil(region.y + region.height + paddingY));
+      const cropWidth = cropRight - cropX;
+      const cropHeight = cropBottom - cropY;
+      if (cropWidth <= 0 || cropHeight <= 0) {
+        results.push({
+          region,
+          status: 'failed',
+          reason: 'invalid_crop_bounds',
+          durationMs: performance.now() - startedAt,
+        });
+        continue;
+      }
 
-    canvas.width = cropWidth;
-    canvas.height = cropHeight;
-    context.drawImage(input, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+      canvas.width = cropWidth;
+      canvas.height = cropHeight;
+      context.drawImage(input, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
 
-    const options = faceapi.nets.tinyFaceDetector.isLoaded
-      ? new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: minScore })
-      : new faceapi.SsdMobilenetv1Options({ minConfidence: minScore });
-    const detection = await faceapi
-      .detectSingleFace(canvas, options)
-      .withFaceLandmarks()
-      .withFaceDescriptor();
-    if (!isQualityDetection(detection, minScore, MIN_LIVE_RECOGNITION_FACE_SIZE_PX)) continue;
+      const options = faceapi.nets.tinyFaceDetector.isLoaded
+        ? new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: minScore })
+        : new faceapi.SsdMobilenetv1Options({ minConfidence: minScore });
+      const detection = await faceapi
+        .detectSingleFace(canvas, options)
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (!detection) {
+        results.push({
+          region,
+          status: 'failed',
+          reason: 'no_face_in_crop',
+          durationMs: performance.now() - startedAt,
+        });
+        continue;
+      }
+      const rejection = getQualityRejection(
+        detection,
+        minScore,
+        MIN_LIVE_RECOGNITION_FACE_SIZE_PX
+      );
+      if (rejection) {
+        results.push({
+          region,
+          status: 'quality_rejected',
+          reason: rejection,
+          durationMs: performance.now() - startedAt,
+        });
+        continue;
+      }
 
-    const detectedBox = detection.detection.box;
-    const detectedCenterX = cropX + detectedBox.x + detectedBox.width / 2;
-    const detectedCenterY = cropY + detectedBox.y + detectedBox.height / 2;
-    const regionCenterX = region.x + region.width / 2;
-    const regionCenterY = region.y + region.height / 2;
-    if (
-      Math.hypot(detectedCenterX - regionCenterX, detectedCenterY - regionCenterY) >
-      Math.max(region.width, region.height) * 0.45
-    ) {
-      continue;
+      const detectedBox = detection.detection.box;
+      const detectedCenterX = cropX + detectedBox.x + detectedBox.width / 2;
+      const detectedCenterY = cropY + detectedBox.y + detectedBox.height / 2;
+      const regionCenterX = region.x + region.width / 2;
+      const regionCenterY = region.y + region.height / 2;
+      if (
+        Math.hypot(detectedCenterX - regionCenterX, detectedCenterY - regionCenterY) >
+        Math.max(region.width, region.height) * 0.45
+      ) {
+        results.push({
+          region,
+          status: 'failed',
+          reason: 'crop_detection_misaligned',
+          durationMs: performance.now() - startedAt,
+        });
+        continue;
+      }
+
+      results.push({
+        region,
+        status: 'descriptor',
+        detection: {
+          box: {
+            x: cropX + detectedBox.x,
+            y: cropY + detectedBox.y,
+            width: detectedBox.width,
+            height: detectedBox.height,
+          },
+          landmarks: detection.landmarks.positions.map(point => ({
+            x: cropX + point.x,
+            y: cropY + point.y,
+          })),
+          descriptor: detection.descriptor,
+          score: detection.detection.score,
+        },
+        durationMs: performance.now() - startedAt,
+        source: 'crop',
+      });
+    } catch (error) {
+      results.push({
+        region,
+        status: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+        durationMs: performance.now() - startedAt,
+      });
     }
-
-    results.push({
-      box: {
-        x: cropX + detectedBox.x,
-        y: cropY + detectedBox.y,
-        width: detectedBox.width,
-        height: detectedBox.height,
-      },
-      landmarks: detection.landmarks.positions.map(point => ({
-        x: cropX + point.x,
-        y: cropY + point.y,
-      })),
-      descriptor: detection.descriptor,
-      score: detection.detection.score,
-    });
   }
 
   return results;
 }
 
-export async function detectAccurateFace(
+export type FaceDescriptorExtractionFailure =
+  | 'no_face_detected'
+  | 'inconsistent_landmarks'
+  | 'below_minimum_face_size'
+  | 'below_detection_confidence'
+  | 'inference_failed';
+
+export const FACE_DESCRIPTOR_EXTRACTION_FAILURE_MESSAGES: Record<FaceDescriptorExtractionFailure, string> = {
+  no_face_detected: 'no face detected',
+  below_minimum_face_size: 'face was too small in the captured image',
+  below_detection_confidence: 'face detection confidence was too low',
+  inconsistent_landmarks: 'facial landmarks failed the quality check',
+  inference_failed: 'face analysis failed; check the browser console for details',
+};
+
+export interface FaceDescriptorExtractionAttempt {
+  descriptor: Float32Array | null;
+  failure: FaceDescriptorExtractionFailure | null;
+}
+
+async function detectAccurateFaceWithDiagnostics(
   input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
-  minScore = MIN_REGISTER_DETECTION_SCORE
-): Promise<DetectionWithDescriptor | null> {
+  minScore: number
+): Promise<{ detection: DetectionWithDescriptor | null; failure: FaceDescriptorExtractionFailure | null }> {
   const enhancedInput = (typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement && isLowLightVideo(input))
     ? renderVideoToCanvas(input, LOW_LIGHT_GAMMA)
     : null;
+  let failure: FaceDescriptorExtractionFailure = 'no_face_detected';
 
   if (faceapi.nets.ssdMobilenetv1.isLoaded) {
     try {
@@ -353,7 +471,11 @@ export async function detectAccurateFace(
           .detectSingleFace(input, options)
           .withFaceLandmarks()
           .withFaceDescriptor();
-        if (isQualityDetection(detection, minScore) && !enhancedInput) return detection;
+        if (detection) {
+          const rejection = getQualityRejection(detection, minScore, MIN_FACE_SIZE_PX);
+          if (!rejection && !enhancedInput) return { detection, failure: null };
+          if (rejection) failure = rejection;
+        }
       }
       if (enhancedInput) {
         if (await hasAtLeastOneFace(enhancedInput, options)) {
@@ -361,10 +483,16 @@ export async function detectAccurateFace(
             .detectSingleFace(enhancedInput, options)
             .withFaceLandmarks()
             .withFaceDescriptor();
-          if (isQualityDetection(enhancedDetection, minScore)) return enhancedDetection;
+          if (enhancedDetection) {
+            const rejection = getQualityRejection(enhancedDetection, minScore, MIN_FACE_SIZE_PX);
+            if (!rejection) return { detection: enhancedDetection, failure: null };
+            failure = rejection;
+          }
         }
       }
-    } catch {}
+    } catch {
+      failure = 'inference_failed';
+    }
   }
 
   if (faceapi.nets.tinyFaceDetector.isLoaded) {
@@ -378,7 +506,11 @@ export async function detectAccurateFace(
           .detectSingleFace(input, options)
           .withFaceLandmarks()
           .withFaceDescriptor();
-        if (isQualityDetection(detection, minScore) && !enhancedInput) return detection;
+        if (detection) {
+          const rejection = getQualityRejection(detection, minScore, MIN_FACE_SIZE_PX);
+          if (!rejection && !enhancedInput) return { detection, failure: null };
+          if (rejection) failure = rejection;
+        }
       }
       if (enhancedInput) {
         if (await hasAtLeastOneFace(enhancedInput, options)) {
@@ -386,44 +518,77 @@ export async function detectAccurateFace(
             .detectSingleFace(enhancedInput, options)
             .withFaceLandmarks()
             .withFaceDescriptor();
-          if (isQualityDetection(enhancedDetection, minScore)) return enhancedDetection;
+          if (enhancedDetection) {
+            const rejection = getQualityRejection(enhancedDetection, minScore, MIN_FACE_SIZE_PX);
+            if (!rejection) return { detection: enhancedDetection, failure: null };
+            failure = rejection;
+          }
         }
       }
-    } catch {}
+    } catch {
+      failure = 'inference_failed';
+    }
   }
 
-  return null;
+  return { detection: null, failure };
+}
+
+export async function detectAccurateFace(
+  input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
+  minScore = MIN_REGISTER_DETECTION_SCORE
+): Promise<DetectionWithDescriptor | null> {
+  return (await detectAccurateFaceWithDiagnostics(input, minScore)).detection;
 }
 
 export async function extractDescriptorFromImage(
   img: HTMLImageElement,
   minScore = MIN_PHOTO_DETECTION_SCORE
 ): Promise<Float32Array | null> {
+  return (await extractDescriptorFromImageWithDiagnostics(img, minScore)).descriptor;
+}
+
+async function extractDescriptorFromImageWithDiagnostics(
+  img: HTMLImageElement,
+  minScore: number
+): Promise<FaceDescriptorExtractionAttempt> {
   const canvas = renderToCanvas(img, 1.0);
-  const primary = await detectAccurateFace(canvas, minScore);
-  if (primary) return primary.descriptor;
+  const primary = await detectAccurateFaceWithDiagnostics(canvas, minScore);
+  if (primary.detection) return { descriptor: primary.detection.descriptor, failure: null };
 
   const enhanced = renderToCanvas(img, 0.7);
-  const boosted = await detectAccurateFace(enhanced, minScore);
-  return boosted?.descriptor ?? null;
+  const boosted = await detectAccurateFaceWithDiagnostics(enhanced, minScore);
+  if (boosted.detection) return { descriptor: boosted.detection.descriptor, failure: null };
+
+  const failures = [primary.failure, boosted.failure];
+  return {
+    descriptor: null,
+    failure: failures.find(reason => reason && reason !== 'no_face_detected') ?? 'no_face_detected',
+  };
 }
 
 export async function extractDescriptorsFromBlobs(blobs: Blob[]): Promise<Float32Array[]> {
+  const attempts = await extractDescriptorsFromBlobsWithDiagnostics(blobs);
+  return attempts.flatMap(attempt => attempt.descriptor ? [attempt.descriptor] : []);
+}
+
+export async function extractDescriptorsFromBlobsWithDiagnostics(
+  blobs: Blob[]
+): Promise<FaceDescriptorExtractionAttempt[]> {
   await ensureFaceNetModels();
-  const descriptors: Float32Array[] = [];
+  const attempts: FaceDescriptorExtractionAttempt[] = [];
 
   for (const blob of blobs) {
     const url = URL.createObjectURL(blob);
     try {
       const image = await loadImage(url);
-      const descriptor = await extractDescriptorFromImage(image, MIN_PHOTO_DETECTION_SCORE);
-      if (descriptor) descriptors.push(descriptor);
+      attempts.push(await extractDescriptorFromImageWithDiagnostics(image, MIN_PHOTO_DETECTION_SCORE));
     } catch (error) {
       console.warn('[FaceNet] Skipping a registration frame that could not be converted to a descriptor:', error);
+      attempts.push({ descriptor: null, failure: 'inference_failed' });
     } finally {
       URL.revokeObjectURL(url);
     }
   }
 
-  return descriptors;
+  return attempts;
 }

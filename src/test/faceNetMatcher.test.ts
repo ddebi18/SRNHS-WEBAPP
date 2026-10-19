@@ -57,6 +57,14 @@ describe('FaceNet matcher', () => {
     expect(result.label).toBe('unknown');
   });
 
+  it('classifies five completed unfamiliar descriptors as unknown rather than as unprocessed', () => {
+    const results = Array.from({ length: 5 }, () => scoreFaceNetMatch(stranger, gallery));
+
+    expect(results).toHaveLength(5);
+    expect(results.every(result => !result.accepted && result.label === 'unknown')).toBe(true);
+    expect(results.every(result => result.reason === 'below_threshold')).toBe(true);
+  });
+
   it('rejects a face beyond the acceptance threshold even when it is near a locked student', () => {
     const result = scoreFaceNetMatch(
       [0.555, 0],
