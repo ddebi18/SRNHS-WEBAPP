@@ -315,21 +315,27 @@ export async function describeScrfdFaceRegions(
   const isVideo = typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement;
   const inputWidth = isVideo ? input.videoWidth : input.width;
   const inputHeight = isVideo ? input.videoHeight : input.height;
-  const results: FaceRegionRecognitionResult[] = [];
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) {
-    return regions.map(region => ({
-      region,
-      status: 'failed',
-      reason: 'canvas_context_unavailable',
-      durationMs: 0,
-    }));
-  }
-
-  for (const region of regions) {
+  const canvases = Array.from(
+    { length: Math.min(2, regions.length) },
+    () => document.createElement('canvas')
+  );
+  const contexts = canvases.map(canvas => canvas.getContext('2d', { willReadFrequently: true }));
+  const recognizeRegion = async (
+    region: FaceDetectionRegion,
+    canvas: HTMLCanvasElement,
+    context: CanvasRenderingContext2D | null
+  ): Promise<FaceRegionRecognitionResult> => {
     const startedAt = performance.now();
     try {
+      if (!context) {
+        return {
+          region,
+          status: 'failed',
+          reason: 'canvas_context_unavailable',
+          durationMs: performance.now() - startedAt,
+        };
+      }
+
       const paddingX = Math.max(8, region.width * 0.2);
       const paddingY = Math.max(8, region.height * 0.2);
       const cropX = Math.max(0, Math.floor(region.x - paddingX));
@@ -339,13 +345,12 @@ export async function describeScrfdFaceRegions(
       const cropWidth = cropRight - cropX;
       const cropHeight = cropBottom - cropY;
       if (cropWidth <= 0 || cropHeight <= 0) {
-        results.push({
+        return {
           region,
           status: 'failed',
           reason: 'invalid_crop_bounds',
           durationMs: performance.now() - startedAt,
-        });
-        continue;
+        };
       }
 
       canvas.width = cropWidth;
@@ -360,13 +365,12 @@ export async function describeScrfdFaceRegions(
         .withFaceLandmarks()
         .withFaceDescriptor();
       if (!detection) {
-        results.push({
+        return {
           region,
           status: 'failed',
           reason: 'no_face_in_crop',
           durationMs: performance.now() - startedAt,
-        });
-        continue;
+        };
       }
       const rejection = getQualityRejection(
         detection,
@@ -374,13 +378,12 @@ export async function describeScrfdFaceRegions(
         MIN_LIVE_RECOGNITION_FACE_SIZE_PX
       );
       if (rejection) {
-        results.push({
+        return {
           region,
           status: 'quality_rejected',
           reason: rejection,
           durationMs: performance.now() - startedAt,
-        });
-        continue;
+        };
       }
 
       const detectedBox = detection.detection.box;
@@ -392,16 +395,15 @@ export async function describeScrfdFaceRegions(
         Math.hypot(detectedCenterX - regionCenterX, detectedCenterY - regionCenterY) >
         Math.max(region.width, region.height) * 0.45
       ) {
-        results.push({
+        return {
           region,
           status: 'failed',
           reason: 'crop_detection_misaligned',
           durationMs: performance.now() - startedAt,
-        });
-        continue;
+        };
       }
 
-      results.push({
+      return {
         region,
         status: 'descriptor',
         detection: {
@@ -420,16 +422,23 @@ export async function describeScrfdFaceRegions(
         },
         durationMs: performance.now() - startedAt,
         source: 'crop',
-      });
+      };
     } catch (error) {
-      results.push({
+      return {
         region,
         status: 'failed',
         reason: error instanceof Error ? error.message : String(error),
         durationMs: performance.now() - startedAt,
-      });
+      };
     }
-  }
+  };
+
+  const results = new Array<FaceRegionRecognitionResult>(regions.length);
+  await Promise.all(canvases.map(async (canvas, workerIndex) => {
+    for (let index = workerIndex; index < regions.length; index += canvases.length) {
+      results[index] = await recognizeRegion(regions[index]!, canvas, contexts[workerIndex] ?? null);
+    }
+  }));
 
   return results;
 }

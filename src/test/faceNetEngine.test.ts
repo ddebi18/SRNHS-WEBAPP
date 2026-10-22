@@ -117,15 +117,28 @@ describe('faceNetEngine', () => {
       descriptor: new Float32Array(128),
     };
     let inferenceIndex = 0;
-    mockFaceApi.detectSingleFace.mockImplementation(() => ({
-      withFaceLandmarks: () => ({
-        withFaceDescriptor: async () => {
-          inferenceIndex++;
-          if (inferenceIndex === 2) throw new Error('inference failed');
-          return detection;
-        },
-      }),
-    }));
+    let activeInferences = 0;
+    let maxConcurrentInferences = 0;
+    const cropCanvases: HTMLCanvasElement[] = [];
+    mockFaceApi.detectSingleFace.mockImplementation((canvas: HTMLCanvasElement) => {
+      cropCanvases.push(canvas);
+      const currentInference = ++inferenceIndex;
+      return {
+        withFaceLandmarks: () => ({
+          withFaceDescriptor: async () => {
+            activeInferences++;
+            maxConcurrentInferences = Math.max(maxConcurrentInferences, activeInferences);
+            try {
+              await new Promise(resolve => setTimeout(resolve, 0));
+              if (currentInference === 2) throw new Error('inference failed');
+              return detection;
+            } finally {
+              activeInferences--;
+            }
+          },
+        }),
+      };
+    });
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
       drawImage: vi.fn(),
     } as never));
@@ -154,5 +167,8 @@ describe('faceNetEngine', () => {
     ]);
     expect(results[1]?.status === 'failed' && results[1].reason).toContain('inference failed');
     expect(mockFaceApi.detectSingleFace).toHaveBeenCalledTimes(5);
+    expect(maxConcurrentInferences).toBe(2);
+    expect(cropCanvases[0]).not.toBe(cropCanvases[1]);
+    expect(new Set(cropCanvases).size).toBe(2);
   });
 });
