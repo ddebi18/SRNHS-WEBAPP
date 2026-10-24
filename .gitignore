@@ -40,3 +40,6 @@ backup/
 tools/sms_test/.env
 tools/sms_test/results/
 edge_engine/logs/
+
+# Vite production build output — never commit
+dist/
