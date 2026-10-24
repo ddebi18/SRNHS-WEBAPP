@@ -197,6 +197,11 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
                     <LordIcon src={LORD_ICONS.shield} size={22} trigger="loop" colors="primary:#006937,secondary:#d4a373" />
                     <span>Administrator Access</span>
                   </>
+                ) : portal === 'guardian' ? (
+                  <>
+                    <LordIcon src={LORD_ICONS.users} size={22} trigger="loop" colors="primary:#006937,secondary:#d4a373" />
+                    <span>Guardian Access</span>
+                  </>
                 ) : (
                   <>
                     <LordIcon src={LORD_ICONS.school} size={22} trigger="loop" colors="primary:#006937,secondary:#d4a373" />
