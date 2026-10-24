@@ -6,6 +6,7 @@ export const useRole = () => {
 
   const isAdmin = role === 'admin';
   const isTeacher = role === 'teacher';
+  const isGuardian = role === 'guardian';
   // Only the assigned teacher for a section may change attendance status.
   // Admins are read-only on classroom attendance.
   const canMarkAttendance = isTeacher;
@@ -20,7 +21,9 @@ export const useRole = () => {
     user,
     isAdmin,
     isTeacher,
+    isGuardian,
     canMarkAttendance,
     hasPermission,
   };
 };
+

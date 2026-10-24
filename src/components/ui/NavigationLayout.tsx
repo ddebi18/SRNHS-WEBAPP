@@ -12,6 +12,8 @@ import {
   Building2,
   MessageSquare,
   Camera,
+  Award,
+  CalendarCheck,
   LogOut,
   Menu,
   X,
@@ -19,6 +21,10 @@ import {
   Moon,
   MapPin,
   ChevronRight,
+  Shield,
+  Bell,
+  FileText,
+  AlertTriangle,
 } from 'lucide-react';
 import { SITE_CONFIG } from '@/config/siteConfig';
 import { useAuth } from '@/context/AuthContext';
@@ -37,7 +43,13 @@ const PAGE_TITLES: Record<string, string> = {
   '/subjects': 'Curriculum Subjects',
   '/rooms': 'Rooms & Facilities',
   '/academics': 'Class Sections',
+  '/grades': 'Grades & Assessment',
+  '/events': 'School Events',
+  '/announcements': 'Announcements & Memos',
+  '/faculty-reports': 'Faculty Reports',
+  '/violations': 'Student Violations',
   '/sms-log': 'SMS Audit Log',
+  '/logs': 'Audit Trail / Logs',
 };
 
 export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -54,6 +66,11 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
     { label: 'Overview',               path: '/',                  icon: LayoutDashboard, allowed: ['admin', 'teacher'] },
     { label: 'Live Gate Log',           path: '/gate-log',          icon: DoorOpen,        allowed: ['admin'] },
     { label: 'Classroom Attendance',    path: '/classroom',         icon: ClipboardList,   allowed: ['teacher'] },
+    { label: 'Grades & Assessment',     path: '/grades',            icon: Award,           allowed: ['admin', 'teacher'] },
+    { label: 'School Events',           path: '/events',            icon: CalendarCheck,   allowed: ['admin', 'teacher'] },
+    { label: 'Announcements & Memos',   path: '/announcements',     icon: Bell,            allowed: ['admin', 'teacher'] },
+    { label: 'Faculty Reports',         path: '/faculty-reports',   icon: FileText,        allowed: ['admin', 'teacher'] },
+    { label: 'Student Violations',      path: '/violations',        icon: AlertTriangle,   allowed: ['admin', 'teacher'] },
     { label: 'Face Registration',      path: '/face-registration', icon: Camera,          allowed: ['admin', 'teacher'] },
     { label: 'Students & Guardians',    path: '/students',          icon: Users,           allowed: ['admin', 'teacher'] },
     { label: 'Faculty & Schedules',     path: '/faculty',           icon: UserCheck,       allowed: ['admin', 'teacher'] },
@@ -62,6 +79,7 @@ export const NavigationLayout: React.FC<{ children: React.ReactNode }> = ({ chil
     { label: 'Subjects',                path: '/subjects',          icon: BookOpen,        allowed: ['admin'] },
     { label: 'Rooms',                   path: '/rooms',             icon: Building2,       allowed: ['admin'] },
     { label: 'SMS Audit Log',           path: '/sms-log',           icon: MessageSquare,   allowed: ['admin'] },
+    { label: 'Audit Trail / Logs',      path: '/logs',              icon: Shield,          allowed: ['admin'] },
   ];
 
   const allowedNavItems = allNavItems.filter(item => item.allowed.includes(role || 'teacher'));

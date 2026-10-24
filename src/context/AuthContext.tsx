@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { StaffProfile, UserRole } from '@/types/domain.types';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { logUserAction } from '@/lib/auditLogger';
 
-export type LoginPortal = 'admin' | 'teacher';
+export type LoginPortal = 'admin' | 'teacher' | 'guardian';
 
 interface AuthContextType {
   user: StaffProfile | null;
@@ -18,6 +19,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 // Inactive session timeout thresholds (Requirement 5)
 const ADMIN_IDLE_TIMEOUT_MS = 15 * 60 * 1000;  // 15 minutes for admin
 const TEACHER_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes for teacher
+const GUARDIAN_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes for guardian
 
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -55,6 +57,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = useCallback(async () => {
     setIsLoading(true);
+    if (user) {
+      logUserAction({
+        action: 'auth.logout',
+        entity_type: 'user',
+        entity_id: user.id,
+        role: user.role,
+        user_id: user.id,
+      }).catch(() => {});
+    }
     if (isSupabaseConfigured && supabase) {
       try {
         await supabase.auth.signOut();
@@ -64,13 +75,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     clearSession();
     setIsLoading(false);
-  }, [clearSession]);
+  }, [clearSession, user]);
 
-  // Idle timeout monitor (Requirement 5: Admin 15m, Teacher 60m)
+  // Idle timeout monitor (Admin 15m, Teacher/Guardian 60m)
   useEffect(() => {
     if (!user) return;
 
-    const timeoutDuration = user.role === 'admin' ? ADMIN_IDLE_TIMEOUT_MS : TEACHER_IDLE_TIMEOUT_MS;
+    const timeoutDuration = user.role === 'admin'
+      ? ADMIN_IDLE_TIMEOUT_MS
+      : user.role === 'guardian'
+      ? GUARDIAN_IDLE_TIMEOUT_MS
+      : TEACHER_IDLE_TIMEOUT_MS;
 
     const handleUserActivity = () => {
       lastActivityRef.current = Date.now();
@@ -118,20 +133,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        const { data: profile, error: profileErr } = await supabase
+        const { data: profile } = await supabase
           .from('staff_profiles')
           .select('*')
           .eq('id', session.user.id)
-          .single();
+          .maybeSingle();
 
-        if (profileErr || !profile || !profile.is_active) {
-          await supabase.auth.signOut().catch(() => {});
-          clearSession();
-        } else if (isMounted) {
+        if (profile && profile.is_active) {
           const staffUser = profile as StaffProfile;
-          setUser(staffUser);
-          setSessionId(session.access_token.slice(-16));
-          localStorage.setItem('srnhs-user', JSON.stringify(staffUser));
+          if (isMounted) {
+            setUser(staffUser);
+            setSessionId(session.access_token.slice(-16));
+            localStorage.setItem('srnhs-user', JSON.stringify(staffUser));
+          }
+        } else {
+          // Check if session belongs to a guardian
+          const { data: guardianRow } = await supabase
+            .from('guardians')
+            .select('id, full_name, email, mobile_number, user_id, is_primary')
+            .eq('user_id', session.user.id)
+            .limit(1)
+            .maybeSingle();
+
+          if (guardianRow || session.user.user_metadata?.role === 'guardian') {
+            const guardianUser: StaffProfile = {
+              id: session.user.id,
+              email: session.user.email || guardianRow?.email || '',
+              full_name: guardianRow?.full_name || session.user.user_metadata?.full_name || 'Guardian',
+              role: 'guardian',
+              is_active: true,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            if (isMounted) {
+              setUser(guardianUser);
+              setSessionId(session.access_token.slice(-16));
+              localStorage.setItem('srnhs-user', JSON.stringify(guardianUser));
+            }
+          } else {
+            await supabase.auth.signOut().catch(() => {});
+            clearSession();
+          }
         }
       } catch (err) {
         console.warn('[Auth] Supabase session check notice:', err);
@@ -162,7 +204,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Unified Authentication Handler:
    *  - Verifies credentials via Supabase Auth
    *  - Rejects plain usernames (must be valid email)
-   *  - Reads user role exclusively from database staff_profiles record
+   *  - Reads user role strictly from database (staff_profiles or guardians)
    *  - Rejects cross-portal submissions with generic error
    *  - Regenerates session ID on login
    */
@@ -204,16 +246,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: GENERIC_ERROR };
       }
 
-      // Fetch role strictly from database staff_profiles record
-      const { data: profile, error: profileErr } = await supabase
+      let dbRole: UserRole | null = null;
+      let effectiveProfile: StaffProfile | null = null;
+
+      // Check staff_profiles first
+      const { data: profile } = await supabase
         .from('staff_profiles')
         .select('*')
         .eq('id', data.user.id)
-        .single();
+        .maybeSingle();
 
-      if (profileErr || !profile || !profile.is_active) {
+      if (profile && profile.is_active) {
+        dbRole = profile.role;
+        effectiveProfile = profile as StaffProfile;
+      } else {
+        // Check guardians
+        const { data: gRow } = await supabase
+          .from('guardians')
+          .select('*')
+          .eq('user_id', data.user.id)
+          .limit(1)
+          .maybeSingle();
+
+        if (gRow || data.user.user_metadata?.role === 'guardian') {
+          dbRole = 'guardian';
+          effectiveProfile = {
+            id: data.user.id,
+            email: data.user.email || gRow?.email || '',
+            full_name: gRow?.full_name || data.user.user_metadata?.full_name || 'Guardian',
+            role: 'guardian',
+            is_active: true,
+            created_at: gRow?.created_at || new Date().toISOString(),
+            updated_at: gRow?.updated_at || new Date().toISOString(),
+          };
+        }
+      }
+
+      if (!dbRole || !effectiveProfile) {
         if (import.meta.env.DEV) {
-          console.warn('[Auth Debug] staff_profiles row missing or inactive for UID:', data.user.id, profileErr?.message);
+          console.warn('[Auth Debug] No profile row found for UID:', data.user.id);
         }
         await supabase.auth.signOut().catch(() => {});
         clearSession();
@@ -221,8 +292,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
         return { success: false, error: GENERIC_ERROR };
       }
-
-      const dbRole: UserRole = profile.role;
 
       // Cross-portal isolation
       if (dbRole !== portal) {
@@ -236,14 +305,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: GENERIC_ERROR };
       }
 
-      const staffProfile: StaffProfile = profile as StaffProfile;
       const newSessionId = `sess-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      setUser(staffProfile);
+      setUser(effectiveProfile);
       setSessionId(newSessionId);
-      localStorage.setItem('srnhs-user', JSON.stringify(staffProfile));
+      localStorage.setItem('srnhs-user', JSON.stringify(effectiveProfile));
       localStorage.setItem('srnhs-session-id', newSessionId);
       lastActivityRef.current = Date.now();
       logAuthAttempt(portal, 'success', cleanId);
+      logUserAction({
+        action: 'auth.login',
+        entity_type: 'user',
+        entity_id: effectiveProfile.id,
+        role: dbRole,
+        user_id: effectiveProfile.id,
+        metadata: { portal },
+      }).catch(() => {});
       setIsLoading(false);
       return { success: true };
     } catch (err) {

@@ -61,9 +61,23 @@ export const SetPasswordPage: React.FC = () => {
       return;
     }
 
+    const { data: userData } = await supabase.auth.getUser();
+    const userRole = userData?.user?.user_metadata?.role;
+
+    if (userRole === 'guardian' && userData?.user?.id) {
+      try {
+        await supabase
+          .from('guardians')
+          .update({ activated_at: new Date().toISOString() })
+          .eq('user_id', userData.user.id);
+      } catch {
+        /* non-fatal */
+      }
+    }
+
     setSuccess(true);
-    // Redirect to teacher dashboard after a brief pause
-    setTimeout(() => navigate('/classroom', { replace: true }), 1800);
+    const targetRoute = userRole === 'guardian' ? '/guardian' : '/classroom';
+    setTimeout(() => navigate(targetRoute, { replace: true }), 1800);
   };
 
   const inputCls =

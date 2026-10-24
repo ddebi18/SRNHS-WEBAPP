@@ -18,6 +18,8 @@ interface PortalLoginFormProps {
   switchUrl: string;
   switchLabel: string;
   defaultRedirect: string;
+  /** If provided, renders a secondary "Guardian portal" link in the footer */
+  guardianUrl?: string;
 }
 
 export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
@@ -29,6 +31,7 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
   switchUrl,
   switchLabel,
   defaultRedirect,
+  guardianUrl,
 }) => {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -301,6 +304,14 @@ export const PortalLoginForm: React.FC<PortalLoginFormProps> = ({
               >
                 {switchLabel}
               </Link>
+              {guardianUrl && (
+                <Link
+                  to={guardianUrl}
+                  className="text-xs text-slate-400 dark:text-slate-500 hover:text-primary dark:hover:text-emerald-400 hover:underline block transition-colors"
+                >
+                  Parent / Guardian? Sign in to the Guardian Portal →
+                </Link>
+              )}
             </div>
           </motion.div>
         </motion.div>

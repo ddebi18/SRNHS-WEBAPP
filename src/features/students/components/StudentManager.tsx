@@ -1,16 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useRole } from '@/hooks/useRole';
-import { Student, StudentViolation } from '@/types/domain.types';
+import { Student, StudentViolation, Section as DomainSection } from '@/types/domain.types';
 import { DataTable, Column } from '@/components/ui/DataTable';
 import { Modal } from '@/components/ui/Modal';
 import { ViolationSeverityBadge } from '@/components/ui/StatusBadge';
-import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Images, Eye, CheckCircle2, AlertCircle, Trash2, QrCode } from 'lucide-react';
+import { Users, Plus, ShieldCheck, AlertTriangle, Phone, Images, Eye, CheckCircle2, AlertCircle, Trash2, QrCode, Upload, GraduationCap, MapPin, Heart, Send, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { addNewStudent, getStoredStudents, getStoredSections, getPhotosFromDb, deleteStudent, generateUUID, syncFromSupabase } from '@/features/faceRegistration/api';
+import { getStoredStudents, getStoredSections, getPhotosFromDb, deleteStudent, syncFromSupabase } from '@/features/faceRegistration/api';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { Section as FRSection } from '@/features/faceRegistration/types';
-import { fetchViolations, createViolation } from '@/features/students/api';
+import { fetchViolations, createViolation, manageGuardianInvite } from '@/features/students/api';
 import { GenerateAccessQrModal } from '@/features/tempAccess/components/GenerateAccessQrModal';
+import { isProfileComplete, hasMinimumGuardians } from '@/lib/validation';
+import { StudentProfileModal } from './StudentProfileModal';
+import { BulkStudentUploadModal } from './BulkStudentUploadModal';
+import { LevelingManagerModal } from './LevelingManagerModal';
+import { cn } from '@/lib/utils';
 
 const INITIAL_VIOLATIONS: StudentViolation[] = [];
 
@@ -74,16 +79,13 @@ export const StudentManager: React.FC = () => {
 
   // Detail Modal
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [inviteProcessingId, setInviteProcessingId] = useState<string | null>(null);
+  const [guardianInviteMsg, setGuardianInviteMsg] = useState<{ id: string; text: string; isError?: boolean } | null>(null);
 
-  // New Student Modal
+  // Modals
   const [newModalOpen, setNewModalOpen] = useState(false);
-  const [lrn, setLrn] = useState('');
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [sectionId, setSectionId] = useState('');
-  const [guardianName, setGuardianName] = useState('');
-  const [guardianPhone, setGuardianPhone] = useState('');
-  const [guardianRel, setGuardianRel] = useState('Mother');
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [levelingModalOpen, setLevelingModalOpen] = useState(false);
 
   // Violation Modal
   const [violationModalOpen, setViolationModalOpen] = useState(false);
@@ -92,8 +94,6 @@ export const StudentManager: React.FC = () => {
   const [violationTitle, setViolationTitle] = useState('');
   const [violationDesc, setViolationDesc] = useState('');
   const [violationSeverity, setViolationSeverity] = useState<'minor' | 'moderate' | 'severe'>('minor');
-
-  const [enrollError, setEnrollError] = useState<string | null>(null);
 
   // Reload unified students list
   const refreshStudents = async (secs?: FRSection[]) => {
@@ -114,65 +114,11 @@ export const StudentManager: React.FC = () => {
       }
       const secs = getStoredSections();
       setStoredSections(secs);
-      if (secs.length > 0) setSectionId(secs[0]!.id);
       refreshStudents(secs);
       fetchViolations().then(setViolations);
     }
     init();
   }, []);
-
-  const handleCreateStudent = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setEnrollError(null);
-
-    const cleanLrn = lrn.trim();
-    const cleanFirst = firstName.trim();
-    const cleanLast = lastName.trim();
-
-    // Rule 1: Validate 12-digit LRN format
-    if (!/^\d{12}$/.test(cleanLrn)) {
-      setEnrollError('Learner Reference Number (LRN) must be exactly 12 numeric digits.');
-      return;
-    }
-
-    if (!cleanFirst || !cleanLast) {
-      setEnrollError('First name and last name are required.');
-      return;
-    }
-
-    // Rule 1: Validate / normalize phone number if provided
-    let cleanPhone = '';
-    if (guardianPhone.trim()) {
-      const rawPhone = guardianPhone.trim().replace(/[\s-]/g, '');
-      if (!/^(\+639\d{9}|09\d{9}|9\d{9})$/.test(rawPhone)) {
-        setEnrollError('Guardian phone must be a valid Philippine mobile number (e.g. +639171234567 or 09171234567).');
-        return;
-      }
-      cleanPhone = rawPhone.startsWith('09') ? `+63${rawPhone.slice(1)}` : rawPhone.startsWith('9') ? `+63${rawPhone}` : rawPhone;
-    }
-
-    const sec = storedSections.find(s => s.id === sectionId) || storedSections[0];
-
-    // Register with unified store
-    await addNewStudent({
-      id: generateUUID(),
-      name: `${cleanFirst} ${cleanLast}`,
-      studentNumber: cleanLrn,
-      sectionId: sec?.id || sectionId,
-      sectionName: sec?.name || '',
-      guardianName: guardianName.trim() || 'Parent / Guardian',
-      guardianPhone: cleanPhone,
-    });
-
-    await refreshStudents();
-
-    setLrn('');
-    setFirstName('');
-    setLastName('');
-    setGuardianName('');
-    setGuardianPhone('');
-    setNewModalOpen(false);
-  };
 
   const handleDeleteStudent = async (studentId: string, studentName: string) => {
     if (!confirm(`Are you sure you want to remove ${studentName}?`)) return;
@@ -217,7 +163,27 @@ export const StudentManager: React.FC = () => {
             </div>
           )}
           <div>
-            <div className="font-bold text-slate-900 dark:text-slate-100">{s.first_name} {s.last_name}</div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="font-bold text-slate-900 dark:text-slate-100">
+                {s.first_name} {s.middle_name ? `${s.middle_name[0]}. ` : ''}{s.last_name} {s.suffix || ''}
+              </span>
+              {!isProfileComplete(s) && (
+                <span
+                  className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
+                  title="Missing required profile fields (DepEd standard)"
+                >
+                  Incomplete Profile
+                </span>
+              )}
+              {!hasMinimumGuardians(s.guardians) && (
+                <span
+                  className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800"
+                  title="Every student requires at least two registered guardians"
+                >
+                  Incomplete Guardians (&lt; 2)
+                </span>
+              )}
+            </div>
             <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">LRN: {s.lrn}</div>
           </div>
         </div>
@@ -291,6 +257,15 @@ export const StudentManager: React.FC = () => {
     },
   ];
 
+  const domainSections: DomainSection[] = storedSections.map(fr => ({
+    id: fr.id,
+    name: fr.name,
+    grade_level: parseInt(fr.gradeLevel.replace('Grade ', ''), 10) || 10,
+    adviser_id: fr.teacherId || null,
+    adviser_name: fr.teacherName !== 'Unassigned' ? fr.teacherName : undefined,
+    created_at: new Date().toISOString(),
+  }));
+
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -323,13 +298,31 @@ export const StudentManager: React.FC = () => {
           </button>
 
           {isAdmin && (
-            <button
-              onClick={() => setNewModalOpen(true)}
-              className="px-3.5 py-2 text-xs font-medium rounded-lg bg-primary hover:bg-primary-light text-white flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              Enroll Student
-            </button>
+            <>
+              <button
+                onClick={() => setLevelingModalOpen(true)}
+                className="px-3.5 py-2 text-xs font-medium rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                <GraduationCap className="w-4 h-4 text-brand-500" />
+                Leveling / Transfer
+              </button>
+
+              <button
+                onClick={() => setBulkModalOpen(true)}
+                className="px-3.5 py-2 text-xs font-medium rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Upload className="w-4 h-4" />
+                Bulk Upload
+              </button>
+
+              <button
+                onClick={() => setNewModalOpen(true)}
+                className="px-3.5 py-2 text-xs font-medium rounded-lg bg-primary hover:bg-primary-light text-white flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                Enroll Student
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -385,9 +378,88 @@ export const StudentManager: React.FC = () => {
           onClose={() => setSelectedStudent(null)}
           title={`Student Profile: ${selectedStudent.first_name} ${selectedStudent.last_name}`}
           subtitle={`LRN: ${selectedStudent.lrn} | ${selectedStudent.section_name}`}
-          maxWidth="xl"
+          maxWidth="2xl"
         >
-          <div className="space-y-6">
+          <div className="space-y-5 max-h-[75vh] overflow-y-auto pr-1">
+            {/* Identity & Demographics */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-brand-500" />
+                1. Identity &amp; Demographic Information
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Full Name</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100">
+                    {selectedStudent.first_name} {selectedStudent.middle_name || ''} {selectedStudent.last_name} {selectedStudent.suffix || ''}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Sex</span>
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">
+                    {selectedStudent.sex || selectedStudent.gender || 'Not Specified'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Birth Date</span>
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">
+                    {selectedStudent.birthdate || 'Not Recorded'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">LRN</span>
+                  <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
+                    {selectedStudent.lrn}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Address */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <MapPin className="w-4 h-4 text-emerald-500" />
+                2. Residential Address
+              </h4>
+              <p className="text-xs text-slate-800 dark:text-slate-200 font-medium">
+                {[
+                  selectedStudent.house_street,
+                  selectedStudent.barangay,
+                  selectedStudent.city_municipality,
+                  selectedStudent.province,
+                  selectedStudent.zip_code,
+                ]
+                  .filter(Boolean)
+                  .join(', ') || 'No residential address on record'}
+              </p>
+            </div>
+
+            {/* Socioeconomic / Personal Info */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Heart className="w-4 h-4 text-rose-500" />
+                3. Personal &amp; Special Categories
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Religion</span>
+                  <span className="font-semibold">{selectedStudent.religion || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Mother Tongue</span>
+                  <span className="font-semibold">{selectedStudent.mother_tongue || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">PWD Status</span>
+                  <span className="font-semibold">{selectedStudent.is_pwd ? 'Yes (PWD)' : 'No'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">4Ps Beneficiary</span>
+                  <span className="font-semibold">{selectedStudent.is_4ps ? 'Yes' : 'No'}</span>
+                </div>
+              </div>
+            </div>
+
             {/* Reference Photos */}
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1">
@@ -411,32 +483,168 @@ export const StudentManager: React.FC = () => {
               ) : (
                 <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-300 flex items-center justify-between">
                   <span>No facial reference photos registered yet.</span>
-                  <Link to="/face-registration" className="font-bold underline">
+                  <Link to={`/face-registration?studentId=${selectedStudent.id}`} className="font-bold underline">
                     Go to Face Registration
                   </Link>
                 </div>
               )}
             </div>
 
-            {/* Guardian Contacts (1:N) */}
+            {/* Guardian Contacts (1:N) & Portal Invite Flow */}
             <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1">
-                <Phone className="w-4 h-4" /> Registered Guardians & Emergency Contacts
-              </h4>
-              <div className="space-y-2">
-                {selectedStudent.guardians?.map(g => (
-                  <div key={g.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-xs text-slate-900 dark:text-slate-100">{g.name} ({g.relationship})</div>
-                      <div className="text-xs font-mono text-brand-600 dark:text-brand-400">{g.phone_number}</div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                  <Phone className="w-4 h-4" /> Registered Guardians &amp; Portal Accounts ({selectedStudent.guardians?.length || 0})
+                </h4>
+                {(!selectedStudent.guardians || selectedStudent.guardians.length < 2) && (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
+                    Needs {2 - (selectedStudent.guardians?.length || 0)} More Guardian(s)
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-2.5">
+                {selectedStudent.guardians?.map(g => {
+                  const gStatus = (g as any).activated_at ? 'active' : (g as any).invited_at ? 'invited' : 'not_invited';
+                  const isProcessing = inviteProcessingId === g.id;
+                  const feedback = guardianInviteMsg?.id === g.id ? guardianInviteMsg : null;
+
+                  return (
+                    <div key={g.id} className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                              {(g as any).name || (g as any).full_name} ({g.relationship})
+                            </span>
+                            {g.is_primary && (
+                              <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
+                                Primary Contact
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs font-mono text-brand-600 dark:text-brand-400 mt-0.5">
+                            {(g as any).phone_number || (g as any).mobile_number || 'No phone'}
+                            {(g as any).email && <span className="text-slate-400 font-sans ml-2">({(g as any).email})</span>}
+                          </div>
+                        </div>
+
+                        {/* Invite Status & Actions */}
+                        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+                          <span
+                            className={cn(
+                              'px-2 py-0.5 rounded text-[10px] font-bold uppercase',
+                              gStatus === 'active' && 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300',
+                              gStatus === 'invited' && 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300',
+                              gStatus === 'not_invited' && 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                            )}
+                          >
+                            {gStatus === 'active' ? 'Portal Active' : gStatus === 'invited' ? 'Invited' : 'Not Invited'}
+                          </span>
+
+                          {gStatus === 'not_invited' && (
+                            <button
+                              disabled={isProcessing}
+                              onClick={async () => {
+                                setInviteProcessingId(g.id);
+                                setGuardianInviteMsg(null);
+                                const res = await manageGuardianInvite({
+                                  action: 'invite',
+                                  guardian_id: g.id,
+                                  student_id: selectedStudent.id,
+                                  full_name: (g as any).name || (g as any).full_name,
+                                  email: (g as any).email,
+                                  mobile_number: (g as any).phone_number || (g as any).mobile_number,
+                                });
+                                setInviteProcessingId(null);
+                                setGuardianInviteMsg({ id: g.id, text: res.message || res.error || '', isError: !res.success });
+                              }}
+                              className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-teal-600 hover:bg-teal-500 text-white flex items-center gap-1 transition-colors disabled:opacity-50 cursor-pointer"
+                            >
+                              <Send className="w-3 h-3" />
+                              {isProcessing ? 'Inviting...' : 'Invite to Portal'}
+                            </button>
+                          )}
+
+                          {gStatus === 'invited' && (
+                            <>
+                              <button
+                                disabled={isProcessing}
+                                onClick={async () => {
+                                  setInviteProcessingId(g.id);
+                                  setGuardianInviteMsg(null);
+                                  const res = await manageGuardianInvite({
+                                    action: 'resend',
+                                    guardian_id: g.id,
+                                    student_id: selectedStudent.id,
+                                    full_name: (g as any).name || (g as any).full_name,
+                                    email: (g as any).email,
+                                    mobile_number: (g as any).phone_number || (g as any).mobile_number,
+                                  });
+                                  setInviteProcessingId(null);
+                                  setGuardianInviteMsg({ id: g.id, text: res.message || res.error || '', isError: !res.success });
+                                }}
+                                className="px-2 py-1 text-[11px] font-semibold rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 flex items-center gap-1 transition-colors disabled:opacity-50 cursor-pointer"
+                                title="Resend invitation link"
+                              >
+                                <RefreshCw className="w-3 h-3" /> Resend
+                              </button>
+                              <button
+                                disabled={isProcessing}
+                                onClick={async () => {
+                                  setInviteProcessingId(g.id);
+                                  setGuardianInviteMsg(null);
+                                  const res = await manageGuardianInvite({
+                                    action: 'revoke',
+                                    guardian_id: g.id,
+                                    student_id: selectedStudent.id,
+                                  });
+                                  setInviteProcessingId(null);
+                                  setGuardianInviteMsg({ id: g.id, text: res.message || res.error || '', isError: !res.success });
+                                }}
+                                className="px-2 py-1 text-[11px] font-semibold rounded-lg bg-rose-100 dark:bg-rose-950/60 hover:bg-rose-200 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-300 transition-colors disabled:opacity-50 cursor-pointer"
+                              >
+                                Revoke
+                              </button>
+                            </>
+                          )}
+
+                          {gStatus === 'active' && (
+                            <button
+                              disabled={isProcessing}
+                              onClick={async () => {
+                                setInviteProcessingId(g.id);
+                                setGuardianInviteMsg(null);
+                                const res = await manageGuardianInvite({
+                                  action: 'revoke',
+                                  guardian_id: g.id,
+                                  student_id: selectedStudent.id,
+                                });
+                                setInviteProcessingId(null);
+                                setGuardianInviteMsg({ id: g.id, text: res.message || res.error || '', isError: !res.success });
+                              }}
+                              className="px-2 py-1 text-[11px] font-semibold rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-rose-100 dark:hover:bg-rose-950/60 text-slate-600 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-300 transition-colors disabled:opacity-50 cursor-pointer"
+                              title="Revoke portal access"
+                            >
+                              Revoke Access
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {feedback && (
+                        <p
+                          className={cn(
+                            'text-[11px] font-medium pt-1',
+                            feedback.isError ? 'text-rose-500' : 'text-emerald-500'
+                          )}
+                        >
+                          {feedback.text}
+                        </p>
+                      )}
                     </div>
-                    {g.is_primary && (
-                      <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
-                        Primary Contact
-                      </span>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -456,62 +664,29 @@ export const StudentManager: React.FC = () => {
         </Modal>
       )}
 
-      {/* Enroll Student Modal */}
-      <Modal isOpen={newModalOpen} onClose={() => setNewModalOpen(false)} title="Enroll Student Profile">
-        <form onSubmit={handleCreateStudent} className="space-y-4">
-          {enrollError && (
-            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs font-semibold text-rose-700 dark:text-rose-300">
-              {enrollError}
-            </div>
-          )}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">LRN (Learner Reference Number - 12 Digits)</label>
-            <input required maxLength={12} type="text" value={lrn} onChange={e => setLrn(e.target.value)} placeholder="e.g. 109823456789" className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">First Name</label>
-              <input required type="text" value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Last Name</label>
-              <input required type="text" value={lastName} onChange={e => setLastName(e.target.value)} className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Section &amp; Grade Level</label>
-            {storedSections.length > 0 ? (
-              <select
-                value={sectionId}
-                onChange={e => setSectionId(e.target.value)}
-                className="w-full px-3 py-2 text-xs md:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
-              >
-                {storedSections.map(sec => (
-                  <option key={sec.id} value={sec.id}>
-                    {sec.name} ({sec.gradeLevel})
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div className="w-full px-3 py-2.5 text-xs rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-medium">
-                No sections yet. Go to <strong>Academics</strong> to create sections first.
-              </div>
-            )}
-          </div>
-          <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
-            <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">Primary Guardian Contact</h5>
-            <div className="grid grid-cols-3 gap-2">
-              <input type="text" placeholder="Guardian Name" value={guardianName} onChange={e => setGuardianName(e.target.value)} className="col-span-1 px-2 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
-              <input type="text" placeholder="Relationship" value={guardianRel} onChange={e => setGuardianRel(e.target.value)} className="col-span-1 px-2 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" />
-              <input type="text" placeholder="e.g. 09171234567" value={guardianPhone} onChange={e => setGuardianPhone(e.target.value)} className="col-span-1 px-2 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono" />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-700">
-            <button type="button" onClick={() => setNewModalOpen(false)} className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-xs font-semibold rounded-xl bg-sidebar text-white hover:bg-black/80 dark:hover:bg-slate-700">Enroll Student</button>
-          </div>
-        </form>
-      </Modal>
+      {/* Complete Student Profile Registration Modal */}
+      <StudentProfileModal
+        isOpen={newModalOpen}
+        onClose={() => setNewModalOpen(false)}
+        sections={domainSections}
+        onSuccess={() => refreshStudents()}
+      />
+
+      {/* Bulk Upload Modal */}
+      <BulkStudentUploadModal
+        isOpen={bulkModalOpen}
+        onClose={() => setBulkModalOpen(false)}
+        sections={domainSections}
+        onSuccess={() => refreshStudents()}
+      />
+
+      {/* Leveling Manager Modal */}
+      <LevelingManagerModal
+        isOpen={levelingModalOpen}
+        onClose={() => setLevelingModalOpen(false)}
+        students={students}
+        onSuccess={() => refreshStudents()}
+      />
 
       {/* Log Violation Modal */}
       <Modal isOpen={violationModalOpen} onClose={() => setViolationModalOpen(false)} title="Log Student Violation Incident">

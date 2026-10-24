@@ -8,6 +8,6 @@ export interface NotificationAdapter {
     student_name: string;
     guardian_phone: string;
     message: string;
-    event_type: 'gate_entry' | 'gate_exit' | 'unexcused_absence';
+    event_type: 'gate_entry' | 'gate_exit' | 'unexcused_absence' | 'announcement';
   }): Promise<SmsNotification>;
 }

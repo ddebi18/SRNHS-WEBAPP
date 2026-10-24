@@ -15,9 +15,11 @@ import {
   ScanFace,
   ChevronRight,
   BookOpen,
+  Lock,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { LordIcon, LORD_ICONS } from '@/components/motion/LordIcon';
+import { cn } from '@/lib/utils';
 import {
   getStoredSections,
   saveStoredSections,
@@ -146,11 +148,16 @@ export const SectionsManager: React.FC = () => {
     }
 
     if (editingSection) {
+      const isLocked = studentCountBySec(editingSection.id) > 0;
+      if (isLocked && secGrade !== editingSection.grade_level) {
+        setFormError('Grade level cannot be changed once learners are enrolled (Rule B).');
+        return;
+      }
       const updated = sections.map(s =>
         s.id === editingSection.id
           ? {
               ...s,
-              grade_level: secGrade,
+              grade_level: isLocked ? editingSection.grade_level : secGrade,
               name: trimmed,
               adviser_name: secAdviser.trim(),
             }
@@ -174,6 +181,11 @@ export const SectionsManager: React.FC = () => {
 
   const confirmDelete = () => {
     if (!deleteTarget) return;
+    if (studentCountBySec(deleteTarget.id) > 0) {
+      alert('Cannot delete a section that has enrolled learners (Rule B).');
+      setDeleteTarget(null);
+      return;
+    }
     persistSections(sections.filter(s => s.id !== deleteTarget.id));
     setDeleteTarget(null);
   };
@@ -330,6 +342,15 @@ export const SectionsManager: React.FC = () => {
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-[#06180F] text-[#006937] dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 shrink-0">
                           Grade {sec.grade_level}
                         </span>
+                        {count > 0 && (
+                          <span
+                            title="Locked: Has enrolled learners. Cannot be deleted or change grade level (Rule B)."
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 shrink-0"
+                          >
+                            <Lock className="w-2.5 h-2.5" />
+                            <span>Locked</span>
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-emerald-400/80 mt-1">
@@ -350,9 +371,15 @@ export const SectionsManager: React.FC = () => {
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
+                      disabled={count > 0}
                       onClick={() => setDeleteTarget(sec)}
-                      title="Delete Section"
-                      className="p-1.5 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-400 hover:text-rose-600 transition-colors"
+                      title={count > 0 ? "Cannot delete section with enrolled learners (Rule B)" : "Delete Section"}
+                      className={cn(
+                        "p-1.5 rounded-lg transition-colors",
+                        count > 0
+                          ? "text-slate-300 dark:text-slate-700 cursor-not-allowed"
+                          : "hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-400 hover:text-rose-600"
+                      )}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -395,13 +422,22 @@ export const SectionsManager: React.FC = () => {
           )}
 
           <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-              Grade Level
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
+              <span>Grade Level</span>
+              {editingSection && studentCountBySec(editingSection.id) > 0 && (
+                <span className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1 font-normal">
+                  <Lock className="w-3 h-3" /> Locked (has enrolled learners)
+                </span>
+              )}
             </label>
             <select
               value={secGrade}
+              disabled={Boolean(editingSection && studentCountBySec(editingSection.id) > 0)}
               onChange={e => setSecGrade(parseInt(e.target.value, 10))}
-              className={inputCls}
+              className={cn(
+                inputCls,
+                editingSection && studentCountBySec(editingSection.id) > 0 && "opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-900"
+              )}
             >
               {GRADE_LEVELS.map(g => (
                 <option key={g} value={g} className="dark:bg-slate-900">

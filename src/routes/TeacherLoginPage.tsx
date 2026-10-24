@@ -12,6 +12,7 @@ export const TeacherLoginPage: React.FC = () => {
       switchUrl="/admin/login"
       switchLabel="School Administrator? Go to Administrator Sign-In"
       defaultRedirect="/classroom"
+      guardianUrl="/guardian/login"
     />
   );
 };

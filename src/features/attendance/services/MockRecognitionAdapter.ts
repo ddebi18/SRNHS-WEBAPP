@@ -1,7 +1,7 @@
 import { RecognitionAdapter } from './RecognitionAdapter';
 import { RecognitionEvent, EventType } from '@/types/domain.types';
 import { getStoredStudents } from '@/features/faceRegistration/api';
-import { activeNotificationAdapter } from '@/features/notifications/services';
+import { dispatchGateSms } from '@/features/notifications/services/gateSmsDispatcher';
 import { attendanceDayKey, attendanceEventKey } from '../lib/attendanceDedup';
 
 export const INITIAL_MOCK_EVENTS: RecognitionEvent[] = [];
@@ -129,7 +129,6 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
       studentLrn = `${eventData.candidate_student_ids?.length || 2} Candidates`;
     }
 
-    const guardianPhone = student?.guardianPhone || '+639171234567';
     const locationName = eventData.room_name || 'Main Gate Turnstile 01';
     const eventType = eventData.event_type || 'entry';
     const todayDateKey = attendanceDayKey(new Date());
@@ -178,22 +177,13 @@ class MockRecognitionAdapterImpl implements RecognitionAdapter {
     this.notifyListeners(newEvt);
 
     // Automatically send real-time SMS notification ONLY for matched students (Never for unidentified/ambiguous)
-    if (!isUnidentifiedOrAmbiguous) {
-      try {
-        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const actionText = eventType === 'exit' ? 'exited campus via' : 'entered campus via';
-        const smsType = eventType === 'exit' ? 'gate_exit' : 'gate_entry';
-
-        activeNotificationAdapter.sendAlert({
-          student_id: newEvt.student_id || '',
-          student_name: studentName,
-          guardian_phone: guardianPhone,
-          message: `[SRNHS] ${studentName} (LRN: ${studentLrn}) ${actionText} ${locationName} at ${timeStr}. - San Roque National High School`,
-          event_type: smsType,
-        }).catch(err => console.warn('SMS dispatch notice:', err));
-      } catch (smsErr) {
-        console.warn('SMS dispatch error:', smsErr);
-      }
+    if (!isUnidentifiedOrAmbiguous && (eventType === 'entry' || eventType === 'exit') && studentId) {
+      dispatchGateSms({
+        studentId: studentId as string,
+        studentName,
+        eventType,
+        timestamp: newEvt.captured_at,
+      }).catch(err => console.warn('[MockRecognition] SMS notice:', err));
     }
 
     return newEvt;

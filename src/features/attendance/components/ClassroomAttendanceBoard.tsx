@@ -2,13 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { AttendanceStatus, RecognitionEvent } from '@/types/domain.types';
 import { AttendanceBadge } from '@/components/ui/StatusBadge';
 import { useRole } from '@/hooks/useRole';
-import { Check, Clock, X, AlertCircle, BookOpen, Users, RefreshCw } from 'lucide-react';
+import { Check, Clock, X, AlertCircle, BookOpen, Users, RefreshCw, QrCode } from 'lucide-react';
 import { mockNotificationAdapter } from '@/features/notifications/services/MockNotificationAdapter';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { fetchSections, fetchSectionRoster } from '@/features/faceRegistration/api';
 import { Section, Student } from '@/features/faceRegistration/types';
 import { Subject } from '@/types/domain.types';
 import { cn } from '@/lib/utils';
+import { ClassQrModal } from './ClassQrModal';
 
 const LS_SUBJECTS = 'srnhs_academics_subjects_v1';
 function getStoredSubjects(): Subject[] {
@@ -64,6 +65,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
   const [scanEvents, setScanEvents] = useState<RecognitionEvent[]>([]);
   const [manualOverrides, setManualOverrides] = useState<Record<string, { status: AttendanceStatus; markedBy?: string }>>(loadStoredOverrides());
   const [isLoading, setIsLoading] = useState(true);
+  const [isClassQrOpen, setIsClassQrOpen] = useState(false);
 
   // Filter sections by teacher ownership
   const authorizedSections = React.useMemo(() => {
@@ -300,6 +302,18 @@ export const ClassroomAttendanceBoard: React.FC = () => {
             >
               <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
             </button>
+
+            {isTeacher && selectedSection && selectedSubject && (
+              <button
+                type="button"
+                onClick={() => setIsClassQrOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                title="Start Rotating QR Attendance"
+              >
+                <QrCode className="w-4 h-4" />
+                <span>Class QR</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -482,6 +496,21 @@ export const ClassroomAttendanceBoard: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {isClassQrOpen && selectedSection && selectedSubject && (
+        <ClassQrModal
+          isOpen={isClassQrOpen}
+          onClose={() => setIsClassQrOpen(false)}
+          teacherId={user?.id || 'teacher-current'}
+          sectionId={selectedSection}
+          sectionName={sections.find(s => s.id === selectedSection)?.name || 'Class Section'}
+          subjectId={subjects.find(s => s.title === selectedSubject)?.id || selectedSubject}
+          subjectTitle={selectedSubject}
+          onStudentCheckedIn={() => {
+            handleRefresh();
+          }}
+        />
+      )}
     </div>
   );
 };

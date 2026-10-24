@@ -756,23 +756,123 @@ graph TB
 
 ---
 
+---
+
+# SECTION 3: GUARDIAN PORTAL, AUDIT LOGGING, ANNOUNCEMENTS, REPORTS & VIOLATIONS
+
+## 3.1 Guardian Accounts & Parent Monitoring Portal
+
+### Role Definition & Authorization Isolation
+The system introduces the `guardian` role to the core RBAC model (`UserRole = 'admin' | 'teacher' | 'guardian'`).
+- **Two-Guardian Minimum Enrollment Rule:** In compliance with DepEd student registration guidelines, every enrolled learner must have at least two registered guardians with exactly one designated as primary (`is_primary: true`). Validation occurs during single-student modal profiling, bulk Excel/CSV import, and self-claim workflows.
+- **Strict Data Isolation (RA 10173):** Guardians have access exclusively to their dedicated portal (`/guardian/*`) and are denied access to staff administration routes (`/`, `/gate-log`, `/classroom`, `/face-registration`, `/grades`, `/faculty`, `/sections`, `/logs`, `/violations`).
+- **Data Scope:** Guardians are strictly constrained to:
+  - Their own linked children (`guardians.user_id = auth.uid()`).
+  - Read-only gate turnstile and classroom attendance logs for their linked children.
+  - Published academic grades only (`is_published = true`). Draft or unapproved grades remain strictly invisible.
+  - Official school memos and announcements targeted to their child's grade level or section.
+  - **Zero Biometric / Violation Access:** Biometric descriptors, reference photos, other students' data, and student disciplinary infractions are strictly blocked via Postgres Row Level Security (RLS) policies.
+
+---
+
+## 3.2 Immutable User Logs & Append-Only Audit Trail
+
+### Schema & Security Controls
+Audit logging is enforced through the `user_logs` table:
+```sql
+CREATE TABLE IF NOT EXISTS public.user_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+    role TEXT NOT NULL,
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    ip_address TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+```
+
+### Key Security Guarantees:
+- **Append-Only Immutability:** `UPDATE` and `DELETE` operations are completely denied to all roles (`USING (false)`).
+- **Access Scoping:** Administrators possess full visibility over all audit records. Teachers can view only their own activity logs. Guardians are denied `SELECT` access entirely.
+- **Biometric & Credential Sanitization:** Client logger (`src/lib/auditLogger.ts`) recursively scrubs sensitive keys (`password`, `token`, `secret`, `descriptor`, `descriptors`, `photo`, `biometrics`) before dispatching payloads, guaranteeing compliance with RA 10173.
+- **Fail-Open Application Operation:** Logging failures are safely caught and written to local fallback caches without disrupting end-user actions.
+
+---
+
+## 3.3 Announcements & Memos Subsystem
+
+### Audience Targeting & Delivery Pipeline
+Staff members can broadcast official communications through `src/features/announcements/`:
+- **Audience Hierarchy:** Supports `school` (all active guardians), `grade_level` (guardians of learners in specific grade 7–12), and `section` (guardians in specific section).
+- **Attachment Storage:** Private Supabase Storage bucket (`announcement-attachments`) restricted to PDF and standard images (JPEG, PNG, WebP) with a 10MB per-file ceiling.
+- **Delivery Channels:** Dual-channel delivery via the Guardian Portal inbox and automated SMS summary notifications sent to primary guardians via `NotificationAdapter`.
+- **Read Receipt Audit:** The `announcement_recipients` junction table records `read_at` timestamps when guardians open messages in the portal, giving school administrators real-time read audit percentages.
+
+---
+
+## 3.4 Faculty Supervisory & Performance Reporting
+
+### Automated Aggregate RPCs
+Supervisory monitoring (`/faculty-reports`) eliminates heavy client aggregation through optimized Postgres functions:
+- `get_faculty_attendance_summary(p_teacher_id, p_start_date, p_end_date)`: Aggregates total sessions held, learners marked, present/late/absent distributions, and overall classroom attendance rate.
+- `get_faculty_grades_status(p_teacher_id, p_school_year_id)`: Summarizes assigned learning areas, enrolled student counts, quarterly score entry progress (Q1–Q4), and publication states.
+- **Export & Print Architecture:** Compliant with repo minimalist rules (zero external PDF/XLSX dependencies). Print layouts use CSS `@media print` with official DepEd headers and signature lines for Advisers and School Principals. Data export uses RFC 4180 CSV serialization.
+
+---
+
+## 3.5 Student Disciplinary Violations & Incident Tracking
+
+### Workflow & Privacy Controls
+Disciplinary records are managed via `src/features/violations/`:
+- **Incident Lifecycle:** Reported (`reported`) → Acknowledged (`acknowledged`) → Case Closed (`resolved`). All state transitions require resolution notes and append to `user_logs`.
+- **Real-Time Notification Banner:** Subscribes to Supabase Realtime channel `violations_live_*` to trigger instant audio-visual alert banners across active staff terminals upon incident reporting.
+- **"Who Saw It" Audit Trail:** Tracks staff views in `violation_views` with first-seen and last-seen timestamps, ensuring administrative accountability.
+- **Parental Privacy Protection:** Violations are strictly restricted to authorized faculty and administrative staff. Guardians are prevented from viewing infractions to protect student dignity and avoid peer stigmatization.
+
+---
+
+## 3.6 Edge AI YOLO Model Integration Architecture (Future Vision)
+
+The physical turnstile edge engine (`edge_engine/gate_biometrics.py`) is architected for future multi-task YOLO deep learning models (e.g. YOLOv8 / YOLOv11):
+- **Schema Readiness:** The `violations.source` column supports values such as `'yolo_model'` or `'turnstile_ai_cam'`, with `evidence_path` linking to snapshot frames saved in the `violation-evidence` bucket.
+- **Edge Inference Pipeline:**
+  ```text
+  [Turnstile RTSP Camera]
+            │
+            ▼
+  [YOLO Multi-Task Inference Node]
+     ├── Head 1: Face Detection & SFace Recognition (Attendance)
+     ├── Head 2: Uniform & ID Compliance Detector
+     └── Head 3: Loitering & Hallway Intrusion Detection
+            │
+            ▼
+  [Non-blocking Asynchronous Dispatcher]
+     ├── Match >= 90% ──> recognition_events (Gate Entry/Exit)
+     └── Policy Infraction ──> violations (source='yolo_model', evidence_path=s3_uri)
+  ```
+- **Local Fallback:** Until edge cameras are upgraded with YOLO accelerators, manual entry through the web application serves as the primary, fully functional input mechanism.
+
+---
+
 # COMPLIANCE & RUBRIC VERIFICATION MATRIX
 
 This matrix directly maps every requirement from the **IT 11 Prelim Exam/Project Rubric** to its exact documentation section and source implementation:
 
 | Rubric Category | Specific Criterion | Coverage Status in this Document | Concrete Implementation in Codebase |
 |---|---|---|---|
-| **System Design** | **All Modules** laid out, presented, and discussed | Covered in Depth (Section 1.1) | 10 modular subsystems in `src/features/` and `src/routes/` |
-| **System Design** | **All Databases** laid out, presented, and discussed | Covered in Depth (Section 1.2) | PostgreSQL schema, IndexedDB `openFaceDb`, LocalStorage |
-| **System Design** | **Middleware** laid out, presented, and discussed | Covered in Depth (Section 1.3) | `ProtectedRoute.tsx`, `validation.ts`, Postgres RLS policies |
-| **System Design** | **Pipelines** laid out, presented, and discussed | Covered in Depth (Section 1.4) | 4 detailed sequence and flow diagrams (Gate, Registration, Roll Call, SMS) |
-| **System Design** | **APIs** laid out, presented, and discussed | Covered in Depth (Section 1.5) | Adapter interfaces, PostgREST endpoint specifications |
-| **System Architecture**| **Components** laid out, presented, and discussed | Covered in Depth (Section 2.1) | 6 decoupled subsystem components |
+| **System Design** | **All Modules** laid out, presented, and discussed | Covered in Depth (Section 1.1 & 3.1-3.5) | 13 modular subsystems in `src/features/` and `src/routes/` |
+| **System Design** | **All Databases** laid out, presented, and discussed | Covered in Depth (Section 1.2 & 3.2) | PostgreSQL schema, user_logs, announcements, violations |
+| **System Design** | **Middleware** laid out, presented, and discussed | Covered in Depth (Section 1.3 & 3.1) | `ProtectedRoute.tsx`, `validation.ts`, Postgres RLS policies |
+| **System Design** | **Pipelines** laid out, presented, and discussed | Covered in Depth (Section 1.4 & 3.6) | Gate, Registration, Roll Call, SMS, YOLO vision pipelines |
+| **System Design** | **APIs** laid out, presented, and discussed | Covered in Depth (Section 1.5 & 3.1-3.5) | Adapter interfaces, RPCs, Edge Functions, REST endpoints |
+| **System Architecture**| **Components** laid out, presented, and discussed | Covered in Depth (Section 2.1) | Decoupled subsystem components |
 | **System Architecture**| **Relationships** laid out, presented, and discussed| Covered in Depth (Section 2.2) | Complete interaction table and protocol definitions |
 | **System Architecture**| **Interfaces** laid out, presented, and discussed | Covered in Depth (Section 2.3) | Internal TypeScript, Hardware WebRTC/GPIO, Cloud REST, HCI |
 | **System Architecture**| **Layers** laid out, presented, and discussed | Covered in Depth (Section 2.4) | 6-tier architectural hierarchy diagram |
 | **System Architecture**| **Deployment View** laid out, presented, and discussed | Covered in Depth (Section 2.5) | Physical on-premise turnstiles + Cloud CDN/Singapore topology |
-| **System Architecture**| **Data Flow & Storage** laid out, presented, and discussed | Covered in Depth (Section 2.6) | End-to-end morning inrush timeline & Data Retention Matrix |
+| **System Architecture**| **Data Flow & Storage** laid out, presented, and discussed | Covered in Depth (Section 2.6 & 3.2) | Morning inrush timeline, Data Retention & Audit Matrix |
 
 ---
 *Document officially prepared for San Roque National High School IT 11 Prelim Examination Evaluation.*  

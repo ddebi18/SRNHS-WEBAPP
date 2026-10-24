@@ -39,11 +39,21 @@ SRNHS-WEBAPP/
 │   └── IMPROVEMENT_REPORT.md               # Hardening & enhancement report
 │
 ├── public/                                 # Static public assets
+│   ├── _headers                            # Security & CSP headers configuration (Cloudflare Pages)
 │   ├── _redirects                          # SPA fallback redirect rule
-│   └── srnhs-seal.jpg                      # Official San Roque NHS school seal
+│   ├── srnhs-seal.jpg                      # Official San Roque NHS school seal
+│   ├── models/                             # WebAssembly ONNX neural network models
+│   │   └── scrfd/                          # SCRFD multi-scale face detector ONNX models
+│   │       ├── scrfd_500m_bnkps.onnx
+│   │       └── scrfd_2.5g_bnkps.onnx
+│   └── test/                               # Benchmark & diagnostic test assets
+│       ├── scrfd_poc.html                  # SCRFD standalone browser proof-of-concept
+│       ├── ort/                            # Standalone onnxruntime-web scripts
+│       └── images/                         # Test face validation images
 │
 ├── scripts/                                # Project maintenance & security audit scripts
-│   └── check-no-dummy-auth.mjs             # Zero-dummy-auth CI verification script
+│   ├── check-no-dummy-auth.mjs             # Zero-dummy-auth CI verification script
+│   └── run_phase0_benchmark.mjs            # Face detection & recognition latency benchmark
 │
 ├── infra/                                  # Local and edge infrastructure configs
 │   └── mediamtx.yml                        # MediaMTX WebRTC (WHEP) / RTSP video streamer
@@ -74,6 +84,8 @@ SRNHS-WEBAPP/
 │
 ├── supabase/                               # Supabase backend definitions
 │   ├── functions/                          # Supabase Edge Functions (Deno / TypeScript)
+│   │   ├── create-guardian/                # Guardian invite, resend, and revoke Edge Function
+│   │   │   └── index.ts
 │   │   ├── notify-test-sms/                # SMS delivery test & diagnostic function
 │   │   │   ├── .env.example                # Function test environment template
 │   │   │   ├── README.md                   # Edge function deployment and test guide
@@ -82,6 +94,9 @@ SRNHS-WEBAPP/
 │   │   └── send-sms/                       # Cloud SMS dispatcher function
 │   │       └── index.ts                    # SMS dispatcher function handler
 │   ├── migrations/                         # PostgreSQL schema migrations and RLS policies
+│   │   ├── 20261024000001_student_profiling_and_enrollment.sql
+│   │   ├── 20261024000002_faculty_features.sql
+│   │   └── 20261024000003_guardian_logs_announcements_reports_violations.sql
 │   └── scripts/                            # Administrative setup & maintenance scripts
 │       ├── bootstrap_admin.ts              # Initial administrator provisioning
 │       ├── check_schema.ts                 # Database schema verification
@@ -98,35 +113,49 @@ SRNHS-WEBAPP/
     │   └── siteConfig.ts                   # Site navigation, titles, and branding constants
     │
     ├── context/                            # Global React Contexts
-    │   ├── AuthContext.tsx                 # Supabase session & RBAC authentication state
+    │   ├── AuthContext.tsx                 # Supabase session & RBAC authentication state (Admin, Teacher, Guardian)
     │   └── ThemeContext.tsx                # Dark / Light theme provider
     │
     ├── hooks/                              # Shared custom React hooks
-    │   └── useRole.ts                      # Role-based authorization hooks (Admin vs Teacher)
+    │   └── useRole.ts                      # Role-based authorization hooks (Admin vs Teacher vs Guardian)
     │
     ├── lib/                                # Core utility libraries & clients
     │   ├── supabase.ts                     # Supabase JS client instance & config
     │   ├── queryClient.ts                  # TanStack React Query global client
     │   ├── utils.ts                        # Styling helper (cn / clsx / tailwind-merge)
-    │   ├── validation.ts                   # Common Zod schema validators
+    │   ├── validation.ts                   # Zod schema validators (profiles, grades, announcements, violations)
+    │   ├── auditLogger.ts                  # Append-only immutable client audit logger with sanitization
     │   ├── dashboardLabels.ts              # UI display label constants
-    │   └── dashboardLabels.test.ts         # Unit tests for display labels
+    │   ├── dashboardLabels.test.ts         # Unit tests for display labels
+    │   └── faceOverlayGeometry.ts          # Bounding-box alignment for cover/contain video
     │
     ├── types/                              # Global domain TypeScript definitions
-    │   └── domain.types.ts                 # Core database schemas, students, logs, and roles
+    │   └── domain.types.ts                 # Core schemas (students, guardians, logs, memos, reports, violations)
     │
     ├── routes/                             # Top-level Page Components & Router
     │   ├── AppRouter.tsx                   # Central router with protected route guards
     │   ├── LoginPage.tsx                   # Unified login selector page
     │   ├── AdminLoginPage.tsx              # Administrator login portal
     │   ├── TeacherLoginPage.tsx            # Faculty teacher login portal
+    │   ├── GuardianLoginPage.tsx           # Guardian & parent portal login page
+    │   ├── GuardianPortalPage.tsx          # Dedicated view-only portal for linked guardians
     │   ├── DashboardOverviewPage.tsx       # Live admin dashboard overview & metrics
     │   ├── GateLogPage.tsx                 # Real-time turnstile entry/exit stream monitor
     │   ├── ClassroomAttendancePage.tsx     # Teacher classroom attendance tracker & roll call
     │   ├── FaceRegistrationPage.tsx        # 3-angle student biometric enrolment portal
-    │   ├── StudentsPage.tsx                # Student master roster management
+    │   ├── StudentsPage.tsx                # Student master roster & guardian management
     │   ├── FacultyPage.tsx                 # Faculty load & teacher schedule management
     │   ├── AcademicsPage.tsx               # Academic tracks, strands, & sections management
+    │   ├── GradesPage.tsx                  # Quarterly grade assessment and publishing portal
+    │   ├── EventsPage.tsx                  # School event attendance management
+    │   ├── AnnouncementsPage.tsx           # School memos & parent announcements with read tracking
+    │   ├── FacultyReportsPage.tsx          # Comprehensive supervisory performance reports
+    │   ├── ViolationsPage.tsx              # Disciplinary infraction logging, realtime alerts & read tracking
+    │   ├── UserLogsPage.tsx                # Immutable append-only audit trail & CSV export
+    │   ├── RoomsPage.tsx                   # Academic rooms and building facility manager
+    │   ├── SectionsPage.tsx                # Section roster and adviser assignment page
+    │   ├── SubjectsPage.tsx                # Subject and curriculum offering management
+    │   ├── SetPasswordPage.tsx             # Password setup/recovery page (staff & guardians)
     │   ├── SmsLogPage.tsx                  # SMS notification dispatch audit logs
     │   ├── TempAccessPage.tsx              # Temporary visitor & student QR pass generator
     │   ├── ForbiddenPage.tsx               # 403 Forbidden access denial page
@@ -144,13 +173,21 @@ SRNHS-WEBAPP/
     │       ├── DataTable.tsx               # Sortable, filterable paginated data table
     │       ├── Modal.tsx                   # Accessible modal dialog
     │       ├── NavigationLayout.tsx        # Responsive sidebar, header, and user menu
+    │       ├── SearchableSelect.tsx        # Searchable select dropdown primitive
     │       ├── StateViews.tsx              # Empty, loading, and error UI placeholders
     │       └── StatusBadge.tsx             # Color-coded attendance status pills
     │
     ├── features/                           # Feature-driven business modules
     │   ├── academics/                      # Academic structure management
+    │   │   ├── academicsStorage.ts         # Local caching & fallback for academic entities
     │   │   └── components/
-    │   │       └── AcademicsManager.tsx    # Sections and grade level management UI
+    │   │       ├── AcademicsManager.tsx    # Sections and grade level management UI
+    │   │       ├── RoomsManager.tsx        # Classrooms & campus rooms manager
+    │   │       ├── SectionsManager.tsx     # Section advisory and enrollment manager
+    │   │       └── SubjectsManager.tsx     # Curriculum and subject units manager
+    │   │
+    │   ├── announcements/                  # Announcements & memos to parents
+    │   │   └── api.ts                      # Audience targeting, attachment upload, SMS, read audit
     │   │
     │   ├── attendance/                     # Core attendance monitoring & vision engine
     │   │   ├── components/
@@ -161,10 +198,12 @@ SRNHS-WEBAPP/
     │   │   ├── hooks/
     │   │   │   └── useFaceRecognition.ts   # Web-based real-time face detection hook
     │   │   ├── lib/
-    │   │   │   ├── faceNetEngine.ts        # Client-side face descriptor extraction
+    │   │   │   ├── attendanceDedup.ts      # Multi-face attendance event deduplication
+    │   │   │   ├── faceNetEngine.ts        # Client-side face descriptor extraction (FaceNet)
     │   │   │   ├── faceNetMatcher.ts       # Cosine similarity vector matcher
+    │   │   │   ├── faceRecognitionFallback.ts # Graceful fallback when ONNX/WASM fails
+    │   │   │   ├── faceScanLock.ts         # Concurrency guard during face recognition
     │   │   │   ├── faceTracking.ts         # Motion-predicted one-to-one face track assignment
-    │   │   │   ├── faceOverlayGeometry.ts  # Bounding-box alignment for cover/contain video
     │   │   │   ├── recognitionStatus.ts    # Biometric match status definitions
     │   │   │   └── tesdaQualityEngine.ts   # Image illumination and clarity scoring
     │   │   └── services/
@@ -196,8 +235,13 @@ SRNHS-WEBAPP/
     │   │       └── ViewRegisteredFaceModal.tsx # Inspection modal for enrolled portraits
     │   │
     │   ├── faculty/                        # Faculty teacher management
+    │   │   ├── api.ts                      # Faculty profiles and teaching assignment APIs
+    │   │   ├── conflictUtils.ts            # Schedule conflict detection algorithms
     │   │   └── components/
     │   │       └── FacultyManager.tsx      # Teacher profile & section assignment UI
+    │   │
+    │   ├── facultyReports/                 # Supervisory & faculty performance reporting
+    │   │   └── api.ts                      # Attendance summary, grades status, violations, activity RPCs
     │   │
     │   ├── notifications/                  # SMS parent notification subsystem
     │   │   ├── components/
@@ -206,31 +250,68 @@ SRNHS-WEBAPP/
     │   │       ├── index.ts                # Notification service exports
     │   │       ├── NotificationAdapter.ts  # Notification interface contract
     │   │       ├── MockNotificationAdapter.ts # Offline notification mock
+    │   │       ├── gateSmsDispatcher.ts    # Cooldown-guarded gate entry/exit SMS dispatcher
     │   │       └── supabaseNotificationAdapter.ts # Supabase Edge Function SMS delivery adapter
     │   │
     │   ├── students/                       # Student registry subsystem
-    │   │   ├── api.ts                      # Student CRUD and roster fetching queries
+    │   │   ├── api.ts                      # Student CRUD, 2-guardian rule, and portal invite APIs
+    │   │   ├── lib/
+    │   │   │   └── bulkImport.ts           # Dual-guardian Excel/CSV roster parser & pre-validation
     │   │   └── components/
-    │   │       └── StudentManager.tsx      # Student record editor & LRN management
+    │   │       ├── StudentManager.tsx      # Student record editor & guardian status/invite badges
+    │   │       ├── StudentProfileModal.tsx # 2-guardian DepEd enrollment modal with validation
+    │   │       ├── BulkStudentUploadModal.tsx # Excel/CSV batch enrollment modal
+    │   │       └── LevelingManagerModal.tsx# DepEd year-end promotion & section transfer modal
     │   │
     │   ├── sync/                           # Offline-first caching & sync
     │   │   ├── syncService.ts              # LocalStorage / IndexedDB cache synchronization
     │   │   └── components/
     │   │       └── DeviceSyncModal.tsx     # Offline sync status & manual trigger modal
     │   │
-    │   └── tempAccess/                     # Visitor & temporary QR access passes
-    │       ├── api.ts                      # Temporary pass generation & validation APIs
-    │       ├── types.ts                    # QR pass schema definitions
-    │       └── components/
-    │           └── GenerateAccessQrModal.tsx # QR code generator modal
+    │   ├── tempAccess/                     # Visitor & temporary QR access passes
+    │   │   ├── api.ts                      # Temporary pass generation & validation APIs
+    │   │   ├── types.ts                    # QR pass schema definitions
+    │   │   └── components/
+    │   │       └── GenerateAccessQrModal.tsx # QR code generator modal
+    │   │
+    │   └── violations/                     # Student disciplinary infraction management
+    │       └── api.ts                      # Realtime channel, manual reporting, view tracking, and status workflow
     │
     └── test/                               # Frontend unit and integration tests (Vitest)
         ├── setup.ts                        # Vitest environment setup and mocks
         ├── RecognitionAdapter.test.ts      # Tests for Supabase / Mock recognition adapters
+        ├── SearchableSelect.test.tsx       # Tests for SearchableSelect dropdown
+        ├── SupabaseRecognitionAdapter.test.ts # Tests for Supabase realtime biometric events
+        ├── adviserRules.test.ts            # Tests for adviser assignment validations
+        ├── announcements.test.ts           # Tests for memos, targeting, attachments & read tracking
+        ├── attendanceDedup.test.ts         # Tests for attendance event deduplication
         ├── authHardening.test.ts           # Tests for role-based authentication & route security
+        ├── bulkImport.test.ts              # Tests for Excel & CSV batch roster import & validation
+        ├── classQrSession.test.ts          # Tests for QR classroom attendance sessions & token rotation
+        ├── eventAttendance.test.ts         # Tests for school events, check-ins, and duplicate prevention
+        ├── faceCaptureSession.test.tsx     # Tests for 3-angle multi-frame enrolment session
+        ├── faceNetEngine.test.ts           # Tests for FaceNet feature extraction & concurrency
         ├── faceNetMatcher.test.ts          # Tests for client-side cosine similarity matching
+        ├── faceRegAdviserScope.test.ts     # Tests for adviser face registration scoping
+        ├── faceRecognitionFallback.test.ts # Tests for face recognition fallback logic
+        ├── faceRegistrationDescriptors.test.ts # Tests for descriptor normalization & hashing
+        ├── faceRegistrationPersistence.test.ts # Tests for student biometric storage persistence
         ├── faceTracking.test.ts            # Tests for multi-face tracking and overlay geometry
-        └── tempAccess.test.ts              # Tests for QR temporary access pass logic
+        ├── facultyReports.test.ts          # Tests for faculty performance aggregates & role scoping
+        ├── gateSmsNotification.test.ts     # Tests for gate entry/exit SMS alerts & cooldowns
+        ├── gradeCalculations.test.ts       # Tests for DepEd quarterly and general average computation
+        ├── guardianRoleAndRls.test.ts      # Tests for 2-guardian DepEd rule, portal access & RLS denial
+        ├── inviteFlow.test.ts              # Tests for faculty invite & password setup flow
+        ├── leveling.test.ts                # Tests for student promotion & mid-year transfer rules
+        ├── multiFaceRecognitionBench.test.ts # Benchmarking test for multi-face concurrent pipeline
+        ├── recognitionBanner.test.ts       # Tests for real-time recognition popup banner & dedup
+        ├── scheduleConflict.test.ts        # Tests for schedule conflict detection logic
+        ├── sectionRules.test.ts            # Tests for section track, school year, and lock rules
+        ├── studentProfileValidation.test.ts # Tests for student profile, LRN, and 2-guardian schemas
+        ├── teacherScheduleQuery.test.ts    # Tests for teacher schedule queries & RLS
+        ├── tempAccess.test.ts              # Tests for QR temporary access pass logic
+        ├── userLogs.test.ts                # Tests for immutable append-only audit trail & sanitization
+        └── violations.test.ts              # Tests for disciplinary infraction logging, views & RLS denial
 ```
 
 ---

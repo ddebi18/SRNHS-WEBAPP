@@ -22,7 +22,7 @@
 | **Icons** | [Lucide React](https://lucide.dev/) | `^0.469.0` | Vector icon system |
 | **Animations** | [Framer Motion](https://www.framer.com/motion/) | `^13.1.1` | Fluid UI transitions, micro-interactions, and modal animations |
 | **Forms & Validation** | [React Hook Form](https://react-hook-form.com/) + `@hookform/resolvers` + [Zod](https://zod.dev/) | `^7.54.0` / `^3.9.1` / `^3.24.1` | Schema-driven form validation and error handling |
-| **Client Face AI & Vision** | [`@vladmandic/face-api`](https://github.com/vladmandic/face-api), `@mediapipe/tasks-vision` | `^1.7.15` / `^1.0.1` | Web-based face landmark detection and enrolment verification |
+| **Client Face AI & Vision** | [`@vladmandic/face-api`](https://github.com/vladmandic/face-api), `@mediapipe/tasks-vision`, [`onnxruntime-web`](https://onnxruntime.ai/) | `^1.7.15` / `^1.0.1` / `^1.30.0` | Multi-face SCRFD ONNX detection, FaceNet embeddings, landmark verification & MediaPipe fallback |
 | **QR Code Generation** | `qrcode.react` | `^4.2.0` | Generation of temporary access and student pass QR codes |
 | **Testing Suite** | [Vitest](https://vitest.dev/), `@testing-library/react`, `@testing-library/jest-dom`, `jsdom` | `^2.1.8` / `^16.1.0` / `^6.6.3` / `^25.0.1` | Fast unit, component, and integration testing |
 

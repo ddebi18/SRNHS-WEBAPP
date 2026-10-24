@@ -10,6 +10,7 @@ import { Plus, RefreshCw, User, ShieldAlert, AlertCircle, Eye, ShieldCheck, Cloc
 import { useRole } from '@/hooks/useRole';
 import { ForbiddenState } from '@/components/ui/StateViews';
 import { cn } from '@/lib/utils';
+import { RecognitionResultBanner } from './RecognitionResultBanner';
 
 export const LiveGateLog: React.FC = () => {
   const { isAdmin } = useRole();
@@ -257,6 +258,9 @@ export const LiveGateLog: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Immediate Recognition Realtime Result Card */}
+      <RecognitionResultBanner />
 
       {/* Summary chips */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-slate-200 dark:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">

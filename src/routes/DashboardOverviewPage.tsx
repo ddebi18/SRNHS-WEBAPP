@@ -8,6 +8,7 @@ import { supabaseRecognitionAdapter } from '@/features/attendance/services/Supab
 import { activeNotificationAdapter } from '@/features/notifications/services';
 import { getStoredStudents } from '@/features/faceRegistration/api';
 import { LiveCameraFeedCard } from '@/features/attendance/components/LiveCameraFeedCard';
+import { RecognitionResultBanner } from '@/features/attendance/components/RecognitionResultBanner';
 import {
   ClipboardList,
   MessageSquare,
@@ -94,12 +95,14 @@ export const DashboardOverviewPage: React.FC = () => {
   const latestScan = recentEvents[0];
 
   return (
-    <motion.div
-      className="space-y-5 max-w-7xl mx-auto"
-      variants={staggerContainer}
-      initial="hidden"
-      animate="show"
-    >
+    <>
+      <RecognitionResultBanner />
+      <motion.div
+        className="space-y-5 max-w-7xl mx-auto"
+        variants={staggerContainer}
+        initial="hidden"
+        animate="show"
+      >
       {/* ── 1. Hero Institutional Header & Operational Bar ────────────────── */}
       <motion.div variants={fadeUp} className="bg-white dark:bg-[#0A2016] rounded-lg p-4 sm:p-5 border border-slate-200 dark:border-emerald-800/40 shadow-sm relative overflow-hidden">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 relative z-10">
@@ -605,6 +608,7 @@ export const DashboardOverviewPage: React.FC = () => {
 
       </motion.div>
     </motion.div>
-  );
+  </>
+);
 };
 
