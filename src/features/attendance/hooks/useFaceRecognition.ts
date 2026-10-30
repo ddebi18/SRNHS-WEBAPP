@@ -32,7 +32,6 @@ import {
   assignFaceDetectionTracks,
   canFastConfirmFaceMatch,
   findDuplicateStudentClaimLosers,
-  predictFaceTrackBox,
   selectFaceDescriptorDetections,
   updateFaceTrackIdentity,
 } from '../lib/faceTracking';
@@ -48,6 +47,7 @@ const MATCH_SWITCH_STABILITY_FRAMES = 5;
 const MAX_DESCRIPTORS_PER_SCAN = 3;
 const CONFIRMED_REVERIFY_INTERVAL_MS = 1000;
 const FAST_CONFIRM_ENABLED = import.meta.env.VITE_FACE_FAST_CONFIRM === 'true';
+const QUALITY_GATE_ENABLED = import.meta.env.VITE_FACE_QUALITY_GATE !== 'false';
 
 function scanOverrunCooldownMs(lastScanDurationMs: number): number {
   return Math.max(SCAN_OVERRUN_COOLDOWN_MIN_MS, lastScanDurationMs * 0.5);
@@ -94,6 +94,8 @@ export interface RecognizedFaceItem {
     detectorScore?: number;
     sharpnessVariance?: number;
     poseScore?: number;
+    retryStepSucceeded?: FaceRegionRecognitionResult['retryStepSucceeded'];
+    extractionFailureReason?: 'no_face_in_crop' | 'inference_error';
     timeToConfirmMs?: number;
     scansUsed?: number;
     predicted?: boolean;
@@ -120,6 +122,8 @@ interface FaceRecognitionTrack {
   scansUsed: number;
   confirmedAt?: number;
   bestCrop?: FaceRegionQualityAssessment;
+  sharpnessHistory: number[];
+  lastRetrySequenceAt: number;
 }
 
 type LiveFaceBoxesRef = Readonly<{ current: readonly FaceDetectionRegion[] }>;
@@ -432,6 +436,33 @@ export function useFaceRecognition(
         if (cancelled) return;
         overlapDebugUntilRef.current = import.meta.env.DEV ? performance.now() + 5000 : 0;
         let regionResultLogCount = 0;
+        let qualityScanLogCount = 0;
+        const qualityLogCounts = {
+          faces: 0,
+          qualityUsable: 0,
+          qualityRejected: 0,
+          selected: 0,
+          skipped: 0,
+          gateRejected: 0,
+          descriptor: 0,
+          failed: 0,
+          quality_rejected: 0,
+          skippedByDescriptor: 0,
+        };
+        let cropAttemptLogCount = 0;
+        const cropAttemptCounts = {
+          no_face_in_crop: 0,
+          inference_error: 0,
+          low_score: 0,
+          misaligned: 0,
+          quality_rejected: 0,
+          succeededByStep: {
+            initial: 0,
+            larger_padding_40: 0,
+            lower_score: 0,
+            ssd_mobilenet: 0,
+          },
+        };
 
         const scheduleScan = (delay: number) => {
           cancelScheduledScan();
@@ -501,8 +532,44 @@ export function useFaceRecognition(
             }
 
             const timestamp = Date.now();
-            const qualityAssessments = regions.map(region => analyzeFaceRegionQuality(video, region));
+            const qualityAssessments = regions.map(region => {
+              try {
+                return analyzeFaceRegionQuality(video, region);
+              } catch (error) {
+                if (import.meta.env.DEV) {
+                  console.warn('[FaceRecognition] Quality assessment threw; allowing descriptor attempt:', error);
+                }
+                const paddingX = Math.max(8, region.width * 0.2);
+                const paddingY = Math.max(8, region.height * 0.2);
+                const cropX = Math.max(0, Math.floor(region.x - paddingX));
+                const cropY = Math.max(0, Math.floor(region.y - paddingY));
+                const crop = document.createElement('canvas');
+                crop.width = Math.max(1, Math.min(video.videoWidth || 640, Math.ceil(region.x + region.width + paddingX)) - cropX);
+                crop.height = Math.max(1, Math.min(video.videoHeight || 480, Math.ceil(region.y + region.height + paddingY)) - cropY);
+                try {
+                  crop.getContext('2d')?.drawImage(video, cropX, cropY, crop.width, crop.height, 0, 0, crop.width, crop.height);
+                } catch (cropError) {
+                  if (import.meta.env.DEV) {
+                    console.warn('[FaceRecognition] Could not copy fallback face crop:', cropError);
+                  }
+                }
+                const faceSizePx = Math.min(region.width, region.height);
+                return {
+                  score: 0,
+                  faceSizePx,
+                  detectorScore: region.score ?? 1,
+                  sizeScore: Math.min(1, faceSizePx / 120),
+                  sharpnessVariance: 0,
+                  poseScore: 1,
+                  usable: true,
+                  crop,
+                  cropX,
+                  cropY,
+                };
+              }
+            });
             let provisionalTracks: Array<FaceRecognitionTrack | undefined> = [];
+            let qualityGateReasons: Array<string | undefined> = [];
             if (regions.length > 0) {
               const frameWidth = video.videoWidth || 640;
               const frameHeight = video.videoHeight || 480;
@@ -523,16 +590,30 @@ export function useFaceRecognition(
                   ? undefined
                   : previousTracks[trackIndex];
               });
+              qualityGateReasons = qualityAssessments.map((quality, index) => {
+                const track = provisionalTracks[index];
+                const history = track?.sharpnessHistory ?? [];
+                const recent = [...history].sort((a, b) => a - b);
+                const baseline = recent.length ? recent[Math.floor(recent.length / 2)]! : 0;
+                const farBelowRecentSharpness = recent.length >= 2 &&
+                  baseline > 0 &&
+                  quality.sharpnessVariance < baseline * 0.25;
+                return quality.reason ?? (farBelowRecentSharpness ? 'blurry' : undefined);
+              });
               provisionalTracks.forEach((track, index) => {
                 const quality = qualityAssessments[index]!;
                 if (track && quality.usable && (!track.bestCrop || quality.score > track.bestCrop.score)) {
                   track.bestCrop = quality;
                 }
+                if (track) {
+                  track.sharpnessHistory = [...track.sharpnessHistory, quality.sharpnessVariance].slice(-5);
+                }
               });
               const selection = selectFaceDescriptorDetections(
-                provisionalTracks.map(track => ({
+                provisionalTracks.map((track, index) => ({
                   confirmed: Boolean(track?.confirmedStudent),
                   lastDescriptorAt: track?.lastDescriptorAt ?? 0,
+                  poseScore: qualityAssessments[index]!.poseScore,
                 })),
                 timestamp,
                 descriptorRotationCursorRef.current,
@@ -540,9 +621,16 @@ export function useFaceRecognition(
                 CONFIRMED_REVERIFY_INTERVAL_MS
               );
               descriptorRotationCursorRef.current = selection.nextRotationCursor;
-              const selectedIndices = selection.indices.filter(index =>
-                qualityAssessments[index]!.usable || Boolean(provisionalTracks[index]?.bestCrop)
-              );
+              const selectedIndices = selection.indices.filter(index => {
+                const track = provisionalTracks[index];
+                const firstOrDueAttempt = !track?.lastDescriptorAt ||
+                  timestamp - track.lastDescriptorAt >= CONFIRMED_REVERIFY_INTERVAL_MS;
+                const hasCachedCrop = Boolean(track?.bestCrop);
+                return !QUALITY_GATE_ENABLED ||
+                  firstOrDueAttempt ||
+                  !qualityGateReasons[index] ||
+                  hasCachedCrop;
+              });
               setIsAnalyzing(true);
               setRecognizedFaces(regions.map((region, index) => ({
                 id: `scan-${Math.round(performance.now())}-${index}`,
@@ -556,9 +644,18 @@ export function useFaceRecognition(
 
               const selectedResults = await Promise.all(selectedIndices.map(index => {
                 const current = qualityAssessments[index]!;
-                const cached = provisionalTracks[index]?.bestCrop;
-                const crop = cached && cached.score > current.score ? cached : current;
-                return describePaddedFaceCrop(regions[index]!, crop.crop, crop.cropX, crop.cropY);
+                const track = provisionalTracks[index];
+                const allowRetries = !track?.lastRetrySequenceAt ||
+                  timestamp - track.lastRetrySequenceAt >= 1000;
+                return describePaddedFaceCrop(
+                  regions[index]!,
+                  current.crop,
+                  current.cropX,
+                  current.cropY,
+                  undefined,
+                  video,
+                  allowRetries
+                );
               }));
               const resultByIndex = new Map(
                 selectedIndices.map((index, selectedIndex) => [index, selectedResults[selectedIndex]!])
@@ -566,9 +663,101 @@ export function useFaceRecognition(
               regionResults = regions.map((region, index) => resultByIndex.get(index) ?? {
                 region,
                 status: 'skipped',
-                reason: qualityAssessments[index]!.usable ? 'descriptor_budget' : 'low_quality',
+                reason: !selection.indices.includes(index)
+                  ? 'descriptor_budget'
+                  : qualityGateReasons[index] && !provisionalTracks[index]?.bestCrop && QUALITY_GATE_ENABLED
+                    ? 'low_quality'
+                    : 'descriptor_budget',
                 durationMs: 0,
               });
+
+              if (import.meta.env.DEV && qualityScanLogCount < 10) {
+                qualityScanLogCount++;
+                regions.forEach((_, index) => {
+                  const quality = qualityAssessments[index]!;
+                  const wasSelected = selection.indices.includes(index);
+                  const wasAttempted = selectedIndices.includes(index);
+                  const result = resultByIndex.get(index);
+                  const track = provisionalTracks[index];
+                  const firstOrDueAttempt = !track?.lastDescriptorAt ||
+                    timestamp - track.lastDescriptorAt >= CONFIRMED_REVERIFY_INTERVAL_MS;
+                  const selectedWhy = !QUALITY_GATE_ENABLED
+                    ? 'quality gate disabled'
+                    : firstOrDueAttempt
+                      ? 'first or one-second descriptor attempt'
+                      : track?.bestCrop && qualityGateReasons[index]
+                        ? 'cached quality crop'
+                        : 'quality gate passed';
+                  const skippedWhy = !wasSelected
+                    ? 'descriptor budget / reverify not due'
+                    : !wasAttempted
+                      ? qualityGateReasons[index] ?? 'quality gate'
+                      : undefined;
+                  qualityLogCounts.faces++;
+                  if (quality.usable) qualityLogCounts.qualityUsable++;
+                  else qualityLogCounts.qualityRejected++;
+                  if (QUALITY_GATE_ENABLED && qualityGateReasons[index]) {
+                    qualityLogCounts.gateRejected++;
+                  }
+                  if (wasAttempted) qualityLogCounts.selected++;
+                  else qualityLogCounts.skipped++;
+                  if (!wasSelected) qualityLogCounts.skippedByDescriptor++;
+                  if (result) qualityLogCounts[result.status]++;
+                  console.info('[FaceRecognition] Quality scan', {
+                    scan: qualityScanLogCount,
+                    face: index,
+                    quality: {
+                      size: quality.faceSizePx,
+                      detectorScore: quality.detectorScore,
+                      sharpnessVariance: quality.sharpnessVariance,
+                      poseScore: quality.poseScore,
+                      usable: quality.usable,
+                      reason: qualityGateReasons[index] ?? quality.reason ?? null,
+                    },
+                    selection: wasAttempted
+                      ? { result: 'selected', reason: selectedWhy }
+                      : { result: 'skipped', reason: skippedWhy },
+                    descriptor: result
+                      ? {
+                          status: result.status,
+                          reason: 'reason' in result
+                            ? result.reason
+                            : result.status === 'descriptor'
+                              ? 'descriptor_extracted'
+                              : undefined,
+                        }
+                      : { status: 'skipped', reason: skippedWhy },
+                  });
+                });
+                if (qualityScanLogCount === 10) {
+                  console.info('[FaceRecognition] First 10 quality scan aggregate', qualityLogCounts);
+                }
+              }
+              if (import.meta.env.DEV && cropAttemptLogCount < 50) {
+                selectedIndices.forEach((index, selectedIndex) => {
+                  const result = selectedResults[selectedIndex]!;
+                  result.retryAttempts?.forEach(retryAttempt => {
+                    if (cropAttemptLogCount >= 50) return;
+                    cropAttemptLogCount++;
+                    if (retryAttempt.failureReason) {
+                      cropAttemptCounts[retryAttempt.failureReason]++;
+                    } else if (result.status === 'descriptor') {
+                      cropAttemptCounts.succeededByStep[retryAttempt.step]++;
+                    }
+                    console.info('[FaceRecognition] Crop extraction attempt', {
+                      attempt: cropAttemptLogCount,
+                      trackId: provisionalTracks[index]?.id ?? `new-face-${index}`,
+                      step: retryAttempt.step,
+                      failureReason: retryAttempt.failureReason,
+                      error: retryAttempt.error,
+                      retryStepSucceeded: result.retryStepSucceeded ?? null,
+                    });
+                    if (cropAttemptLogCount === 50) {
+                      console.info('[FaceRecognition] First 50 crop extraction attempts aggregate', cropAttemptCounts);
+                    }
+                  });
+                });
+              }
             } else {
               setRecognizedFaces([]);
             }
@@ -585,7 +774,7 @@ export function useFaceRecognition(
             );
             const matches = decisions.map(decision => decision?.student ?? null);
             const trackAssignments = assignFaceDetectionTracks(
-              attempts.map(attempt => attempt.status === 'descriptor' ? attempt.detection.box : attempt.region),
+              attempts.map(attempt => attempt.region),
               faceTracksRef.current.map(track => ({
                 ...track,
                 studentId: track.confirmedStudent?.id ?? (track.candidateStudentId || null),
@@ -602,7 +791,7 @@ export function useFaceRecognition(
               const attempt = attempts[detectionIndex]!;
               const detection = attempt.status === 'descriptor' ? attempt.detection : null;
               const match = matches[detectionIndex] ?? null;
-              const bounds = detection?.box ?? attempt.region;
+              const bounds = attempt.region;
               const box: FaceRecognitionBox = {
                 x: bounds.x,
                 y: bounds.y,
@@ -635,6 +824,8 @@ export function useFaceRecognition(
                 matchHistory: [],
                 firstDetectedAt: timestamp,
                 scansUsed: 0,
+                sharpnessHistory: [],
+                lastRetrySequenceAt: 0,
               };
               if (assignedTrackIndex !== null && assignedTrackIndex !== undefined) {
                 usedTracks.add(assignedTrackIndex);
@@ -656,9 +847,15 @@ export function useFaceRecognition(
               if (quality.usable && (!track.bestCrop || quality.score >= track.bestCrop.score)) {
                 track.bestCrop = quality;
               }
+              if (!bestTrack) {
+                track.sharpnessHistory = [quality.sharpnessVariance];
+              }
               if (attempt.status === 'descriptor') {
                 track.lastDescriptorAt = timestamp;
                 track.scansUsed++;
+              }
+              if ((attempt.retryAttempts?.length ?? 0) > 1) {
+                track.lastRetrySequenceAt = timestamp;
               }
               if (match && decisions[detectionIndex]) {
                 track.lastMatchDistance = decisions[detectionIndex]!.result.distance;
@@ -740,7 +937,9 @@ export function useFaceRecognition(
                 diagnostic: {
                   reason: attempt.status === 'descriptor'
                     ? undefined
-                    : attempt.reason,
+                    : attempt.status === 'skipped' && attempt.reason === 'low_quality'
+                      ? qualityGateReasons[detectionIndex] ?? attempt.reason
+                      : attempt.reason,
                   matchReason: decision?.result.reason,
                   distance: decision?.result.distance,
                   cropDurationMs: attempt.durationMs,
@@ -752,6 +951,12 @@ export function useFaceRecognition(
                   detectorScore: quality.detectorScore,
                   sharpnessVariance: quality.sharpnessVariance,
                   poseScore: quality.poseScore,
+                  retryStepSucceeded: attempt.retryStepSucceeded,
+                  extractionFailureReason: attempt.status === 'failed'
+                    ? attempt.reason === 'no_face_in_crop'
+                      ? 'no_face_in_crop'
+                      : 'inference_error'
+                    : undefined,
                   timeToConfirmMs: track.confirmedAt
                     ? track.confirmedAt - track.firstDetectedAt
                     : timestamp - track.firstDetectedAt,
@@ -761,37 +966,16 @@ export function useFaceRecognition(
               });
             }
 
-            faceTracksRef.current.forEach((track, trackIndex) => {
-              if (usedTracks.has(trackIndex)) return;
-              track.missedFrames++;
-              if (track.missedFrames > 2) return;
-              nextTracks.push(track);
-              recognizedItems.push({
-                id: track.id,
-                student: track.confirmedStudent,
-                box: { ...predictFaceTrackBox(
-                  track.box,
-                  track.velocityX,
-                  track.velocityY,
-                  track.lastSeenAt,
-                  timestamp
-                ), videoWidth: frameWidth, videoHeight: frameHeight },
-                isLive: true,
-                isMatching: false,
-                status: track.confirmedStudent ? 'recognized' : 'unknown',
-                diagnostic: {
-                  distance: Number.isFinite(track.lastMatchDistance)
-                    ? track.lastMatchDistance
-                    : undefined,
-                  missedFrames: track.missedFrames,
-                  predicted: true,
-                  scansUsed: track.scansUsed,
-                  timeToConfirmMs: track.confirmedAt
-                    ? track.confirmedAt - track.firstDetectedAt
-                    : timestamp - track.firstDetectedAt,
-                },
+            if (regions.length === 0) {
+              faceTracksRef.current = [];
+            } else {
+              faceTracksRef.current.forEach((track, trackIndex) => {
+                if (usedTracks.has(trackIndex)) return;
+                track.missedFrames++;
+                if (track.missedFrames > 1) return;
+                nextTracks.push(track);
               });
-            });
+            }
             const duplicateLosers = findDuplicateStudentClaimLosers(
               recognizedItems.map((item, index) => ({
                 studentId: item.student?.id ?? null,

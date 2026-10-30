@@ -162,7 +162,22 @@ export interface FaceRegionQualityAssessment {
   cropY: number;
 }
 
-export type FaceRegionRecognitionResult =
+export type FaceCropRetryStep = 'initial' | 'larger_padding_40' | 'lower_score' | 'ssd_mobilenet';
+
+export type FaceCropFailureReason =
+  | 'no_face_in_crop'
+  | 'inference_error'
+  | 'low_score'
+  | 'misaligned'
+  | 'quality_rejected';
+
+export interface FaceCropRetryAttempt {
+  step: FaceCropRetryStep;
+  failureReason: FaceCropFailureReason | null;
+  error?: string;
+}
+
+export type FaceRegionRecognitionResult = (
   | {
       region: FaceDetectionRegion;
       status: 'descriptor';
@@ -188,7 +203,11 @@ export type FaceRegionRecognitionResult =
       status: 'skipped';
       reason: 'descriptor_budget' | 'reverify_not_due' | 'low_quality';
       durationMs: 0;
-    };
+    }
+) & {
+  retryAttempts?: FaceCropRetryAttempt[];
+  retryStepSucceeded?: FaceCropRetryStep;
+};
 
 function getQualityRejection(
   detection: DetectionWithDescriptor | undefined | null,
@@ -403,7 +422,7 @@ export function analyzeFaceRegionQuality(
   input: HTMLVideoElement | HTMLCanvasElement,
   region: FaceDetectionRegion,
   minFaceSize = 60,
-  minSharpnessVariance = 12
+  minSharpnessVariance = 0
 ): FaceRegionQualityAssessment {
   const isVideo = typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement;
   const inputWidth = isVideo ? input.videoWidth : input.width;
@@ -417,16 +436,26 @@ export function analyzeFaceRegionQuality(
   const crop = document.createElement('canvas');
   crop.width = cropRight - cropX;
   crop.height = cropBottom - cropY;
-  const context = crop.getContext('2d', { willReadFrequently: true });
-  if (!context || crop.width <= 0 || crop.height <= 0) {
-    throw new Error('Could not create a quality-assessment face crop.');
+  let sharpnessVariance = 0;
+  let assessmentFailed = false;
+  try {
+    const context = crop.getContext('2d', { willReadFrequently: true });
+    if (!context || crop.width <= 0 || crop.height <= 0) {
+      assessmentFailed = true;
+    } else {
+      context.drawImage(input, cropX, cropY, crop.width, crop.height, 0, 0, crop.width, crop.height);
+      sharpnessVariance = measureLaplacianVariance(
+        context.getImageData(0, 0, crop.width, crop.height).data,
+        crop.width,
+        crop.height
+      );
+    }
+  } catch (error) {
+    assessmentFailed = true;
+    if (import.meta.env.DEV) {
+      console.warn('[FaceRecognition] Quality assessment failed; allowing descriptor attempt:', error);
+    }
   }
-  context.drawImage(input, cropX, cropY, crop.width, crop.height, 0, 0, crop.width, crop.height);
-  const sharpnessVariance = measureLaplacianVariance(
-    context.getImageData(0, 0, crop.width, crop.height).data,
-    crop.width,
-    crop.height
-  );
   const detectorScore = region.score ?? 1;
   const sizeScore = Math.min(1, Math.min(region.width, region.height) / 120);
   const faceSizePx = Math.min(region.width, region.height);
@@ -452,7 +481,9 @@ export function analyzeFaceRegionQuality(
       poseScore = Math.max(0, 1 - roll / 60) * yawBalance * pitchBalance;
     }
   }
-  const reason = region.width < minFaceSize || region.height < minFaceSize
+  const reason = assessmentFailed
+    ? undefined
+    : region.width < minFaceSize || region.height < minFaceSize
     ? 'below_minimum_face_size'
     : detectorScore < MIN_LIVE_DETECTION_SCORE
       ? 'below_detection_confidence'
@@ -861,48 +892,158 @@ export async function describePaddedFaceCrop(
   crop: HTMLCanvasElement,
   cropX: number,
   cropY: number,
-  minScore = MIN_LIVE_DETECTION_SCORE
+  minScore = MIN_LIVE_DETECTION_SCORE,
+  input?: HTMLVideoElement | HTMLCanvasElement,
+  allowRetries = true
 ): Promise<FaceRegionRecognitionResult> {
   const startedAt = performance.now();
-  try {
-    const options = faceapi.nets.tinyFaceDetector.isLoaded
-      ? new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: minScore })
-      : faceapi.nets.ssdMobilenetv1.isLoaded
-        ? new faceapi.SsdMobilenetv1Options({ minConfidence: minScore })
-        : null;
-    if (!options) throw new Error('No face detector is loaded for the padded crop.');
-    const detection = await faceapi
-      .detectSingleFace(crop, options)
-      .withFaceLandmarks()
-      .withFaceDescriptor();
-    if (!detection) {
-      return { region, status: 'failed', reason: 'no_face_in_crop', durationMs: performance.now() - startedAt };
+  const attempts: FaceCropRetryAttempt[] = [];
+  const initialDetector = faceapi.nets.tinyFaceDetector.isLoaded
+    ? 'tiny'
+    : faceapi.nets.ssdMobilenetv1.isLoaded
+      ? 'ssd'
+      : null;
+  const run = async (
+    step: FaceCropRetryStep,
+    targetCrop: HTMLCanvasElement,
+    targetX: number,
+    targetY: number,
+    detector: 'tiny' | 'ssd',
+    scoreThreshold: number
+  ): Promise<FaceRegionRecognitionResult> => {
+    try {
+      if (detector === 'tiny' && !faceapi.nets.tinyFaceDetector.isLoaded) {
+        throw new Error('TinyFaceDetector is not loaded.');
+      }
+      if (detector === 'ssd' && !faceapi.nets.ssdMobilenetv1.isLoaded) {
+        throw new Error('SSD Mobilenet is not loaded.');
+      }
+      const options = detector === 'tiny'
+        ? new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold })
+        : new faceapi.SsdMobilenetv1Options({ minConfidence: scoreThreshold });
+      const detection = await faceapi
+        .detectSingleFace(targetCrop, options)
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (!detection) {
+        attempts.push({ step, failureReason: 'no_face_in_crop' });
+        return { region, status: 'failed', reason: 'no_face_in_crop', durationMs: 0 };
+      }
+      const rejection = getQualityRejection(detection, scoreThreshold, MIN_LIVE_RECOGNITION_FACE_SIZE_PX);
+      if (rejection) {
+        const failureReason: FaceCropFailureReason = rejection === 'below_detection_confidence'
+          ? 'low_score'
+          : rejection === 'inconsistent_landmarks'
+            ? 'misaligned'
+            : 'quality_rejected';
+        attempts.push({ step, failureReason });
+        return { region, status: 'quality_rejected', reason: rejection, durationMs: 0 };
+      }
+      attempts.push({ step, failureReason: null });
+      const box = detection.detection.box;
+      return {
+        region,
+        status: 'descriptor',
+        detection: {
+          box: { x: targetX + box.x, y: targetY + box.y, width: box.width, height: box.height },
+          landmarks: detection.landmarks.positions.map(point => ({ x: targetX + point.x, y: targetY + point.y })),
+          descriptor: detection.descriptor,
+          score: detection.detection.score,
+        },
+        durationMs: 0,
+        source: 'crop',
+      };
+    } catch (error) {
+      attempts.push({
+        step,
+        failureReason: 'inference_error',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        region,
+        status: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+        durationMs: 0,
+      };
     }
-    const rejection = getQualityRejection(detection, minScore, MIN_LIVE_RECOGNITION_FACE_SIZE_PX);
-    if (rejection) {
-      return { region, status: 'quality_rejected', reason: rejection, durationMs: performance.now() - startedAt };
-    }
-    const box = detection.detection.box;
-    return {
-      region,
-      status: 'descriptor',
-      detection: {
-        box: { x: cropX + box.x, y: cropY + box.y, width: box.width, height: box.height },
-        landmarks: detection.landmarks.positions.map(point => ({ x: cropX + point.x, y: cropY + point.y })),
-        descriptor: detection.descriptor,
-        score: detection.detection.score,
-      },
-      durationMs: performance.now() - startedAt,
-      source: 'crop',
-    };
-  } catch (error) {
-    return {
+  };
+  const finish = (result: FaceRegionRecognitionResult, step: FaceCropRetryStep): FaceRegionRecognitionResult => {
+    result.durationMs = performance.now() - startedAt;
+    result.retryAttempts = attempts;
+    if (result.status === 'descriptor') result.retryStepSucceeded = step;
+    return result;
+  };
+
+  if (!initialDetector) {
+    attempts.push({ step: 'initial', failureReason: 'inference_error', error: 'No face detector is loaded for the padded crop.' });
+    return finish({
       region,
       status: 'failed',
-      reason: error instanceof Error ? error.message : String(error),
-      durationMs: performance.now() - startedAt,
-    };
+      reason: 'No face detector is loaded for the padded crop.',
+      durationMs: 0,
+    }, 'initial');
   }
+
+  let result = await run('initial', crop, cropX, cropY, initialDetector, minScore);
+  if (result.status === 'descriptor' || result.status === 'quality_rejected' ||
+      result.reason !== 'no_face_in_crop' || !allowRetries) {
+    return finish(result, 'initial');
+  }
+
+  let retryCrop = crop;
+  let retryX = cropX;
+  let retryY = cropY;
+  if (input) {
+    try {
+      const inputIsVideo = typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement;
+      const inputWidth = inputIsVideo ? input.videoWidth : input.width;
+      const inputHeight = inputIsVideo ? input.videoHeight : input.height;
+      const paddingX = Math.max(8, region.width * 0.4);
+      const paddingY = Math.max(8, region.height * 0.4);
+      retryX = Math.max(0, Math.floor(region.x - paddingX));
+      retryY = Math.max(0, Math.floor(region.y - paddingY));
+      const right = Math.min(inputWidth, Math.ceil(region.x + region.width + paddingX));
+      const bottom = Math.min(inputHeight, Math.ceil(region.y + region.height + paddingY));
+      retryCrop = document.createElement('canvas');
+      retryCrop.width = right - retryX;
+      retryCrop.height = bottom - retryY;
+      const context = retryCrop.getContext('2d');
+      if (!context || retryCrop.width <= 0 || retryCrop.height <= 0) {
+        throw new Error('Could not create the larger padded face crop.');
+      }
+      context.drawImage(input, retryX, retryY, retryCrop.width, retryCrop.height, 0, 0, retryCrop.width, retryCrop.height);
+    } catch (error) {
+      attempts.push({
+        step: 'larger_padding_40',
+        failureReason: 'inference_error',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return finish({
+        region,
+        status: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+        durationMs: 0,
+      }, 'larger_padding_40');
+    }
+  }
+
+  result = await run('larger_padding_40', retryCrop, retryX, retryY, initialDetector, minScore);
+  if (result.status === 'descriptor' || result.status === 'quality_rejected' || result.reason !== 'no_face_in_crop') {
+    return finish(result, 'larger_padding_40');
+  }
+
+  result = await run('lower_score', retryCrop, retryX, retryY, initialDetector, Math.min(minScore, 0.1));
+  if (result.status === 'descriptor' || result.status === 'quality_rejected' || result.reason !== 'no_face_in_crop') {
+    return finish(result, 'lower_score');
+  }
+
+  if (faceapi.nets.ssdMobilenetv1.isLoaded && initialDetector !== 'ssd') {
+    result = await run('ssd_mobilenet', retryCrop, retryX, retryY, 'ssd', Math.min(minScore, 0.1));
+    if (result.status === 'descriptor' || result.status === 'quality_rejected' || result.reason !== 'no_face_in_crop') {
+      return finish(result, 'ssd_mobilenet');
+    }
+  }
+  return finish(result, attempts[attempts.length - 1]?.step ?? 'initial');
 }
 
 export async function compareAlignedAndCropDescriptors(

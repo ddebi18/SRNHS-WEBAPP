@@ -96,7 +96,7 @@ export function useFaceDetection(
         // 1. Try SCRFD ONNX Detection
         if (scrfdSessionRef.current) {
           try {
-            const rawScrfdBoxes: ScrfdFaceBox[] = await detectFacesWithScrfd(scrfdSessionRef.current, video, 0.25, 0.4);
+            const rawScrfdBoxes: ScrfdFaceBox[] = await detectFacesWithScrfd(scrfdSessionRef.current, video, 0.4, 0.4);
             detectedBoxes = rawScrfdBoxes.map((b) => ({
               x: b.x,
               y: b.y,
@@ -124,7 +124,8 @@ export function useFaceDetection(
           if (result.detections && result.detections.length > 0) {
             for (const det of result.detections) {
               const b = det.boundingBox;
-              if (b && b.width > 0 && b.height > 0) {
+              const score = det.categories?.[0]?.score;
+              if (b && b.width > 0 && b.height > 0 && typeof score === 'number' && score >= 0.45) {
                 detectedBoxes.push({
                   x: b.originX,
                   y: b.originY,
@@ -132,7 +133,7 @@ export function useFaceDetection(
                   height: b.height,
                   videoWidth: vw,
                   videoHeight: vh,
-                  score: det.categories?.[0]?.score || 0.8,
+                  score,
                   detectorSource: 'fallback',
                 });
               }

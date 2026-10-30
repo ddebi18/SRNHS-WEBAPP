@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_FACE_KEYPOINT_ALIGNMENT?: string;
   readonly VITE_FACE_LANDMARK_ALIGNMENT?: string;
   readonly VITE_FACE_FAST_CONFIRM?: string;
+  readonly VITE_FACE_QUALITY_GATE?: string;
 }
 
 interface ImportMeta {

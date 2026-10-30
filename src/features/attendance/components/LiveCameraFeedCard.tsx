@@ -582,6 +582,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             {liveRecognizedFaces.map(face => (
               <div
                 key={face.id}
+                title={face.diagnostic.reason ?? face.status}
                 className={cn(
                   'absolute z-10 border-2 rounded-lg pointer-events-none transition-all duration-150',
                   face.student
@@ -603,15 +604,19 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     : face.status === 'unknown'
                       ? 'Unknown Face'
                       : face.status === 'quality_rejected'
-                        ? 'Face quality rejected'
-                        : face.status === 'processing_failed'
-                          ? 'Recognition failed · retrying'
-                          : face.isMatching
-                            ? 'Identifying…'
+                          ? face.diagnostic.reason === 'poor_pose' ||
+                            face.diagnostic.reason === 'inconsistent_landmarks'
+                            ? 'Turn toward the camera'
+                            : 'Move closer / face the camera'
+                          : face.status === 'processing_failed'
+                            ? 'Hold still / face the camera'
+                            : face.isMatching
+                              ? 'Identifying…'
                             : 'Scanning face…'}
                   {import.meta.env.DEV && (
                     <span className="block font-mono font-medium normal-case">
                       T+{face.diagnostic.timeToConfirmMs ?? 0}ms · {face.diagnostic.scansUsed ?? 0} scans
+                      {face.diagnostic.reason && ` · ${face.diagnostic.reason}`}
                     </span>
                   )}
                 </span>

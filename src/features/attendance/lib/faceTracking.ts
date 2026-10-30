@@ -32,6 +32,7 @@ export function predictFaceTrackBox(
 export interface DescriptorTrackState {
   confirmed: boolean;
   lastDescriptorAt: number;
+  poseScore?: number;
 }
 
 export interface FaceTrackIdentityState {
@@ -129,10 +130,19 @@ export function selectFaceDescriptorDetections(
       (b - start + tracks.length) % tracks.length
     );
   };
-  const unconfirmed = rotated(tracks.flatMap((track, index) => track.confirmed ? [] : [index]));
-  const dueConfirmed = rotated(tracks.flatMap((track, index) =>
+  const prioritizePose = (indices: number[]) => {
+    const rotationOrder = new Map(indices.map((index, order) => [index, order]));
+    return indices.sort((a, b) =>
+      (tracks[b]!.poseScore ?? 0) - (tracks[a]!.poseScore ?? 0) ||
+      rotationOrder.get(a)! - rotationOrder.get(b)!
+    );
+  };
+  const unconfirmed = prioritizePose(rotated(tracks.flatMap((track, index) =>
+    track.confirmed ? [] : [index]
+  )));
+  const dueConfirmed = prioritizePose(rotated(tracks.flatMap((track, index) =>
     track.confirmed && timestamp - track.lastDescriptorAt >= reverifyIntervalMs ? [index] : []
-  ));
+  )));
   const reserveForConfirmed = dueConfirmed.length > 0 && maxPerScan > 1 ? 1 : 0;
   const selected = unconfirmed.slice(0, maxPerScan - reserveForConfirmed);
   const remaining = maxPerScan - selected.length;

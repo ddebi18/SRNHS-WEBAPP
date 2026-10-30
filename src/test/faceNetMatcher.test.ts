@@ -57,6 +57,13 @@ describe('FaceNet matcher', () => {
     expect(result.label).toBe('unknown');
   });
 
+  it('never matches an unenrolled face to a student', () => {
+    const result = scoreFaceNetMatch(stranger, gallery);
+    expect(result.accepted).toBe(false);
+    expect(result.label).not.toBe('std-a');
+    expect(result.label).not.toBe('std-b');
+  });
+
   it('classifies five completed unfamiliar descriptors as unknown rather than as unprocessed', () => {
     const results = Array.from({ length: 5 }, () => scoreFaceNetMatch(stranger, gallery));
 
