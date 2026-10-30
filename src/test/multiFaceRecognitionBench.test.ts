@@ -1,17 +1,13 @@
 /**
  * Multi-face recognition performance benchmark.
  *
- * Exercises the REAL matching + tracking functions with synthetic 128-D
- * descriptors to measure:
- *   1. Total recognition time for N simultaneous faces
- *   2. Per-face matching time
- *   3. Frames (and wall time) until every identity is confirmed
+ * Exercises the real matching, scheduling, and tracking functions with
+ * synthetic 128-D descriptors.
  *
  * Target: 3 and 5 registered students appearing together.
- * Pass/fail gate: 5 faces must complete in ≤ 3 000 ms total.
+ * The scan-level descriptor budget is three; these tests do not represent camera inference latency.
  *
- * ⚠  This file does NOT change any recognition code.  It imports the existing
- *    matcher / tracker as-is and wraps them with timing instrumentation.
+ * This benchmark measures CPU-side simulation, not live camera accuracy.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -23,6 +19,8 @@ import {
 } from '@/features/attendance/lib/faceNetMatcher';
 import {
   assignFaceDetectionTracks,
+  selectFaceDescriptorDetections,
+  updateFaceTrackIdentity,
   type PredictableFaceTrack,
   type FaceTrackBox,
 } from '@/features/attendance/lib/faceTracking';
@@ -78,6 +76,8 @@ interface BenchResult {
   framesToAllConfirmed: number;
   /** Wall time (ms) until every identity was confirmed. */
   timeToAllConfirmedMs: number;
+  descriptorsExtracted: number;
+  maxDescriptorsInScan: number;
   /** Per-face breakdown: label, match time, frames to stable. */
   perFace: Array<{
     label: string;
@@ -108,6 +108,7 @@ function runMultiFaceBench(faceCount: number): BenchResult {
     candidateStudentId: string;
     stabilityCount: number;
     confirmedStudentId: string | null;
+    lastDescriptorAt: number;
   })[] = [];
   // ── Per-face timing accumulators ─────────────────────────────────────
   const perFace: BenchResult['perFace'] = gallery.map(entry => ({
@@ -117,6 +118,9 @@ function runMultiFaceBench(faceCount: number): BenchResult {
   }));
 
   let totalMatchTimeMs = 0;
+  let descriptorsExtracted = 0;
+  let maxDescriptorsInScan = 0;
+  let rotationCursor = 0;
   let allConfirmedAtFrame = -1;
 
   const benchStart = performance.now();
@@ -126,21 +130,50 @@ function runMultiFaceBench(faceCount: number): BenchResult {
     const timestamp = Date.now() + frame * 200; // simulate 200 ms scan interval
     const boxes = gallery.map((_, i) => faceBox(i, faceCount));
 
-    // ── 1. Match each face against the gallery ─────────────────────────
-    const matchResults: Array<{ studentId: string | null; timeMs: number }> = [];
-    for (let i = 0; i < faceCount; i++) {
+    const initialAssignments = assignFaceDetectionTracks(
+      boxes,
+      tracks.map(track => ({
+        box: track.box,
+        velocityX: track.velocityX,
+        velocityY: track.velocityY,
+        lastSeenAt: track.lastSeenAt,
+        studentId: track.confirmedStudentId,
+      })),
+      boxes.map(() => null),
+      timestamp
+    );
+    const selection = selectFaceDescriptorDetections(
+      boxes.map((_, index) => {
+        const trackIndex = initialAssignments[index];
+        const track = trackIndex === null || trackIndex === undefined ? undefined : tracks[trackIndex];
+        return {
+          confirmed: Boolean(track?.confirmedStudentId),
+          lastDescriptorAt: track?.lastDescriptorAt ?? 0,
+        };
+      }),
+      timestamp,
+      rotationCursor
+    );
+    rotationCursor = selection.nextRotationCursor;
+    maxDescriptorsInScan = Math.max(maxDescriptorsInScan, selection.indices.length);
+
+    // ── 1. Match only new, unconfirmed, or due-for-verification faces ──
+    const matchResults: Array<{ studentId: string | null; timeMs: number } | null> =
+      Array(faceCount).fill(null);
+    for (const i of selection.indices) {
       const t0 = performance.now();
       const result = scoreFaceNetMatch(liveDescriptors[i]!, gallery);
       const elapsed = performance.now() - t0;
       totalMatchTimeMs += elapsed;
       perFace[i]!.matchTimeMs += elapsed;
-      matchResults.push({
+      matchResults[i] = {
         studentId: result.accepted ? result.label : null,
         timeMs: elapsed,
-      });
+      };
+      descriptorsExtracted++;
     }
 
-    // ── 2. Assign detections to tracks ─────────────────────────────────
+    // ── 2. Refine box assignment with identity affinity ─────────────────
     const trackAssignments = assignFaceDetectionTracks(
       boxes,
       tracks.map(t => ({
@@ -150,7 +183,13 @@ function runMultiFaceBench(faceCount: number): BenchResult {
         lastSeenAt: t.lastSeenAt,
         studentId: t.confirmedStudentId,
       })),
-      matchResults.map(m => m.studentId),
+      matchResults.map((match, index) => {
+        if (match) return match.studentId;
+        const trackIndex = initialAssignments[index];
+        return trackIndex === null || trackIndex === undefined
+          ? null
+          : tracks[trackIndex]?.confirmedStudentId ?? null;
+      }),
       timestamp,
     );
 
@@ -177,37 +216,24 @@ function runMultiFaceBench(faceCount: number): BenchResult {
         candidateStudentId: '',
         stabilityCount: 0,
         confirmedStudentId: null,
+        pendingSwitch: false,
+        lastDescriptorAt: 0,
       };
 
-      const matchedId = matchResults[detIdx]!.studentId;
+      const matchResult = matchResults[detIdx];
+      const matchedId = matchResult?.studentId ?? null;
       track.box = boxes[detIdx]!;
       track.lastSeenAt = timestamp;
+      if (matchResult) track.lastDescriptorAt = timestamp;
 
-      // Mirror the stability logic from useFaceRecognition (lines 566-604)
-      if (matchedId && track.confirmedStudentId === matchedId) {
-        // Already confirmed — keep it locked.
-        track.candidateStudentId = matchedId;
-        track.stabilityCount = STABILITY_FRAMES_REQUIRED;
-        track.confirmedStudentId = matchedId;
-      } else if (matchedId) {
-        // Building towards confirmation.
-        track.stabilityCount =
-          track.candidateStudentId === matchedId
-            ? track.stabilityCount + 1
-            : 1;
-        track.candidateStudentId = matchedId;
-        if (track.stabilityCount >= STABILITY_FRAMES_REQUIRED) {
-          track.confirmedStudentId = matchedId;
-          // Record first confirmation frame for this face.
-          const faceEntry = perFace.find(f => f.label === matchedId);
-          if (faceEntry && faceEntry.confirmedAtFrame === -1) {
-            faceEntry.confirmedAtFrame = frame;
-          }
+      const previousIdentity = track.confirmedStudentId;
+      const identity = updateFaceTrackIdentity(track, matchedId, Boolean(matchResult));
+      Object.assign(track, identity);
+      if (matchedId && identity.confirmedStudentId === matchedId && previousIdentity !== matchedId) {
+        const faceEntry = perFace.find(f => f.label === matchedId);
+        if (faceEntry && faceEntry.confirmedAtFrame === -1) {
+          faceEntry.confirmedAtFrame = frame;
         }
-      } else {
-        track.candidateStudentId = '';
-        track.stabilityCount = 0;
-        track.confirmedStudentId = null;
       }
 
       nextTracks.push(track);
@@ -234,6 +260,8 @@ function runMultiFaceBench(faceCount: number): BenchResult {
     avgMatchTimePerFaceMs: totalMatchTimeMs / (faceCount * (allConfirmedAtFrame + 1 || 1)),
     framesToAllConfirmed: allConfirmedAtFrame,
     timeToAllConfirmedMs: totalTimeMs,
+    descriptorsExtracted,
+    maxDescriptorsInScan,
     perFace,
   };
 }
@@ -243,6 +271,28 @@ function runMultiFaceBench(faceCount: number): BenchResult {
 // ---------------------------------------------------------------------------
 
 describe('Multi-face recognition performance benchmark', () => {
+  it('measures 1 simultaneous face — total, per-face, and confirmation time', () => {
+    const result = runMultiFaceBench(1);
+
+    console.log('\n╔══════════════════════════════════════════════════════════╗');
+    console.log('║  BENCHMARK: 1 Simultaneous Face                         ║');
+    console.log('╠══════════════════════════════════════════════════════════╣');
+    console.log(`║  Total wall time .............. ${result.totalTimeMs.toFixed(2).padStart(10)} ms      ║`);
+    console.log(`║  Avg match time / face ........ ${result.avgMatchTimePerFaceMs.toFixed(3).padStart(10)} ms      ║`);
+    console.log(`║  Frames to all confirmed ...... ${String(result.framesToAllConfirmed).padStart(10)}          ║`);
+    console.log(`║  Time to all confirmed ........ ${result.timeToAllConfirmedMs.toFixed(2).padStart(10)} ms      ║`);
+    console.log('╠──────────────────────────────────────────────────────────╣');
+    for (const face of result.perFace) {
+      console.log(`║  ${face.label.padEnd(14)} match ${face.matchTimeMs.toFixed(3).padStart(8)} ms  confirmed @ frame ${String(face.confirmedAtFrame).padStart(2)}  ║`);
+    }
+    console.log('╚══════════════════════════════════════════════════════════╝\n');
+
+    expect(result.perFace.every(f => f.confirmedAtFrame >= 0)).toBe(true);
+    expect(result.maxDescriptorsInScan).toBeLessThanOrEqual(3);
+    expect(result.framesToAllConfirmed).toBeGreaterThanOrEqual(STABILITY_FRAMES_REQUIRED - 1);
+    expect(result.totalTimeMs).toBeLessThan(3_000);
+  });
+
   it('measures 3 simultaneous faces — total, per-face, and confirmation time', () => {
     const result = runMultiFaceBench(3);
 
@@ -261,6 +311,7 @@ describe('Multi-face recognition performance benchmark', () => {
 
     // Sanity: every face must be confirmed.
     expect(result.perFace.every(f => f.confirmedAtFrame >= 0)).toBe(true);
+    expect(result.maxDescriptorsInScan).toBeLessThanOrEqual(3);
 
     // Stability requires STABILITY_FRAMES_REQUIRED consecutive matches.
     expect(result.framesToAllConfirmed).toBeGreaterThanOrEqual(STABILITY_FRAMES_REQUIRED - 1);
@@ -287,6 +338,7 @@ describe('Multi-face recognition performance benchmark', () => {
 
     // Every face must eventually confirm.
     expect(result.perFace.every(f => f.confirmedAtFrame >= 0)).toBe(true);
+    expect(result.maxDescriptorsInScan).toBeLessThanOrEqual(3);
 
     // Stability gate.
     expect(result.framesToAllConfirmed).toBeGreaterThanOrEqual(STABILITY_FRAMES_REQUIRED - 1);
@@ -339,6 +391,103 @@ describe('Multi-face recognition performance benchmark', () => {
     // Just ensure the breakdown is computable — values are informational.
     expect(matchingFraction).toBeGreaterThanOrEqual(0);
     expect(matchingFraction).toBeLessThanOrEqual(1);
+  });
+
+  it('simulates 60 seconds of moving 3-5 faces with fair, capped re-verification', () => {
+    const scanIntervalMs = 200;
+    const simulatedFrames = 60_000 / scanIntervalMs;
+    const reports: Array<{ faces: number; maxReverifyGapMs: number; maxDescriptors: number }> = [];
+
+    for (const faceCount of [3, 4, 5]) {
+      const tracks = Array.from({ length: faceCount }, (_, index) => ({
+        box: faceBox(index, faceCount),
+        velocityX: 0,
+        velocityY: 0,
+        lastSeenAt: 0,
+        studentId: `student-${index}`,
+      }));
+      const lastDescriptorAt = Array(faceCount).fill(-1000) as number[];
+      const lastVerifiedAt = [...lastDescriptorAt];
+      let rotationCursor = 0;
+      let maxDescriptors = 0;
+      let maxReverifyGapMs = 0;
+
+      for (let frame = 0; frame < simulatedFrames; frame++) {
+        const timestamp = frame * scanIntervalMs;
+        const personOrder = Array.from({ length: faceCount }, (_, offset) =>
+          (offset + frame) % faceCount
+        );
+        const boxes = personOrder.map(person => {
+          const base = faceBox(person, faceCount);
+          const phase = timestamp / 1300 + person;
+          return {
+            ...base,
+            x: base.x + Math.sin(phase) * 18,
+            y: base.y + Math.cos(phase) * 10,
+          };
+        });
+        const initialAssignments = assignFaceDetectionTracks(
+          boxes,
+          tracks,
+          boxes.map(() => null),
+          timestamp
+        );
+        const selection = selectFaceDescriptorDetections(
+          boxes.map((_, index) => {
+            const trackIndex = initialAssignments[index];
+            return {
+              confirmed: true,
+              lastDescriptorAt: trackIndex === null || trackIndex === undefined
+                ? 0
+                : lastDescriptorAt[trackIndex]!,
+            };
+          }),
+          timestamp,
+          rotationCursor
+        );
+        rotationCursor = selection.nextRotationCursor;
+        maxDescriptors = Math.max(maxDescriptors, selection.indices.length);
+
+        const extracted = new Set(selection.indices);
+        const detectionStudents = boxes.map((_, index) => {
+          const trackIndex = initialAssignments[index];
+          if (extracted.has(index)) {
+            const person = personOrder[index]!;
+            maxReverifyGapMs = Math.max(
+              maxReverifyGapMs,
+              timestamp - lastVerifiedAt[person]!
+            );
+            lastVerifiedAt[person] = timestamp;
+            if (trackIndex !== null && trackIndex !== undefined) {
+              lastDescriptorAt[trackIndex] = timestamp;
+            }
+            return `student-${person}`;
+          }
+          return trackIndex === null || trackIndex === undefined
+            ? null
+            : tracks[trackIndex]!.studentId;
+        });
+        const assignments = assignFaceDetectionTracks(boxes, tracks, detectionStudents, timestamp);
+
+        assignments.forEach((trackIndex, index) => {
+          const person = personOrder[index]!;
+          expect(trackIndex).toBe(person);
+          if (trackIndex === null) return;
+          const previous = tracks[trackIndex]!.box;
+          tracks[trackIndex]!.velocityX = (boxes[index]!.x - previous.x) / scanIntervalMs;
+          tracks[trackIndex]!.velocityY = (boxes[index]!.y - previous.y) / scanIntervalMs;
+          tracks[trackIndex]!.box = boxes[index]!;
+          tracks[trackIndex]!.lastSeenAt = timestamp;
+        });
+      }
+
+      expect(maxDescriptors).toBeLessThanOrEqual(3);
+      expect(lastVerifiedAt.every(timestamp => timestamp >= 59_000)).toBe(true);
+      expect(maxReverifyGapMs).toBeLessThanOrEqual(1200);
+      reports.push({ faces: faceCount, maxReverifyGapMs, maxDescriptors });
+    }
+
+    console.info('[FaceRecognition] Simulated 60-second moving-face benchmark', reports);
   });
 
   it('scales to a 10-student gallery with 5 live faces to stress-test matching', () => {

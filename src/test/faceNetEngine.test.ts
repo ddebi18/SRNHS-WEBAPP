@@ -17,6 +17,7 @@ const mockFaceApi = vi.hoisted(() => ({
     faceRecognitionNet: {
       loadFromUri: vi.fn().mockResolvedValue(undefined),
       isLoaded: true,
+      computeFaceDescriptor: vi.fn().mockResolvedValue(new Float32Array(128).fill(0.02)),
     },
   },
   detectSingleFace: vi.fn(),
@@ -36,6 +37,7 @@ describe('faceNetEngine', () => {
     mockFaceApi.nets.ssdMobilenetv1.loadFromUri.mockRejectedValue(new Error('model missing'));
     mockFaceApi.nets.faceLandmark68Net.loadFromUri.mockResolvedValue(undefined);
     mockFaceApi.nets.faceRecognitionNet.loadFromUri.mockResolvedValue(undefined);
+    mockFaceApi.nets.faceRecognitionNet.computeFaceDescriptor.mockResolvedValue(new Float32Array(128).fill(0.02));
   });
 
   afterEach(() => {
@@ -141,6 +143,10 @@ describe('faceNetEngine', () => {
     });
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
       drawImage: vi.fn(),
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      setTransform: vi.fn(),
+      fillStyle: '',
     } as never));
 
     const video = document.createElement('video');
@@ -167,8 +173,161 @@ describe('faceNetEngine', () => {
     ]);
     expect(results[1]?.status === 'failed' && results[1].reason).toContain('inference failed');
     expect(mockFaceApi.detectSingleFace).toHaveBeenCalledTimes(5);
-    expect(maxConcurrentInferences).toBe(2);
-    expect(cropCanvases[0]).not.toBe(cropCanvases[1]);
-    expect(new Set(cropCanvases).size).toBe(2);
+    expect(maxConcurrentInferences).toBe(1);
+    expect(new Set(cropCanvases).size).toBe(1);
+    expect(cropCanvases[0]).toBeInstanceOf(HTMLCanvasElement);
+  });
+
+  it('does not pass OffscreenCanvas into face-api even when OffscreenCanvas exists', async () => {
+    class FakeOffscreenCanvas {
+      width = 1;
+      height = 1;
+      getContext() {
+        return { drawImage: vi.fn(), clearRect: vi.fn() };
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
+    const { describeScrfdFaceRegions } = await import('@/features/attendance/lib/faceNetEngine');
+    mockFaceApi.detectSingleFace.mockImplementation((canvas: HTMLCanvasElement) => ({
+      withFaceLandmarks: () => ({
+        withFaceDescriptor: async () => {
+          expect(canvas).toBeInstanceOf(HTMLCanvasElement);
+          return null;
+        },
+      }),
+    }));
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+      drawImage: vi.fn(),
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      setTransform: vi.fn(),
+      fillStyle: '',
+    } as never));
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      videoWidth: { value: 640 },
+      videoHeight: { value: 480 },
+    });
+    await describeScrfdFaceRegions(video, [{ x: 20, y: 20, width: 80, height: 80 }]);
+    expect(mockFaceApi.detectSingleFace.mock.calls[0]?.[0]).toBeInstanceOf(HTMLCanvasElement);
+    expect(mockFaceApi.detectSingleFace.mock.calls[0]?.[0]).not.toBeInstanceOf(FakeOffscreenCanvas);
+  });
+
+  it('times sequential crop recognition for 1, 3, and 5 faces', async () => {
+    const { describeScrfdFaceRegions } = await import('@/features/attendance/lib/faceNetEngine');
+    const landmarks = Array.from({ length: 68 }, () => ({ x: 50, y: 50 }));
+    [36, 37, 38, 39, 40, 41].forEach(index => { landmarks[index] = { x: 30, y: 40 }; });
+    [42, 43, 44, 45, 46, 47].forEach(index => { landmarks[index] = { x: 70, y: 40 }; });
+    [27, 28, 29, 30, 31, 32, 33, 34, 35].forEach(index => { landmarks[index] = { x: 50, y: 54 }; });
+    [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67]
+      .forEach(index => { landmarks[index] = { x: 50, y: 70 }; });
+    const detection = {
+      detection: { box: { x: 20, y: 20, width: 80, height: 80 }, score: 0.9 },
+      landmarks: { positions: landmarks },
+      descriptor: new Float32Array(128),
+    };
+    mockFaceApi.detectSingleFace.mockImplementation(() => ({
+      withFaceLandmarks: () => ({
+        withFaceDescriptor: async () => {
+          await new Promise(resolve => setTimeout(resolve, 20));
+          return detection;
+        },
+      }),
+    }));
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+      drawImage: vi.fn(),
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      setTransform: vi.fn(),
+      fillStyle: '',
+    } as never));
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      videoWidth: { value: 640 },
+      videoHeight: { value: 480 },
+    });
+
+    for (const faceCount of [1, 3, 5]) {
+      const regions = Array.from({ length: faceCount }, (_, index) => ({
+        x: index * 120,
+        y: 20,
+        width: 80,
+        height: 80,
+      }));
+      const startedAt = performance.now();
+      const results = await describeScrfdFaceRegions(video, regions);
+      const durationMs = performance.now() - startedAt;
+      console.log(`[FaceRecognition] Scan diagnostics`, {
+        detectedBoxes: faceCount,
+        totalScanDurationMs: durationMs,
+        cropDurationMs: results.map(result => result.durationMs),
+      });
+      expect(results).toHaveLength(faceCount);
+      expect(results.every(result => result.status === 'descriptor')).toBe(true);
+    }
+  });
+
+  it('computes descriptors from SCRFD keypoints without TinyFaceDetector', async () => {
+    const { describeScrfdFaceRegions } = await import('@/features/attendance/lib/faceNetEngine');
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+      drawImage: vi.fn(),
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      setTransform: vi.fn(),
+      fillStyle: '',
+    } as never));
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      videoWidth: { value: 640 },
+      videoHeight: { value: 480 },
+    });
+    const regions = [{
+      x: 120,
+      y: 80,
+      width: 100,
+      height: 120,
+      score: 0.9,
+      landmarks: [
+        [140, 110],
+        [190, 108],
+        [165, 140],
+        [148, 170],
+        [185, 168],
+      ] as [number, number][],
+    }];
+
+    const startedAt = performance.now();
+    const results = await describeScrfdFaceRegions(video, regions);
+    const durationMs = performance.now() - startedAt;
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.status).toBe('descriptor');
+    expect(results[0]?.status === 'descriptor' && results[0].source).toBe('aligned');
+    expect(mockFaceApi.detectSingleFace).not.toHaveBeenCalled();
+    expect(mockFaceApi.nets.faceRecognitionNet.computeFaceDescriptor).toHaveBeenCalledTimes(1);
+    expect(durationMs).toBeLessThan(50);
+  });
+
+  it('detects fallback face regions without extracting descriptors', async () => {
+    const { detectLiveFaceRegions } = await import('@/features/attendance/lib/faceNetEngine');
+    mockFaceApi.detectAllFaces.mockResolvedValue([{
+      box: { x: 20, y: 30, width: 80, height: 90 },
+      score: 0.9,
+    }]);
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      videoWidth: { value: 640 },
+      videoHeight: { value: 480 },
+    });
+
+    await expect(detectLiveFaceRegions(video)).resolves.toEqual([{
+      x: 20,
+      y: 30,
+      width: 80,
+      height: 90,
+      score: 0.9,
+    }]);
+    expect(mockFaceApi.detectAllFaces).toHaveBeenCalledTimes(1);
+    expect(mockFaceApi.nets.faceRecognitionNet.computeFaceDescriptor).not.toHaveBeenCalled();
   });
 });

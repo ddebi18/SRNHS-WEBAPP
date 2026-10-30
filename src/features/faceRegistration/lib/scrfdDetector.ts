@@ -24,23 +24,38 @@ export interface ScrfdFaceBox {
 const STRIDES = [8, 16, 32] as const;
 const ANCHORS_PER_LOCATION = 2;
 const TARGET_SIZE = 640;
+export const SCRFD_KEYPOINT_COUNT = 5;
 
 export const visionWasmFileset = {
   wasmLoaderPath: visionWasmLoaderUrl,
   wasmBinaryPath: visionWasmBinaryUrl,
 };
 
-// Use Vite-resolved asset URLs so the runtimes also work in production builds.
-try {
+function desiredOrtWasmThreads(): number {
+  const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
+  if (!isolated) return 1;
+  return Math.min(4, (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 1) || 1);
+}
+
+function configureOrtWasm(numThreads = desiredOrtWasmThreads()): void {
   ort.env.wasm.wasmPaths = {
     wasm: ortWasmBinaryUrl,
     mjs: ortWasmModuleUrl,
   };
-  const isIsolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
-  ort.env.wasm.numThreads = isIsolated ? Math.min(4, (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 1) || 1) : 1;
+  ort.env.wasm.numThreads = numThreads;
   ort.env.wasm.simd = true;
+}
+
+// Use Vite-resolved asset URLs so the runtimes also work in production builds.
+try {
+  configureOrtWasm();
 } catch (e) {
   console.warn('Failed to configure ONNX WASM path:', e);
+  try {
+    configureOrtWasm(1);
+  } catch (fallbackError) {
+    console.warn('Failed to configure ONNX WASM single-thread fallback:', fallbackError);
+  }
 }
 
 const sessionCache = new Map<string, ort.InferenceSession>();
@@ -70,32 +85,40 @@ export async function getScrfdSession(
 
     const epCandidates = ['wasm'];
     let session: ort.InferenceSession | null = null;
+    const threadAttempts = [desiredOrtWasmThreads(), 1].filter((threads, index, all) => all.indexOf(threads) === index);
 
     for (const ep of epCandidates) {
-      try {
-        console.log(`[SCRFD] Attempting session creation with provider [${ep}]...`);
-        const sessionOptions: ort.InferenceSession.SessionOptions = {
-          executionProviders: [ep],
-          graphOptimizationLevel: 'all',
-        };
-        const s = typeof modelData === 'string'
-          ? await ort.InferenceSession.create(modelData, sessionOptions)
-          : await ort.InferenceSession.create(modelData, sessionOptions);
+      for (const threads of threadAttempts) {
+        try {
+          configureOrtWasm(threads);
+          console.log(`[SCRFD] Attempting session creation with provider [${ep}], threads=${threads}...`);
+          const sessionOptions: ort.InferenceSession.SessionOptions = {
+            executionProviders: [ep],
+            graphOptimizationLevel: 'all',
+          };
+          const s = typeof modelData === 'string'
+            ? await ort.InferenceSession.create(modelData, sessionOptions)
+            : await ort.InferenceSession.create(modelData, sessionOptions);
 
-        // Dummy verification pass
-        const inputName = s.inputNames[0] ?? 'input.1';
-        const dummyData = new Float32Array(3 * TARGET_SIZE * TARGET_SIZE);
-        const dummyTensor = new ort.Tensor('float32', dummyData, [1, 3, TARGET_SIZE, TARGET_SIZE]);
-        const feeds: Record<string, ort.Tensor> = {};
-        feeds[inputName] = dummyTensor;
-        await s.run(feeds);
+          // Dummy verification pass
+          const inputName = s.inputNames[0] ?? 'input.1';
+          const dummyData = new Float32Array(3 * TARGET_SIZE * TARGET_SIZE);
+          const dummyTensor = new ort.Tensor('float32', dummyData, [1, 3, TARGET_SIZE, TARGET_SIZE]);
+          const feeds: Record<string, ort.Tensor> = {};
+          feeds[inputName] = dummyTensor;
+          await s.run(feeds);
 
-        console.log(`[SCRFD] Model initialized & verified successfully on provider [${ep}].`);
-        session = s;
-        break;
-      } catch (err) {
-        console.warn(`[SCRFD] Provider [${ep}] failed initialization:`, err);
+          console.log(`[SCRFD] Model initialized & verified successfully on provider [${ep}], threads=${threads}.`);
+          session = s;
+          break;
+        } catch (err) {
+          console.warn(`[SCRFD] Provider [${ep}] threads=${threads} failed initialization:`, err);
+          if (threads > 1) {
+            console.warn('[SCRFD] Falling back to single-thread ONNX WASM.');
+          }
+        }
       }
+      if (session) break;
     }
 
     if (!session) {
@@ -211,7 +234,9 @@ export function decodeScrfdOutputs(
     const bboxName = outputNames[level + STRIDES.length];
     const kpsName = outputNames[level + STRIDES.length * 2];
 
-    if (!scoreName || !bboxName || !kpsName) continue;
+    if (!scoreName || !bboxName || !kpsName) {
+      throw new Error('SCRFD model is missing five-point keypoint outputs; load a *_bnkps.onnx model.');
+    }
 
     const scoreTensor = outputs[scoreName];
     const bboxTensor = outputs[bboxName];
@@ -227,6 +252,9 @@ export function decodeScrfdOutputs(
       bboxTensor.data.length !== anchorCount * 4 ||
       kpsTensor.data.length !== anchorCount * 10
     ) {
+      if (!kpsTensor || kpsTensor.data.length !== anchorCount * 10) {
+        throw new Error(`SCRFD model has no valid five-point keypoints at stride ${stride}; load a *_bnkps.onnx model.`);
+      }
       continue;
     }
 

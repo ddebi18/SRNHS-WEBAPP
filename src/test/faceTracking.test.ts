@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { mapVideoFaceBoxToViewport } from '@/lib/faceOverlayGeometry';
-import { assignFaceDetectionTracks } from '@/features/attendance/lib/faceTracking';
+import {
+  assignFaceDetectionTracks,
+  findDuplicateStudentClaimLosers,
+  selectFaceDescriptorDetections,
+  updateFaceTrackIdentity,
+} from '@/features/attendance/lib/faceTracking';
 import { releaseFaceScan, tryAcquireFaceScan } from '@/features/attendance/lib/faceScanLock';
 
 describe('live face tracking', () => {
@@ -49,6 +54,77 @@ describe('live face tracking', () => {
     expect(
       assignFaceDetectionTracks(detections, tracks, ['student-a', 'student-b'], 1160)
     ).toEqual([0, 1]);
+  });
+
+  it('prevents identity swaps among five close faces with a global assignment', () => {
+    const tracks = Array.from({ length: 5 }, (_, index) => ({
+      box: { x: index * 36, y: 40, width: 40, height: 48 },
+      velocityX: index % 2 ? -0.08 : 0.08,
+      velocityY: 0,
+      lastSeenAt: 1000,
+      studentId: `student-${index}`,
+    }));
+    const detections = [...tracks]
+      .reverse()
+      .map(track => ({ ...track.box }));
+    const ids = tracks.map(track => track.studentId).reverse();
+
+    expect(assignFaceDetectionTracks(detections, tracks, ids, 1200)).toEqual([4, 3, 2, 1, 0]);
+  });
+
+  it('keeps only the lower-distance claim when two tracks resolve to one student', () => {
+    expect(findDuplicateStudentClaimLosers([
+      { studentId: 'student-a', distance: 0.31 },
+      { studentId: 'student-b', distance: 0.28 },
+      { studentId: 'student-a', distance: 0.19 },
+      { studentId: null, distance: 0.8 },
+    ])).toEqual([0]);
+  });
+
+  it('caps extraction at three and fairly rotates unconfirmed tracks', () => {
+    const tracks = Array.from({ length: 5 }, () => ({ confirmed: false, lastDescriptorAt: 0 }));
+    const first = selectFaceDescriptorDetections(tracks, 0);
+    const second = selectFaceDescriptorDetections(tracks, 200, first.nextRotationCursor);
+
+    expect(first.indices).toEqual([0, 1, 2]);
+    expect(second.indices).toEqual([3, 4, 0]);
+    expect(first.indices.length).toBeLessThanOrEqual(3);
+    expect(second.indices.length).toBeLessThanOrEqual(3);
+  });
+
+  it('re-verifies confirmed tracks at one second without reprocessing early', () => {
+    const tracks = Array.from({ length: 5 }, () => ({ confirmed: true, lastDescriptorAt: 0 }));
+    expect(selectFaceDescriptorDetections(tracks, 999).indices).toEqual([]);
+    const first = selectFaceDescriptorDetections(tracks, 1000);
+    expect(first.indices).toEqual([0, 1, 2]);
+
+    first.indices.forEach(index => { tracks[index]!.lastDescriptorAt = 1000; });
+    const second = selectFaceDescriptorDetections(tracks, 1100, first.nextRotationCursor);
+    expect(second.indices).toEqual([3, 4]);
+    expect(second.indices.length).toBeLessThanOrEqual(3);
+  });
+
+  it('confirms in three matches, switches in five, and survives a failed extraction', () => {
+    let state = {
+      candidateStudentId: '',
+      stabilityCount: 0,
+      confirmedStudentId: null as string | null,
+      pendingSwitch: false,
+    };
+    for (let frame = 0; frame < 3; frame++) {
+      state = updateFaceTrackIdentity(state, 'student-a', true);
+    }
+    expect(state.confirmedStudentId).toBe('student-a');
+
+    for (let frame = 0; frame < 4; frame++) {
+      state = updateFaceTrackIdentity(state, 'student-b', true);
+      expect(state.confirmedStudentId).toBe('student-a');
+    }
+    state = updateFaceTrackIdentity(state, 'student-b', true);
+    expect(state.confirmedStudentId).toBe('student-b');
+
+    const failed = updateFaceTrackIdentity(state, null, false);
+    expect(failed).toEqual(state);
   });
 });
 

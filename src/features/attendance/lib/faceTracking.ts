@@ -13,6 +13,109 @@ export interface PredictableFaceTrack {
   studentId: string | null;
 }
 
+export interface DescriptorTrackState {
+  confirmed: boolean;
+  lastDescriptorAt: number;
+}
+
+export interface FaceTrackIdentityState {
+  candidateStudentId: string;
+  stabilityCount: number;
+  confirmedStudentId: string | null;
+  pendingSwitch: boolean;
+}
+
+export function updateFaceTrackIdentity(
+  state: FaceTrackIdentityState,
+  matchedStudentId: string | null,
+  descriptorEvaluated: boolean,
+  sameStudentVerified = true,
+  confirmationFrames = 3,
+  switchFrames = 5
+): FaceTrackIdentityState {
+  if (!descriptorEvaluated) return state;
+  if (matchedStudentId && matchedStudentId === state.confirmedStudentId) {
+    if (!sameStudentVerified) return state;
+    return {
+      candidateStudentId: matchedStudentId,
+      stabilityCount: confirmationFrames,
+      confirmedStudentId: matchedStudentId,
+      pendingSwitch: false,
+    };
+  }
+  if (matchedStudentId) {
+    const changingIdentity = state.pendingSwitch ||
+      Boolean(state.confirmedStudentId && state.confirmedStudentId !== matchedStudentId);
+    const stabilityCount = state.candidateStudentId === matchedStudentId
+      ? state.stabilityCount + 1
+      : 1;
+    const requiredFrames = changingIdentity ? switchFrames : confirmationFrames;
+    return {
+      candidateStudentId: matchedStudentId,
+      stabilityCount,
+      confirmedStudentId: stabilityCount >= requiredFrames
+        ? matchedStudentId
+        : state.confirmedStudentId,
+      pendingSwitch: changingIdentity && stabilityCount < requiredFrames,
+    };
+  }
+  return {
+    candidateStudentId: '',
+    stabilityCount: 0,
+    confirmedStudentId: state.confirmedStudentId,
+    pendingSwitch: state.confirmedStudentId ? state.pendingSwitch : false,
+  };
+}
+
+export function selectFaceDescriptorDetections(
+  tracks: DescriptorTrackState[],
+  timestamp: number,
+  rotationCursor = 0,
+  maxPerScan = 3,
+  reverifyIntervalMs = 1000
+): { indices: number[]; nextRotationCursor: number } {
+  const rotated = (indices: number[]) => {
+    if (indices.length === 0) return indices;
+    const start = ((rotationCursor % tracks.length) + tracks.length) % tracks.length;
+    return indices.sort((a, b) =>
+      (a - start + tracks.length) % tracks.length -
+      (b - start + tracks.length) % tracks.length
+    );
+  };
+  const unconfirmed = rotated(tracks.flatMap((track, index) => track.confirmed ? [] : [index]));
+  const dueConfirmed = rotated(tracks.flatMap((track, index) =>
+    track.confirmed && timestamp - track.lastDescriptorAt >= reverifyIntervalMs ? [index] : []
+  ));
+  const reserveForConfirmed = dueConfirmed.length > 0 && maxPerScan > 1 ? 1 : 0;
+  const selected = unconfirmed.slice(0, maxPerScan - reserveForConfirmed);
+  const remaining = maxPerScan - selected.length;
+  selected.push(...dueConfirmed.slice(0, remaining));
+  if (selected.length < maxPerScan) {
+    selected.push(...unconfirmed.slice(selected.length, maxPerScan));
+  }
+  const last = selected.at(-1);
+  return {
+    indices: selected,
+    nextRotationCursor: tracks.length && last !== undefined ? (last + 1) % tracks.length : rotationCursor,
+  };
+}
+
+export function findDuplicateStudentClaimLosers(
+  claims: Array<{ studentId: string | null; distance: number }>
+): number[] {
+  const winners = new Map<string, number>();
+  claims.forEach((claim, index) => {
+    if (!claim.studentId) return;
+    const currentIndex = winners.get(claim.studentId);
+    if (currentIndex === undefined || claim.distance < claims[currentIndex]!.distance) {
+      winners.set(claim.studentId, index);
+    }
+  });
+  return claims.flatMap((claim, index) =>
+    claim.studentId && winners.get(claim.studentId) !== index ? [index] : []
+  );
+}
+
 function intersectionOverUnion(a: FaceTrackBox, b: FaceTrackBox): number {
   const left = Math.max(a.x, b.x);
   const top = Math.max(a.y, b.y);
@@ -29,13 +132,19 @@ export function assignFaceDetectionTracks(
   detectionStudentIds: Array<string | null>,
   timestamp: number
 ): Array<number | null> {
-  const assignments: Array<number | null> = Array(detections.length).fill(null);
-  const candidates: Array<{ detectionIndex: number; trackIndex: number; cost: number }> = [];
-
-  detections.forEach((detection, detectionIndex) => {
-    const studentId = detectionStudentIds[detectionIndex] ?? null;
-
-    tracks.forEach((track, trackIndex) => {
+  if (!detections.length || !tracks.length) return Array(detections.length).fill(null);
+  const detectionCount = detections.length;
+  const trackCount = tracks.length;
+  const unmatchedCost = 1.25;
+  const impossibleCost = 1_000_000;
+  const size = detectionCount + trackCount;
+  const costs = Array.from({ length: size }, (_, row) =>
+    Array.from({ length: size }, (_, column) => {
+      if (row >= detectionCount && column >= trackCount) return 0;
+      if (row >= detectionCount || column >= trackCount) return unmatchedCost;
+      const detection = detections[row]!;
+      const track = tracks[column]!;
+      const studentId = detectionStudentIds[row] ?? null;
       const elapsed = Math.min(400, Math.max(0, timestamp - track.lastSeenAt));
       const trackCenterX = track.box.x + track.box.width / 2;
       const trackCenterY = track.box.y + track.box.height / 2;
@@ -52,7 +161,7 @@ export function assignFaceDetectionTracks(
         Math.max(detection.width, detection.height, track.box.width, track.box.height) * 1.25
       );
       const sameStudent = Boolean(studentId && track.studentId === studentId);
-      if (distance > maxDistance && !sameStudent) return;
+      if (distance > maxDistance && !sameStudent) return impossibleCost;
 
       const predictedBox = {
         x: predictedCenterX - track.box.width / 2,
@@ -61,21 +170,73 @@ export function assignFaceDetectionTracks(
         height: track.box.height,
       };
       const conflictingStudents = Boolean(studentId && track.studentId && track.studentId !== studentId);
-      const cost =
+      return (
         distance / maxDistance -
         intersectionOverUnion(detection, predictedBox) * 0.35 +
         (sameStudent ? -2 : 0) +
-        (conflictingStudents ? 1 : 0);
-      candidates.push({ detectionIndex, trackIndex, cost });
-    });
-  });
+        (conflictingStudents ? 1 : 0)
+      );
+    })
+  );
 
-  candidates.sort((a, b) => a.cost - b.cost);
-  const assignedTracks = new Set<number>();
-  for (const candidate of candidates) {
-    if (assignments[candidate.detectionIndex] !== null || assignedTracks.has(candidate.trackIndex)) continue;
-    assignments[candidate.detectionIndex] = candidate.trackIndex;
-    assignedTracks.add(candidate.trackIndex);
+  const rowPotentials = Array(size + 1).fill(0);
+  const columnPotentials = Array(size + 1).fill(0);
+  const matchedRow = Array(size + 1).fill(0);
+  const previousColumn = Array(size + 1).fill(0);
+  for (let row = 1; row <= size; row++) {
+    matchedRow[0] = row;
+    let currentColumn = 0;
+    const minimumCosts = Array(size + 1).fill(Number.POSITIVE_INFINITY);
+    const usedColumns = Array(size + 1).fill(false);
+    do {
+      usedColumns[currentColumn] = true;
+      const currentRow = matchedRow[currentColumn]!;
+      let delta = Number.POSITIVE_INFINITY;
+      let nextColumn = 0;
+      for (let column = 1; column <= size; column++) {
+        if (usedColumns[column]) continue;
+        const reducedCost =
+          costs[currentRow - 1]![column - 1]! -
+          rowPotentials[currentRow]! -
+          columnPotentials[column]!;
+        if (reducedCost < minimumCosts[column]!) {
+          minimumCosts[column] = reducedCost;
+          previousColumn[column] = currentColumn;
+        }
+        if (minimumCosts[column]! < delta) {
+          delta = minimumCosts[column]!;
+          nextColumn = column;
+        }
+      }
+      for (let column = 0; column <= size; column++) {
+        if (usedColumns[column]) {
+          rowPotentials[matchedRow[column]!] += delta;
+          columnPotentials[column] -= delta;
+        } else {
+          minimumCosts[column] -= delta;
+        }
+      }
+      currentColumn = nextColumn;
+    } while (matchedRow[currentColumn] !== 0);
+    do {
+      const nextColumn = previousColumn[currentColumn]!;
+      matchedRow[currentColumn] = matchedRow[nextColumn]!;
+      currentColumn = nextColumn;
+    } while (currentColumn !== 0);
+  }
+
+  const assignments: Array<number | null> = Array(detectionCount).fill(null);
+  for (let column = 1; column <= size; column++) {
+    const row = matchedRow[column]! - 1;
+    const track = column - 1;
+    if (
+      row >= 0 &&
+      row < detectionCount &&
+      track < trackCount &&
+      costs[row]![track]! < unmatchedCost * 2
+    ) {
+      assignments[row] = track;
+    }
   }
 
   return assignments;

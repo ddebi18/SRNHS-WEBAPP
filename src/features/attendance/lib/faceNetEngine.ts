@@ -5,6 +5,7 @@ import {
   MIN_FACE_SIZE_PX,
   MIN_PHOTO_DETECTION_SCORE,
   MIN_REGISTER_DETECTION_SCORE,
+  FACENET_DISTANCE_THRESHOLD,
   evaluateFacePartConsistency,
 } from './faceNetMatcher';
 
@@ -125,6 +126,9 @@ export interface FaceDetectionRegion {
   y: number;
   width: number;
   height: number;
+  score?: number;
+  /** SCRFD 5-point landmarks: left eye, right eye, nose, left mouth, right mouth. */
+  landmarks?: [number, number][];
 }
 
 export type FaceRegionQualityRejection =
@@ -138,7 +142,7 @@ export type FaceRegionRecognitionResult =
       status: 'descriptor';
       detection: FaceNetLiveDetection;
       durationMs: number;
-      source: 'crop' | 'full_frame_fallback';
+      source: 'aligned' | 'crop' | 'full_frame_fallback';
       fallbackDurationMs?: number;
     }
   | {
@@ -152,6 +156,12 @@ export type FaceRegionRecognitionResult =
       status: 'failed';
       reason: string;
       durationMs: number;
+    }
+  | {
+      region: FaceDetectionRegion;
+      status: 'skipped';
+      reason: 'descriptor_budget' | 'reverify_not_due';
+      durationMs: 0;
     };
 
 function getQualityRejection(
@@ -307,6 +317,160 @@ export async function detectAllLiveFaces(
   }));
 }
 
+export async function detectLiveFaceRegions(
+  input: HTMLVideoElement | HTMLCanvasElement,
+  minScore = MIN_LIVE_DETECTION_SCORE
+): Promise<FaceDetectionRegion[]> {
+  const target = shouldEnhanceLiveInput(input)
+    ? renderVideoToCanvas(input, LOW_LIGHT_GAMMA)
+    : input;
+  const options = faceapi.nets.tinyFaceDetector.isLoaded
+    ? new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: minScore })
+    : faceapi.nets.ssdMobilenetv1.isLoaded
+      ? new faceapi.SsdMobilenetv1Options({ minConfidence: minScore })
+      : null;
+  if (!options) return [];
+
+  const detections = await faceapi.detectAllFaces(target, options);
+  return detections.flatMap(detection => {
+    const box = detection.box;
+    if (
+      box.width < MIN_LIVE_RECOGNITION_FACE_SIZE_PX ||
+      box.height < MIN_LIVE_RECOGNITION_FACE_SIZE_PX ||
+      detection.score < minScore
+    ) return [];
+    return [{
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height,
+      score: detection.score,
+    }];
+  });
+}
+
+let regionCropCanvas: HTMLCanvasElement | null = null;
+
+function getRegionCropCanvas(): HTMLCanvasElement {
+  // face-api toNetInput() only accepts HTMLCanvasElement, not OffscreenCanvas.
+  if (!regionCropCanvas || !(regionCropCanvas instanceof HTMLCanvasElement)) {
+    regionCropCanvas = document.createElement('canvas');
+  }
+  return regionCropCanvas;
+}
+
+export const FACE_RECOGNITION_NET_INPUT_SIZE = 150;
+const ARC_FACE_112_TEMPLATE: Array<[number, number]> = [
+  [38.2946, 51.6963],
+  [73.5318, 51.5014],
+  [56.0252, 71.7366],
+  [41.5493, 92.3655],
+  [70.7299, 92.2041],
+];
+const TEMPLATE_SCALE = FACE_RECOGNITION_NET_INPUT_SIZE / 112;
+export const FACE_NET_FIVE_POINT_TEMPLATE: Array<[number, number]> = ARC_FACE_112_TEMPLATE.map(
+  ([x, y]) => [x * TEMPLATE_SCALE, y * TEMPLATE_SCALE]
+);
+
+export interface SimilarityTransform {
+  a: number;
+  b: number;
+  tx: number;
+  ty: number;
+}
+
+export function hasScrfdKeypoints(
+  landmarks: [number, number][] | undefined
+): landmarks is [number, number][] {
+  return Boolean(
+    landmarks &&
+    landmarks.length === 5 &&
+    landmarks.every(point =>
+      Number.isFinite(point[0]) && Number.isFinite(point[1])
+    )
+  );
+}
+
+export function estimateSimilarityTransform(
+  source: Array<[number, number]>,
+  destination: Array<[number, number]>
+): SimilarityTransform | null {
+  const count = Math.min(source.length, destination.length);
+  if (count < 2) return null;
+
+  let srcMeanX = 0;
+  let srcMeanY = 0;
+  let dstMeanX = 0;
+  let dstMeanY = 0;
+  for (let i = 0; i < count; i++) {
+    srcMeanX += source[i]![0];
+    srcMeanY += source[i]![1];
+    dstMeanX += destination[i]![0];
+    dstMeanY += destination[i]![1];
+  }
+  srcMeanX /= count;
+  srcMeanY /= count;
+  dstMeanX /= count;
+  dstMeanY /= count;
+
+  let srcVar = 0;
+  let c00 = 0;
+  let c01 = 0;
+  let c10 = 0;
+  let c11 = 0;
+  for (let i = 0; i < count; i++) {
+    const sx = source[i]![0] - srcMeanX;
+    const sy = source[i]![1] - srcMeanY;
+    const dx = destination[i]![0] - dstMeanX;
+    const dy = destination[i]![1] - dstMeanY;
+    srcVar += sx * sx + sy * sy;
+    c00 += sx * dx;
+    c01 += sx * dy;
+    c10 += sy * dx;
+    c11 += sy * dy;
+  }
+  if (srcVar < 1e-6) return null;
+
+  const a = (c00 + c11) / srcVar;
+  const b = (c01 - c10) / srcVar;
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a * a + b * b < 1e-8) return null;
+
+  return {
+    a,
+    b,
+    tx: dstMeanX - a * srcMeanX + b * srcMeanY,
+    ty: dstMeanY - b * srcMeanX - a * srcMeanY,
+  };
+}
+
+function drawAlignedFace(
+  input: HTMLVideoElement | HTMLCanvasElement,
+  keypoints: [number, number][],
+  canvas: HTMLCanvasElement
+): boolean {
+  const transform = estimateSimilarityTransform(keypoints, FACE_NET_FIVE_POINT_TEMPLATE);
+  if (!transform) return false;
+  canvas.width = FACE_RECOGNITION_NET_INPUT_SIZE;
+  canvas.height = FACE_RECOGNITION_NET_INPUT_SIZE;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return false;
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.fillStyle = '#000000';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.setTransform(transform.a, transform.b, -transform.b, transform.a, transform.tx, transform.ty);
+  context.drawImage(input, 0, 0);
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  return true;
+}
+
+async function computeDescriptorFromCanvas(canvas: HTMLCanvasElement): Promise<Float32Array | null> {
+  if (!faceapi.nets.faceRecognitionNet.isLoaded) return null;
+  const descriptor = await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(canvas);
+  if (descriptor instanceof Float32Array) return descriptor;
+  if (Array.isArray(descriptor) && descriptor[0] instanceof Float32Array) return descriptor[0];
+  return null;
+}
+
 export async function describeScrfdFaceRegions(
   input: HTMLVideoElement | HTMLCanvasElement,
   regions: FaceDetectionRegion[],
@@ -315,27 +479,69 @@ export async function describeScrfdFaceRegions(
   const isVideo = typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement;
   const inputWidth = isVideo ? input.videoWidth : input.width;
   const inputHeight = isVideo ? input.videoHeight : input.height;
-  const canvases = Array.from(
-    { length: Math.min(2, regions.length) },
-    () => document.createElement('canvas')
-  );
-  const contexts = canvases.map(canvas => canvas.getContext('2d', { willReadFrequently: true }));
-  const recognizeRegion = async (
+  const canvas = getRegionCropCanvas();
+  const recognizeAligned = async (
     region: FaceDetectionRegion,
-    canvas: HTMLCanvasElement,
-    context: CanvasRenderingContext2D | null
+    keypoints: [number, number][],
+    cropCanvas: HTMLCanvasElement
   ): Promise<FaceRegionRecognitionResult> => {
     const startedAt = performance.now();
     try {
-      if (!context) {
+      if (region.width < MIN_LIVE_RECOGNITION_FACE_SIZE_PX || region.height < MIN_LIVE_RECOGNITION_FACE_SIZE_PX) {
         return {
           region,
-          status: 'failed',
-          reason: 'canvas_context_unavailable',
+          status: 'quality_rejected',
+          reason: 'below_minimum_face_size',
           durationMs: performance.now() - startedAt,
         };
       }
-
+      if (!drawAlignedFace(input, keypoints, cropCanvas)) {
+        return {
+          region,
+          status: 'failed',
+          reason: 'align_transform_failed',
+          durationMs: performance.now() - startedAt,
+        };
+      }
+      const descriptor = await computeDescriptorFromCanvas(cropCanvas);
+      if (!descriptor) {
+        return {
+          region,
+          status: 'failed',
+          reason: 'aligned_descriptor_unavailable',
+          durationMs: performance.now() - startedAt,
+        };
+      }
+      return {
+        region,
+        status: 'descriptor',
+        detection: {
+          box: { x: region.x, y: region.y, width: region.width, height: region.height },
+          landmarks: keypoints.map(([x, y]) => ({ x, y })),
+          descriptor,
+          score: region.score ?? 1,
+        },
+        durationMs: performance.now() - startedAt,
+        source: 'aligned',
+      };
+    } catch (error) {
+      return {
+        region,
+        status: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+        durationMs: performance.now() - startedAt,
+      };
+    }
+  };
+  const recognizeRegion = async (
+    region: FaceDetectionRegion,
+    cropCanvas: HTMLCanvasElement
+  ): Promise<FaceRegionRecognitionResult> => {
+    if (hasScrfdKeypoints(region.landmarks)) {
+      return recognizeAligned(region, region.landmarks, cropCanvas);
+    }
+    const startedAt = performance.now();
+    try {
       const paddingX = Math.max(8, region.width * 0.2);
       const paddingY = Math.max(8, region.height * 0.2);
       const cropX = Math.max(0, Math.floor(region.x - paddingX));
@@ -353,15 +559,25 @@ export async function describeScrfdFaceRegions(
         };
       }
 
-      canvas.width = cropWidth;
-      canvas.height = cropHeight;
-      context.drawImage(input, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+      cropCanvas.width = cropWidth;
+      cropCanvas.height = cropHeight;
+      const cropContext = cropCanvas.getContext('2d', { willReadFrequently: true });
+      if (!cropContext) {
+        return {
+          region,
+          status: 'failed',
+          reason: 'canvas_context_unavailable',
+          durationMs: performance.now() - startedAt,
+        };
+      }
+      cropContext.clearRect(0, 0, cropWidth, cropHeight);
+      cropContext.drawImage(input, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
 
       const options = faceapi.nets.tinyFaceDetector.isLoaded
         ? new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: minScore })
         : new faceapi.SsdMobilenetv1Options({ minConfidence: minScore });
       const detection = await faceapi
-        .detectSingleFace(canvas, options)
+        .detectSingleFace(cropCanvas, options)
         .withFaceLandmarks()
         .withFaceDescriptor();
       if (!detection) {
@@ -434,13 +650,44 @@ export async function describeScrfdFaceRegions(
   };
 
   const results = new Array<FaceRegionRecognitionResult>(regions.length);
-  await Promise.all(canvases.map(async (canvas, workerIndex) => {
-    for (let index = workerIndex; index < regions.length; index += canvases.length) {
-      results[index] = await recognizeRegion(regions[index]!, canvas, contexts[workerIndex] ?? null);
-    }
-  }));
+  for (let index = 0; index < regions.length; index++) {
+    results[index] = await recognizeRegion(regions[index]!, canvas);
+  }
 
   return results;
+}
+
+export async function compareAlignedAndCropDescriptors(
+  input: HTMLVideoElement | HTMLCanvasElement,
+  region: FaceDetectionRegion
+): Promise<{
+  aligned: FaceRegionRecognitionResult;
+  crop: FaceRegionRecognitionResult;
+  distance: number;
+  withinThreshold: boolean;
+}> {
+  const withKeypoints = hasScrfdKeypoints(region.landmarks)
+    ? region
+    : { ...region, landmarks: undefined };
+  const aligned = await describeScrfdFaceRegions(input, [withKeypoints]);
+  const crop = await describeScrfdFaceRegions(input, [{ ...region, landmarks: undefined }]);
+  const alignedDesc = aligned[0]?.status === 'descriptor' ? aligned[0].detection.descriptor : null;
+  const cropDesc = crop[0]?.status === 'descriptor' ? crop[0].detection.descriptor : null;
+  let distance = Number.POSITIVE_INFINITY;
+  if (alignedDesc && cropDesc) {
+    let sum = 0;
+    for (let i = 0; i < alignedDesc.length; i++) {
+      const delta = (alignedDesc[i] ?? 0) - (cropDesc[i] ?? 0);
+      sum += delta * delta;
+    }
+    distance = Math.sqrt(sum);
+  }
+  return {
+    aligned: aligned[0]!,
+    crop: crop[0]!,
+    distance,
+    withinThreshold: distance <= FACENET_DISTANCE_THRESHOLD,
+  };
 }
 
 export type FaceDescriptorExtractionFailure =

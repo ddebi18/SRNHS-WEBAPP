@@ -115,6 +115,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({ isOpen, onClos
                 alt="Scan to sync with phone"
                 className="w-48 h-48 sm:w-52 sm:h-52 object-contain"
                 loading="eager"
+                crossOrigin="anonymous"
               />
             </div>
             <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 font-medium mt-3 max-w-xs leading-relaxed">
