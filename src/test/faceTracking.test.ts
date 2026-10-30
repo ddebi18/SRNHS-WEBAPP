@@ -115,6 +115,16 @@ describe('live face tracking', () => {
     expect(second.indices.length).toBeLessThanOrEqual(3);
   });
 
+  it('prioritizes the most frontal unconfirmed faces for descriptor attempts', () => {
+    const tracks = [
+      { confirmed: false, lastDescriptorAt: 0, poseScore: 0.2 },
+      { confirmed: false, lastDescriptorAt: 0, poseScore: 0.95 },
+      { confirmed: false, lastDescriptorAt: 0, poseScore: 0.6 },
+    ];
+
+    expect(selectFaceDescriptorDetections(tracks, 0).indices).toEqual([1, 2, 0]);
+  });
+
   it('re-verifies confirmed tracks at one second without reprocessing early', () => {
     const tracks = Array.from({ length: 5 }, () => ({ confirmed: true, lastDescriptorAt: 0 }));
     expect(selectFaceDescriptorDetections(tracks, 999).indices).toEqual([]);
