@@ -1,4 +1,4 @@
-// Usage: start `npm run dev`, then run this script with an optional gallery JSON file.
+// Usage: start `npm run dev`, then pass an optional gallery JSON and filename-to-label JSON.
 import { readFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -29,9 +29,19 @@ async function loadGallery(path) {
   return parsed;
 }
 
+async function loadExpectedLabels(path) {
+  if (!path) return {};
+  const parsed = JSON.parse(await readFile(resolve(path), 'utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Expected-label JSON must map sample filenames to enrolled gallery labels.');
+  }
+  return parsed;
+}
+
 async function main() {
   const galleryPath = process.argv[2];
   const gallery = await loadGallery(galleryPath);
+  const expectedLabels = await loadExpectedLabels(process.argv[3]);
   const chrome = spawn(CHROME_PATH, [
     '--headless=new',
     `--remote-debugging-port=${PORT}`,
@@ -83,12 +93,14 @@ async function main() {
     await send('Runtime.enable');
     const expression = `(async () => {
       const suppliedGallery = ${JSON.stringify(gallery)};
+      const expectedLabels = ${JSON.stringify(expectedLabels)};
       const engine = await import('/src/features/attendance/lib/faceNetEngine.ts');
       const scrfd = await import('/src/features/faceRegistration/lib/scrfdDetector.ts');
       const matcher = await import('/src/features/attendance/lib/faceNetMatcher.ts');
       await engine.ensureFaceNetModels();
       const model = await scrfd.getScrfdSession('/models/scrfd/scrfd_2.5g_bnkps.onnx');
       const rows = [];
+      let descriptorModesWarmed = false;
       for (const file of ${JSON.stringify(SAMPLE_FILES)}) {
         const image = new Image();
         image.src = '/test/images/' + file;
@@ -114,43 +126,67 @@ async function main() {
             x: face.x, y: face.y, width: face.width, height: face.height,
             score: face.score, landmarks: face.landmarks,
           };
-          const comparison = await engine.compareAlignedAndCropDescriptors(video, region);
-          const aligned = comparison.aligned.status === 'descriptor' ? comparison.aligned.detection.descriptor : null;
-          const crop = comparison.crop.status === 'descriptor' ? comparison.crop.detection.descriptor : null;
-          const sameImageGallery = crop ? [{ label: file + ':' + index, descriptors: [crop] }] : [];
-          const alignedToSameImage = aligned
-            ? matcher.scoreFaceNetMatch(aligned, sameImageGallery)
+          if (!descriptorModesWarmed) {
+            await engine.describeScrfdFaceRegions(video, [region], undefined, 'legacy');
+            await engine.describeScrfdFaceRegions(video, [region], undefined, 'landmark_aligned');
+            descriptorModesWarmed = true;
+          }
+          let oldPath;
+          let safePath;
+          if (rows.length % 2 === 0) {
+            oldPath = await engine.describeScrfdFaceRegions(video, [region], undefined, 'legacy');
+            safePath = await engine.describeScrfdFaceRegions(video, [region], undefined, 'landmark_aligned');
+          } else {
+            safePath = await engine.describeScrfdFaceRegions(video, [region], undefined, 'landmark_aligned');
+            oldPath = await engine.describeScrfdFaceRegions(video, [region], undefined, 'legacy');
+          }
+          const oldResult = oldPath[0];
+          const safeResult = safePath[0];
+          const oldDescriptor = oldResult?.status === 'descriptor' ? oldResult.detection.descriptor : null;
+          const safeDescriptor = safeResult?.status === 'descriptor' ? safeResult.detection.descriptor : null;
+          const descriptorDistance = oldDescriptor && safeDescriptor
+            ? matcher.euclideanDistance(oldDescriptor, safeDescriptor)
             : null;
-          const alignedToEnrolled = aligned && suppliedGallery.length
-            ? matcher.scoreFaceNetMatch(aligned, suppliedGallery)
-            : null;
-          const cropToEnrolled = crop && suppliedGallery.length
-            ? matcher.scoreFaceNetMatch(crop, suppliedGallery)
-            : null;
+          const compareGallery = descriptor => {
+            if (!descriptor || !suppliedGallery.length) return null;
+            const result = matcher.scoreFaceNetMatch(descriptor, suppliedGallery);
+            const expectedLabel = expectedLabels[file];
+            const galleryDistances = suppliedGallery.flatMap(entry =>
+              entry.descriptors.map(enrolled => ({
+                label: entry.label,
+                distance: matcher.euclideanDistance(descriptor, enrolled),
+              }))
+            );
+            return {
+              label: result.label,
+              distance: Number(result.distance.toFixed(4)),
+              accepted: result.accepted,
+              expectedLabel: expectedLabel ?? null,
+              falseAccept: expectedLabel ? result.accepted && result.label !== expectedLabel : null,
+              falseReject: expectedLabel ? !result.accepted || result.label !== expectedLabel : null,
+              genuineDistances: expectedLabel
+                ? galleryDistances.filter(item => item.label === expectedLabel).map(item => item.distance)
+                : null,
+              impostorDistances: expectedLabel
+                ? galleryDistances.filter(item => item.label !== expectedLabel).map(item => item.distance)
+                : null,
+            };
+          };
           rows.push({
             file, face: index + 1, score: Number(face.score.toFixed(3)),
             hasFiveKeypoints: face.landmarks?.length === 5,
             detectorMs: Number(detectorDurationMs.toFixed(1)),
-            alignedStatus: comparison.aligned.status,
-            alignedMs: Number(comparison.aligned.durationMs.toFixed(1)),
-            oldCropStatus: comparison.crop.status,
-            oldCropMs: Number(comparison.crop.durationMs.toFixed(1)),
-            descriptorDistance: Number.isFinite(comparison.distance) ? Number(comparison.distance.toFixed(4)) : null,
-            withinExistingThreshold: comparison.withinThreshold,
-            alignedVsSameImageOldDescriptor: alignedToSameImage ? {
-              distance: Number(alignedToSameImage.distance.toFixed(4)),
-              accepted: alignedToSameImage.accepted,
-            } : null,
-            alignedVsEnrolledGallery: alignedToEnrolled ? {
-              label: alignedToEnrolled.label,
-              distance: Number(alignedToEnrolled.distance.toFixed(4)),
-              accepted: alignedToEnrolled.accepted,
-            } : null,
-            oldCropVsEnrolledGallery: cropToEnrolled ? {
-              label: cropToEnrolled.label,
-              distance: Number(cropToEnrolled.distance.toFixed(4)),
-              accepted: cropToEnrolled.accepted,
-            } : null,
+            oldPathStatus: oldResult?.status,
+            oldPathReason: oldResult?.status === 'failed' ? oldResult.reason : null,
+            oldPathMs: Number(oldResult?.durationMs.toFixed(1) ?? 0),
+            safePathStatus: safeResult?.status,
+            safePathReason: safeResult?.status === 'failed' ? safeResult.reason : null,
+            safePathMs: Number(safeResult?.durationMs.toFixed(1) ?? 0),
+            oldVsSafeDistance: Number.isFinite(descriptorDistance) ? Number(descriptorDistance.toFixed(4)) : null,
+            withinExistingThreshold: Number.isFinite(descriptorDistance) &&
+              descriptorDistance <= matcher.FACENET_DISTANCE_THRESHOLD,
+            oldPathGallery: compareGallery(oldDescriptor),
+            safePathGallery: compareGallery(safeDescriptor),
           });
         }
         video.pause();
@@ -161,20 +197,42 @@ async function main() {
         const sorted = [...values].sort((a, b) => a - b);
         return Number(sorted[Math.floor(sorted.length / 2)].toFixed(1));
       };
-      const alignedTimes = rows.filter(row => row.alignedStatus === 'descriptor').map(row => row.alignedMs);
-      const cropTimes = rows.filter(row => row.oldCropStatus === 'descriptor').map(row => row.oldCropMs);
-      const pairedDistances = rows.map(row => row.descriptorDistance).filter(Number.isFinite);
+      const safeTimes = rows.filter(row => row.safePathStatus === 'descriptor').map(row => row.safePathMs);
+      const oldTimes = rows.filter(row => row.oldPathStatus === 'descriptor').map(row => row.oldPathMs);
+      const pairedDistances = rows.map(row => row.oldVsSafeDistance).filter(Number.isFinite);
       const withinThresholdCount = pairedDistances.filter(distance => distance <= matcher.FACENET_DISTANCE_THRESHOLD).length;
-      const alignedMedian = median(alignedTimes.slice(1));
-      const cropMedian = median(cropTimes.slice(1));
+      const safeMedian = median(safeTimes);
+      const oldMedian = median(oldTimes);
+      const galleryMetrics = path => {
+        const classified = rows.map(row => row[path]).filter(Boolean);
+        const distances = key => classified.flatMap(item => item[key] ?? []);
+        return {
+          labeledQueries: classified.filter(item => item.expectedLabel).length,
+          falseAccepts: classified.filter(item => item.falseAccept === true).length,
+          falseRejects: classified.filter(item => item.falseReject === true).length,
+          genuineDistanceRange: range(distances('genuineDistances')),
+          impostorDistanceRange: range(distances('impostorDistances')),
+        };
+      };
+      const range = values => values.length
+        ? [Number(Math.min(...values).toFixed(4)), Number(Math.max(...values).toFixed(4))]
+        : null;
       return {
         threshold: matcher.FACENET_DISTANCE_THRESHOLD,
+        ambiguityMargin: matcher.FACENET_AMBIGUITY_MARGIN,
         modelOutputs: model.outputNames,
         galleryDescriptorsLoaded: suppliedGallery.reduce((sum, item) => sum + item.descriptors.length, 0),
-        oldCropResultCounts: {
-          descriptors: cropTimes.length,
-          failed: rows.filter(row => row.oldCropStatus === 'failed').length,
-          qualityRejected: rows.filter(row => row.oldCropStatus === 'quality_rejected').length,
+        galleryLabels: suppliedGallery.length,
+        verifiedIdentityLabelsProvided: Object.keys(expectedLabels).length,
+        oldPathResultCounts: {
+          descriptors: oldTimes.length,
+          failed: rows.filter(row => row.oldPathStatus === 'failed').length,
+          qualityRejected: rows.filter(row => row.oldPathStatus === 'quality_rejected').length,
+        },
+        safePathResultCounts: {
+          descriptors: safeTimes.length,
+          failed: rows.filter(row => row.safePathStatus === 'failed').length,
+          qualityRejected: rows.filter(row => row.safePathStatus === 'quality_rejected').length,
         },
         compatibility: {
           pairedDescriptors: pairedDistances.length,
@@ -185,16 +243,20 @@ async function main() {
             : null,
         },
         timingMedianMs: {
-          alignedDescriptorWarm: alignedTimes[0] ?? null,
-          oldCropDescriptorWarm: cropTimes[0] ?? null,
-          alignedDescriptorAfterWarmup: alignedMedian,
-          oldCropDescriptorAfterWarmup: cropMedian,
+          safePathAfterWarmup: safeMedian,
+          oldPathAfterWarmup: oldMedian,
           scrfdPerImage: median([...new Map(rows.map(row => [row.file, row.detectorMs])).values()]),
         },
-        descriptorStageReductionPercent: alignedMedian && cropMedian
-          ? Number(((1 - alignedMedian / cropMedian) * 100).toFixed(1))
+        safePathLatencyChangePercent: safeMedian && oldMedian
+          ? Number(((safeMedian / oldMedian - 1) * 100).toFixed(1))
           : null,
-        accuracyAssessment: 'Not measurable: sample images have no verified identity labels.',
+        galleryClassification: {
+          oldPath: galleryMetrics('oldPathGallery'),
+          safePath: galleryMetrics('safePathGallery'),
+          note: Object.keys(expectedLabels).length
+            ? null
+            : 'False accepts/rejects and genuine/impostor ranges require a verified filename-to-gallery-label map.',
+        },
         rows,
       };
     })()`;

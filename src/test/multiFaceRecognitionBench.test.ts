@@ -108,6 +108,7 @@ function runMultiFaceBench(faceCount: number): BenchResult {
     candidateStudentId: string;
     stabilityCount: number;
     confirmedStudentId: string | null;
+    pendingSwitch: boolean;
     lastDescriptorAt: number;
   })[] = [];
   // ── Per-face timing accumulators ─────────────────────────────────────

@@ -18,6 +18,7 @@ export interface FaceBox {
   videoHeight: number;
   score?: number;
   landmarks?: [number, number][];
+  detectorSource?: 'scrfd' | 'fallback';
 }
 
 export interface UseFaceDetectionReturn {
@@ -105,6 +106,7 @@ export function useFaceDetection(
               videoHeight: b.videoHeight,
               score: b.score,
               landmarks: b.landmarks,
+              detectorSource: 'scrfd',
             }));
           } catch (scrfdErr) {
             scrfdFailed = true;
@@ -131,6 +133,7 @@ export function useFaceDetection(
                   videoWidth: vw,
                   videoHeight: vh,
                   score: det.categories?.[0]?.score || 0.8,
+                  detectorSource: 'fallback',
                 });
               }
             }

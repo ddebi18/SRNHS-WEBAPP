@@ -46,6 +46,7 @@ import {
   FACE_NET_FIVE_POINT_TEMPLATE,
   FACE_RECOGNITION_NET_INPUT_SIZE,
   hasScrfdKeypoints,
+  resolveFaceDescriptorMode,
 } from '@/features/attendance/lib/faceNetEngine';
 import {
   euclideanDistance,
@@ -87,6 +88,12 @@ describe('aligned descriptor flow', () => {
     expect(FACENET_DISTANCE_THRESHOLD).toBe(0.43);
   });
 
+  it('keeps the legacy path default and requires an explicit keypoint opt-in', () => {
+    expect(resolveFaceDescriptorMode(false, false)).toBe('legacy');
+    expect(resolveFaceDescriptorMode(false, true)).toBe('landmark_aligned');
+    expect(resolveFaceDescriptorMode(true, true)).toBe('keypoint_aligned');
+  });
+
   it('accepts decoded SCRFD 5-point landmarks', () => {
     expect(hasScrfdKeypoints(SAMPLE_KEYPOINTS)).toBe(true);
     expect(hasScrfdKeypoints(undefined)).toBe(false);
@@ -124,7 +131,7 @@ describe('aligned descriptor flow', () => {
       height: 120,
       landmarks: SAMPLE_KEYPOINTS,
     };
-    const aligned = await describeScrfdFaceRegions(video, [region]);
+    const aligned = await describeScrfdFaceRegions(video, [region], undefined, 'keypoint_aligned');
     const crop = await describeScrfdFaceRegions(video, [{ ...region, landmarks: undefined }]);
     expect(aligned[0]?.status === 'descriptor' && aligned[0].source).toBe('aligned');
     expect(crop[0]?.status === 'descriptor' && crop[0].source).toBe('crop');

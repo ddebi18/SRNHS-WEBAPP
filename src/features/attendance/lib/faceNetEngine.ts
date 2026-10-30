@@ -39,6 +39,17 @@ export function ensureFaceNetModels(): Promise<void> {
   return modelsPromise;
 }
 
+export type FaceDescriptorMode = 'legacy' | 'landmark_aligned' | 'keypoint_aligned';
+
+export function resolveFaceDescriptorMode(
+  keypointAlignmentEnabled: boolean,
+  landmarkAlignmentEnabled: boolean
+): FaceDescriptorMode {
+  if (keypointAlignmentEnabled) return 'keypoint_aligned';
+  if (landmarkAlignmentEnabled) return 'landmark_aligned';
+  return 'legacy';
+}
+
 function enhanceCanvas(canvas: HTMLCanvasElement, gamma: number): HTMLCanvasElement {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx || gamma === 1.0) return canvas;
@@ -129,6 +140,7 @@ export interface FaceDetectionRegion {
   score?: number;
   /** SCRFD 5-point landmarks: left eye, right eye, nose, left mouth, right mouth. */
   landmarks?: [number, number][];
+  detectorSource?: 'scrfd' | 'fallback';
 }
 
 export type FaceRegionQualityRejection =
@@ -142,7 +154,7 @@ export type FaceRegionRecognitionResult =
       status: 'descriptor';
       detection: FaceNetLiveDetection;
       durationMs: number;
-      source: 'aligned' | 'crop' | 'full_frame_fallback';
+      source: 'aligned' | 'landmark_aligned' | 'crop' | 'full_frame_fallback';
       fallbackDurationMs?: number;
     }
   | {
@@ -474,7 +486,8 @@ async function computeDescriptorFromCanvas(canvas: HTMLCanvasElement): Promise<F
 export async function describeScrfdFaceRegions(
   input: HTMLVideoElement | HTMLCanvasElement,
   regions: FaceDetectionRegion[],
-  minScore = MIN_LIVE_DETECTION_SCORE
+  minScore = MIN_LIVE_DETECTION_SCORE,
+  mode: FaceDescriptorMode = 'legacy'
 ): Promise<FaceRegionRecognitionResult[]> {
   const isVideo = typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement;
   const inputWidth = isVideo ? input.videoWidth : input.width;
@@ -537,7 +550,7 @@ export async function describeScrfdFaceRegions(
     region: FaceDetectionRegion,
     cropCanvas: HTMLCanvasElement
   ): Promise<FaceRegionRecognitionResult> => {
-    if (hasScrfdKeypoints(region.landmarks)) {
+    if (mode === 'keypoint_aligned' && hasScrfdKeypoints(region.landmarks)) {
       return recognizeAligned(region, region.landmarks, cropCanvas);
     }
     const startedAt = performance.now();
@@ -573,6 +586,93 @@ export async function describeScrfdFaceRegions(
       cropContext.clearRect(0, 0, cropWidth, cropHeight);
       cropContext.drawImage(input, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
 
+      if (mode === 'landmark_aligned') {
+        if (region.width < MIN_LIVE_RECOGNITION_FACE_SIZE_PX || region.height < MIN_LIVE_RECOGNITION_FACE_SIZE_PX) {
+          return {
+            region,
+            status: 'quality_rejected',
+            reason: 'below_minimum_face_size',
+            durationMs: performance.now() - startedAt,
+          };
+        }
+        if (typeof region.score === 'number' && region.score < minScore) {
+          return {
+            region,
+            status: 'quality_rejected',
+            reason: 'below_detection_confidence',
+            durationMs: performance.now() - startedAt,
+          };
+        }
+        const [faceCrop] = await faceapi.extractFaces(cropCanvas, [
+          new faceapi.Rect(region.x - cropX, region.y - cropY, region.width, region.height),
+        ]);
+        if (!faceCrop) {
+          return {
+            region,
+            status: 'failed',
+            reason: 'scrfd_face_crop_unavailable',
+            durationMs: performance.now() - startedAt,
+          };
+        }
+        const landmarks = await faceapi.nets.faceLandmark68Net.detectLandmarks(faceCrop);
+        const faceLandmarks = Array.isArray(landmarks) ? landmarks[0] : landmarks;
+        if (!faceLandmarks) {
+          return {
+            region,
+            status: 'failed',
+            reason: 'no_landmarks_in_crop',
+            durationMs: performance.now() - startedAt,
+          };
+        }
+        if (!evaluateFacePartConsistency(faceLandmarks.positions, {
+          x: 0,
+          y: 0,
+          width: region.width,
+          height: region.height,
+        })) {
+          return {
+            region,
+            status: 'quality_rejected',
+            reason: 'inconsistent_landmarks',
+            durationMs: performance.now() - startedAt,
+          };
+        }
+        const alignedBox = faceLandmarks.align(null, { useDlibAlignment: true });
+        const [alignedCanvas] = await faceapi.extractFaces(faceCrop, [alignedBox]);
+        if (!alignedCanvas) {
+          return {
+            region,
+            status: 'failed',
+            reason: 'aligned_crop_unavailable',
+            durationMs: performance.now() - startedAt,
+          };
+        }
+        const descriptor = await computeDescriptorFromCanvas(alignedCanvas);
+        if (!descriptor) {
+          return {
+            region,
+            status: 'failed',
+            reason: 'aligned_descriptor_unavailable',
+            durationMs: performance.now() - startedAt,
+          };
+        }
+        return {
+          region,
+          status: 'descriptor',
+          detection: {
+            box: { x: region.x, y: region.y, width: region.width, height: region.height },
+            landmarks: faceLandmarks.positions.map(point => ({
+              x: region.x + point.x,
+              y: region.y + point.y,
+            })),
+            descriptor,
+            score: region.score ?? 1,
+          },
+          durationMs: performance.now() - startedAt,
+          source: 'landmark_aligned',
+        };
+      }
+
       const options = faceapi.nets.tinyFaceDetector.isLoaded
         ? new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: minScore })
         : new faceapi.SsdMobilenetv1Options({ minConfidence: minScore });
@@ -603,22 +703,6 @@ export async function describeScrfdFaceRegions(
       }
 
       const detectedBox = detection.detection.box;
-      const detectedCenterX = cropX + detectedBox.x + detectedBox.width / 2;
-      const detectedCenterY = cropY + detectedBox.y + detectedBox.height / 2;
-      const regionCenterX = region.x + region.width / 2;
-      const regionCenterY = region.y + region.height / 2;
-      if (
-        Math.hypot(detectedCenterX - regionCenterX, detectedCenterY - regionCenterY) >
-        Math.max(region.width, region.height) * 0.45
-      ) {
-        return {
-          region,
-          status: 'failed',
-          reason: 'crop_detection_misaligned',
-          durationMs: performance.now() - startedAt,
-        };
-      }
-
       return {
         region,
         status: 'descriptor',
@@ -669,7 +753,7 @@ export async function compareAlignedAndCropDescriptors(
   const withKeypoints = hasScrfdKeypoints(region.landmarks)
     ? region
     : { ...region, landmarks: undefined };
-  const aligned = await describeScrfdFaceRegions(input, [withKeypoints]);
+  const aligned = await describeScrfdFaceRegions(input, [withKeypoints], undefined, 'keypoint_aligned');
   const crop = await describeScrfdFaceRegions(input, [{ ...region, landmarks: undefined }]);
   const alignedDesc = aligned[0]?.status === 'descriptor' ? aligned[0].detection.descriptor : null;
   const cropDesc = crop[0]?.status === 'descriptor' ? crop[0].detection.descriptor : null;

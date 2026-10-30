@@ -18,7 +18,12 @@ import { useFaceRecognition } from '../hooks/useFaceRecognition';
 import { getRecognitionStatusText } from '../lib/recognitionStatus';
 import { MIN_ATTENDANCE_LOG_CONFIDENCE } from '../lib/faceNetMatcher';
 import { attendanceEventKey, reserveAttendanceEvent } from '../lib/attendanceDedup';
-import { mapVideoFaceBoxToViewport, type VideoFaceBox } from '@/lib/faceOverlayGeometry';
+import {
+  faceBoxOverlap,
+  getUnpairedFaceBoxIndices,
+  mapVideoFaceBoxToViewport,
+  type VideoFaceBox,
+} from '@/lib/faceOverlayGeometry';
 import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapter';
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
 import type { EventType } from '@/types/domain.types';
@@ -49,6 +54,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const viewfinderRef = useRef<HTMLDivElement>(null);
   const webRtcConnectionRef = useRef<WebRtcStreamConnection | null>(null);
   const loggedMatchesRef = useRef<Map<string, number>>(new Map());
+  const overlayDebugStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -124,14 +130,15 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const activeBox = isFaceDetected ? (faceBox || recognitionBox) : null;
   const liveRecognizedFaces = useMemo(() => recognizedFaces.filter(face =>
       allFaceBoxes.some(box => {
-        const faceCenterX = face.box.x + face.box.width / 2;
-        const faceCenterY = face.box.y + face.box.height / 2;
-        const boxCenterX = box.x + box.width / 2;
-        const boxCenterY = box.y + box.height / 2;
-        return Math.hypot(faceCenterX - boxCenterX, faceCenterY - boxCenterY) <
+        const { iou, centerDistance } = faceBoxOverlap(face.box, box);
+        return iou > 0.3 || centerDistance <
           Math.max(40, Math.min(face.box.width, face.box.height, box.width, box.height) * 0.75);
       })
     ), [recognizedFaces, allFaceBoxes]);
+  const unpairedDetectionBoxIndices = useMemo(
+    () => getUnpairedFaceBoxIndices(allFaceBoxes, liveRecognizedFaces.map(face => face.box)),
+    [allFaceBoxes, liveRecognizedFaces]
+  );
   const liveMatchedStudents = useMemo(() => Array.from(
     new Map(
       liveRecognizedFaces
@@ -142,6 +149,33 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   ), [liveRecognizedFaces]);
   const liveMatchedStudent = liveRecognizedFaces.find(face => face.student)?.student ?? null;
   const isAnyFaceDetected = isFaceDetected || allFaceBoxes.length > 0;
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !hasVideoSource) {
+      overlayDebugStartedAtRef.current = null;
+      return;
+    }
+    if (overlayDebugStartedAtRef.current === null) {
+      overlayDebugStartedAtRef.current = performance.now();
+    }
+    if (performance.now() - overlayDebugStartedAtRef.current > 5000) return;
+
+    allFaceBoxes.forEach((box, boxIndex) => {
+      recognizedFaces.forEach(face => {
+        const { iou, centerDistance } = faceBoxOverlap(box, face.box);
+        if (iou <= 0.3) return;
+        console.debug('[FaceOverlay] Overlapping boxes', {
+          trackId: face.id,
+          source: [box.detectorSource ?? 'scrfd', face.diagnostic.detectorSource ?? face.diagnostic.source ?? 'unknown'],
+          status: face.status,
+          iou: Number(iou.toFixed(3)),
+          centerDistance: Number(centerDistance.toFixed(1)),
+          missedFrames: face.diagnostic.missedFrames ?? 0,
+          detectionIndex: boxIndex,
+        });
+      });
+    });
+  }, [allFaceBoxes, hasVideoSource, recognizedFaces]);
 
   const getOverlayStyle = (box: VideoFaceBox): React.CSSProperties => {
     const viewport = viewfinderRef.current?.getBoundingClientRect();
@@ -589,12 +623,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
 
             {/* Multi-Face SCRFD Bounding Box Overlay */}
             {allFaceBoxes && allFaceBoxes.length > 0 && allFaceBoxes.map((b, idx) => {
-              const overlapsRecognizedFace = liveRecognizedFaces.some(face =>
-                Math.hypot(
-                  (b.x + b.width / 2) - (face.box.x + face.box.width / 2),
-                  (b.y + b.height / 2) - (face.box.y + face.box.height / 2)
-                ) < Math.max(28, Math.min(b.width, b.height) * 0.45)
-              );
+              const overlapsRecognizedFace = !unpairedDetectionBoxIndices.includes(idx);
               const isPrimary = liveRecognizedFaces.length === 0 && activeBox && (
                 Math.hypot(
                   (b.x + b.width / 2) - (activeBox.x + activeBox.width / 2),

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { mapVideoFaceBoxToViewport } from '@/lib/faceOverlayGeometry';
+import {
+  getUnpairedFaceBoxIndices,
+  mapVideoFaceBoxToViewport,
+} from '@/lib/faceOverlayGeometry';
 import {
   assignFaceDetectionTracks,
   findDuplicateStudentClaimLosers,
@@ -140,6 +143,80 @@ describe('recognition scan serialization', () => {
 });
 
 describe('face overlay geometry', () => {
+  it('draws one box for one moving face when detector and track boxes overlap', () => {
+    let tracks: Array<{
+      box: { x: number; y: number; width: number; height: number };
+      velocityX: number;
+      velocityY: number;
+      lastSeenAt: number;
+      studentId: string | null;
+    }> = [];
+    for (const [frame, x] of [100, 112, 124].entries()) {
+      const detections = [{ x, y: 80, width: 80, height: 90 }];
+      const assignments = assignFaceDetectionTracks(
+        detections,
+        tracks,
+        [null],
+        frame * 200
+      );
+      if (assignments[0] === null) {
+        tracks.push({
+          box: detections[0]!,
+          velocityX: 0,
+          velocityY: 0,
+          lastSeenAt: frame * 200,
+          studentId: null,
+        });
+      } else {
+        tracks[assignments[0]!]!.box = detections[0]!;
+        tracks[assignments[0]!]!.lastSeenAt = frame * 200;
+      }
+      const unpaired = getUnpairedFaceBoxIndices(detections, tracks.map(track => track.box));
+      expect(tracks.length + unpaired.length).toBe(1);
+    }
+    expect(tracks).toHaveLength(1);
+  });
+
+  it('keeps two close faces as two separate drawn tracks', () => {
+    let tracks: Array<{
+      box: { x: number; y: number; width: number; height: number };
+      velocityX: number;
+      velocityY: number;
+      lastSeenAt: number;
+      studentId: string | null;
+    }> = [];
+    for (const [frame, offset] of [0, 4].entries()) {
+      const detections = [
+        { x: 100 + offset, y: 80, width: 60, height: 70 },
+        { x: 150 - offset, y: 80, width: 60, height: 70 },
+      ];
+      const assignments = assignFaceDetectionTracks(
+        detections,
+        tracks,
+        [null, null],
+        frame * 200
+      );
+      detections.forEach((box, index) => {
+        const trackIndex = assignments[index];
+        if (trackIndex === null || trackIndex === undefined) {
+          tracks.push({
+            box,
+            velocityX: 0,
+            velocityY: 0,
+            lastSeenAt: frame * 200,
+            studentId: null,
+          });
+        } else {
+          tracks[trackIndex]!.box = box;
+          tracks[trackIndex]!.lastSeenAt = frame * 200;
+        }
+      });
+      const unpaired = getUnpairedFaceBoxIndices(detections, tracks.map(track => track.box));
+      expect(tracks.length + unpaired.length).toBe(2);
+    }
+    expect(tracks).toHaveLength(2);
+  });
+
   it('compensates for cropping when the video uses object-cover', () => {
     expect(
       mapVideoFaceBoxToViewport(

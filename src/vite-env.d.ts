@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL: string;
   readonly VITE_SUPABASE_ANON_KEY: string;
+  readonly VITE_FACE_KEYPOINT_ALIGNMENT?: string;
+  readonly VITE_FACE_LANDMARK_ALIGNMENT?: string;
 }
 
 interface ImportMeta {

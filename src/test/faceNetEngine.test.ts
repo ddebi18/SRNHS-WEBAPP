@@ -13,6 +13,7 @@ const mockFaceApi = vi.hoisted(() => ({
     faceLandmark68Net: {
       loadFromUri: vi.fn().mockResolvedValue(undefined),
       isLoaded: true,
+      detectLandmarks: vi.fn(),
     },
     faceRecognitionNet: {
       loadFromUri: vi.fn().mockResolvedValue(undefined),
@@ -22,6 +23,11 @@ const mockFaceApi = vi.hoisted(() => ({
   },
   detectSingleFace: vi.fn(),
   detectAllFaces: vi.fn(),
+  extractFaces: vi.fn(),
+  Rect: class {
+    constructor(public x: number, public y: number, public width: number, public height: number) {}
+    clipAtImageBorders() { return this; }
+  },
 }));
 
 vi.mock('@vladmandic/face-api', () => ({
@@ -36,6 +42,7 @@ describe('faceNetEngine', () => {
     mockFaceApi.nets.tinyFaceDetector.loadFromUri.mockResolvedValue(undefined);
     mockFaceApi.nets.ssdMobilenetv1.loadFromUri.mockRejectedValue(new Error('model missing'));
     mockFaceApi.nets.faceLandmark68Net.loadFromUri.mockResolvedValue(undefined);
+    mockFaceApi.nets.faceLandmark68Net.detectLandmarks.mockReset();
     mockFaceApi.nets.faceRecognitionNet.loadFromUri.mockResolvedValue(undefined);
     mockFaceApi.nets.faceRecognitionNet.computeFaceDescriptor.mockResolvedValue(new Float32Array(128).fill(0.02));
   });
@@ -141,6 +148,7 @@ describe('faceNetEngine', () => {
         }),
       };
     });
+
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
       drawImage: vi.fn(),
       clearRect: vi.fn(),
@@ -176,6 +184,46 @@ describe('faceNetEngine', () => {
     expect(maxConcurrentInferences).toBe(1);
     expect(new Set(cropCanvases).size).toBe(1);
     expect(cropCanvases[0]).toBeInstanceOf(HTMLCanvasElement);
+  });
+
+  it('uses the padded SCRFD crop and face-api landmarks without re-detecting the crop', async () => {
+    const { describeScrfdFaceRegions } = await import('@/features/attendance/lib/faceNetEngine');
+    const positions = Array.from({ length: 68 }, () => ({ x: 50, y: 50 }));
+    [36, 37, 38, 39, 40, 41].forEach(index => { positions[index] = { x: 30, y: 40 }; });
+    [42, 43, 44, 45, 46, 47].forEach(index => { positions[index] = { x: 70, y: 40 }; });
+    [27, 28, 29, 30, 31, 32, 33, 34, 35].forEach(index => { positions[index] = { x: 50, y: 54 }; });
+    [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67]
+      .forEach(index => { positions[index] = { x: 50, y: 70 }; });
+    const align = vi.fn(() => ({ x: 15, y: 12, width: 70, height: 70 }));
+    mockFaceApi.nets.faceLandmark68Net.detectLandmarks.mockResolvedValue({ positions, align });
+    mockFaceApi.extractFaces.mockImplementation(async () => [document.createElement('canvas')]);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+      drawImage: vi.fn(),
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      setTransform: vi.fn(),
+      fillStyle: '',
+    } as never));
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      videoWidth: { value: 640 },
+      videoHeight: { value: 480 },
+    });
+
+    const results = await describeScrfdFaceRegions(
+      video,
+      [{ x: 120, y: 80, width: 100, height: 120, score: 0.9 }],
+      undefined,
+      'landmark_aligned'
+    );
+
+    expect(results[0]?.status).toBe('descriptor');
+    expect(results[0]?.status === 'descriptor' && results[0].source).toBe('landmark_aligned');
+    expect(mockFaceApi.nets.faceLandmark68Net.detectLandmarks).toHaveBeenCalledTimes(1);
+    expect(align).toHaveBeenCalledWith(null, { useDlibAlignment: true });
+    expect(mockFaceApi.extractFaces).toHaveBeenCalledTimes(2);
+    expect(mockFaceApi.detectSingleFace).not.toHaveBeenCalled();
+    expect(mockFaceApi.nets.faceRecognitionNet.computeFaceDescriptor).toHaveBeenCalledTimes(1);
   });
 
   it('does not pass OffscreenCanvas into face-api even when OffscreenCanvas exists', async () => {
@@ -297,7 +345,7 @@ describe('faceNetEngine', () => {
     }];
 
     const startedAt = performance.now();
-    const results = await describeScrfdFaceRegions(video, regions);
+    const results = await describeScrfdFaceRegions(video, regions, undefined, 'keypoint_aligned');
     const durationMs = performance.now() - startedAt;
 
     expect(results).toHaveLength(1);

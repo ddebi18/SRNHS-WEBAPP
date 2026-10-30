@@ -22,6 +22,8 @@ import {
   ensureFaceNetModels,
   extractDescriptorFromImage,
   loadImage,
+  resolveFaceDescriptorMode,
+  type FaceDescriptorMode,
   type FaceDetectionRegion,
   type FaceNetLiveDetection,
   type FaceRegionRecognitionResult,
@@ -33,6 +35,7 @@ import {
   updateFaceTrackIdentity,
 } from '../lib/faceTracking';
 import { releaseFaceScan, tryAcquireFaceScan } from '../lib/faceScanLock';
+import { faceBoxOverlap } from '@/lib/faceOverlayGeometry';
 
 export type { RecognitionStatusInput } from '../lib/recognitionStatus';
 export { computeCosineSimilarity, computeCosineDistance } from '../lib/faceNetMatcher';
@@ -42,6 +45,10 @@ const SCAN_OVERRUN_COOLDOWN_MIN_MS = 100;
 const MATCH_SWITCH_STABILITY_FRAMES = 5;
 const MAX_DESCRIPTORS_PER_SCAN = 3;
 const CONFIRMED_REVERIFY_INTERVAL_MS = 1000;
+const LIVE_FACE_DESCRIPTOR_MODE: FaceDescriptorMode = resolveFaceDescriptorMode(
+  import.meta.env.VITE_FACE_KEYPOINT_ALIGNMENT === 'true',
+  import.meta.env.VITE_FACE_LANDMARK_ALIGNMENT === 'true'
+);
 
 function scanOverrunCooldownMs(lastScanDurationMs: number): number {
   return Math.max(SCAN_OVERRUN_COOLDOWN_MIN_MS, lastScanDurationMs * 0.5);
@@ -80,7 +87,9 @@ export interface RecognizedFaceItem {
     matchReason?: FaceNetMatchResult['reason'];
     distance?: number;
     cropDurationMs?: number;
-    source?: 'aligned' | 'crop' | 'full_frame_fallback';
+    source?: 'aligned' | 'landmark_aligned' | 'crop' | 'full_frame_fallback';
+    detectorSource?: 'scrfd' | 'fallback';
+    missedFrames?: number;
   };
   score?: number;
 }
@@ -98,6 +107,7 @@ interface FaceRecognitionTrack {
   stabilityCount: number;
   confirmedStudent: RecognizedStudent | null;
   pendingSwitch: boolean;
+  detectorSource: 'scrfd' | 'fallback';
 }
 
 type LiveFaceBoxesRef = Readonly<{ current: readonly FaceDetectionRegion[] }>;
@@ -154,6 +164,7 @@ export function useFaceRecognition(
   const processingRef = useRef(false);
   const lastMatchResultRef = useRef<{ reason: string; distance: number; secondDistance: number } | null>(null);
   const lastBoxRef = useRef<FaceRecognitionBox | null>(null);
+  const overlapDebugUntilRef = useRef(0);
 
   const isLiveRef = useRef(false);
   const studentsRef = useRef<any[]>([]);
@@ -407,6 +418,7 @@ export function useFaceRecognition(
           }
         }
         if (cancelled) return;
+        overlapDebugUntilRef.current = import.meta.env.DEV ? performance.now() + 5000 : 0;
         let regionResultLogCount = 0;
 
         const scheduleScan = (delay: number) => {
@@ -449,14 +461,17 @@ export function useFaceRecognition(
             let detectorDurationMs: number | null = null;
 
             if (detectedFaceBoxesRef) {
-              regions = [...detectedFaceBoxesRef.current];
+              regions = detectedFaceBoxesRef.current.map(box => ({
+                ...box,
+                detectorSource: box.detectorSource ?? 'scrfd',
+              }));
             } else if (scrfdSession) {
               try {
                 const detectionStartedAt = performance.now();
                 regions = await detectFacesWithScrfd(scrfdSession, video, 0.25, 0.4);
                 detectorDurationMs = performance.now() - detectionStartedAt;
                 regions = regions.map(({ x, y, width, height, score, landmarks }) => ({
-                  x, y, width, height, score, landmarks,
+                  x, y, width, height, score, landmarks, detectorSource: 'scrfd',
                 }));
               } catch (scrfdScanError) {
                 console.warn('[FaceRecognition] SCRFD recognition scan failed; using FaceNet detectors:', scrfdScanError);
@@ -465,7 +480,10 @@ export function useFaceRecognition(
             }
             if (regions.length === 0 && !detectedFaceBoxesRef) {
               const fallbackDetectionStartedAt = performance.now();
-              regions = await detectLiveFaceRegions(video);
+              regions = (await detectLiveFaceRegions(video)).map(region => ({
+                ...region,
+                detectorSource: 'fallback',
+              }));
               detectorDurationMs = (detectorDurationMs ?? 0) +
                 performance.now() - fallbackDetectionStartedAt;
             }
@@ -516,7 +534,12 @@ export function useFaceRecognition(
 
               const selectedRegions = selection.indices.map(index => regions[index]!);
               const selectedResults = selectedRegions.length > 0
-                ? await describeScrfdFaceRegions(video, selectedRegions)
+                ? await describeScrfdFaceRegions(
+                    video,
+                    selectedRegions,
+                    undefined,
+                    LIVE_FACE_DESCRIPTOR_MODE
+                  )
                 : [];
               const resultByIndex = new Map(
                 selection.indices.map((index, selectedIndex) => [index, selectedResults[selectedIndex]!])
@@ -589,6 +612,7 @@ export function useFaceRecognition(
                 stabilityCount: 0,
                 confirmedStudent: null,
                 pendingSwitch: false,
+                detectorSource: attempt.region.detectorSource ?? 'scrfd',
               };
               if (assignedTrackIndex !== null && assignedTrackIndex !== undefined) {
                 usedTracks.add(assignedTrackIndex);
@@ -603,6 +627,7 @@ export function useFaceRecognition(
                   bestTrack.velocityY * 0.4 + ((centerY - previousCenterY) / elapsed) * 0.6;
               }
               track.box = box;
+              track.detectorSource = attempt.region.detectorSource ?? 'scrfd';
               track.lastSeenAt = timestamp;
               track.missedFrames = 0;
               if (attempt.status !== 'skipped') track.lastDescriptorAt = timestamp;
@@ -674,6 +699,8 @@ export function useFaceRecognition(
                   distance: decision?.result.distance,
                   cropDurationMs: attempt.durationMs,
                   source: attempt.status === 'descriptor' ? attempt.source : undefined,
+                  detectorSource: attempt.region.detectorSource,
+                  missedFrames: track.missedFrames,
                 },
                 score: detection?.score,
               });
@@ -704,6 +731,32 @@ export function useFaceRecognition(
               if (track.missedFrames <= 2) nextTracks.push(track);
             });
             faceTracksRef.current = nextTracks;
+            if (performance.now() <= overlapDebugUntilRef.current) {
+              nextTracks.forEach((track, index) => {
+                nextTracks.slice(index + 1).forEach(otherTrack => {
+                  const { iou, centerDistance } = faceBoxOverlap(track.box, otherTrack.box);
+                  if (iou <= 0.3) return;
+                  console.debug('[FaceRecognition] Overlapping tracks', {
+                    tracks: [
+                      {
+                        id: track.id,
+                        source: track.detectorSource,
+                        status: track.confirmedStudent ? 'confirmed' : track.candidateStudentId ? 'candidate' : 'unconfirmed',
+                        missedFrames: track.missedFrames,
+                      },
+                      {
+                        id: otherTrack.id,
+                        source: otherTrack.detectorSource,
+                        status: otherTrack.confirmedStudent ? 'confirmed' : otherTrack.candidateStudentId ? 'candidate' : 'unconfirmed',
+                        missedFrames: otherTrack.missedFrames,
+                      },
+                    ],
+                    iou: Number(iou.toFixed(3)),
+                    centerDistance: Number(centerDistance.toFixed(1)),
+                  });
+                });
+              });
+            }
             const primaryDetection = attempts
               .filter((attempt): attempt is Extract<FaceRegionRecognitionResult, { status: 'descriptor' }> =>
                 attempt.status === 'descriptor'
