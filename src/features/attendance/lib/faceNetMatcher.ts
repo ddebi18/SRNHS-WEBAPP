@@ -3,7 +3,7 @@
  * Standards aligned with TESDA BSRS (MegaMatcher Face Engine) recommendations:
  * - High-accuracy distance threshold (0.43 max Euclidean distance)
  * - Ambiguity margin (0.10) to prevent false name mismatches
- * - Stricter duplicate rejection and 3-frame stability requirement
+ * - Duplicate rejection and sliding 2-of-4 scan confirmation
  */
 
 export {

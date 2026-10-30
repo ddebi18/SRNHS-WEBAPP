@@ -18,19 +18,21 @@ import {
 import {
   detectAccurateFace,
   detectLiveFaceRegions,
-  describeScrfdFaceRegions,
+  analyzeFaceRegionQuality,
+  describePaddedFaceCrop,
   ensureFaceNetModels,
   extractDescriptorFromImage,
   loadImage,
-  resolveFaceDescriptorMode,
-  type FaceDescriptorMode,
   type FaceDetectionRegion,
   type FaceNetLiveDetection,
   type FaceRegionRecognitionResult,
+  type FaceRegionQualityAssessment,
 } from '../lib/faceNetEngine';
 import {
   assignFaceDetectionTracks,
+  canFastConfirmFaceMatch,
   findDuplicateStudentClaimLosers,
+  predictFaceTrackBox,
   selectFaceDescriptorDetections,
   updateFaceTrackIdentity,
 } from '../lib/faceTracking';
@@ -45,10 +47,7 @@ const SCAN_OVERRUN_COOLDOWN_MIN_MS = 100;
 const MATCH_SWITCH_STABILITY_FRAMES = 5;
 const MAX_DESCRIPTORS_PER_SCAN = 3;
 const CONFIRMED_REVERIFY_INTERVAL_MS = 1000;
-const LIVE_FACE_DESCRIPTOR_MODE: FaceDescriptorMode = resolveFaceDescriptorMode(
-  import.meta.env.VITE_FACE_KEYPOINT_ALIGNMENT === 'true',
-  import.meta.env.VITE_FACE_LANDMARK_ALIGNMENT === 'true'
-);
+const FAST_CONFIRM_ENABLED = import.meta.env.VITE_FACE_FAST_CONFIRM === 'true';
 
 function scanOverrunCooldownMs(lastScanDurationMs: number): number {
   return Math.max(SCAN_OVERRUN_COOLDOWN_MIN_MS, lastScanDurationMs * 0.5);
@@ -90,6 +89,14 @@ export interface RecognizedFaceItem {
     source?: 'aligned' | 'landmark_aligned' | 'crop' | 'full_frame_fallback';
     detectorSource?: 'scrfd' | 'fallback';
     missedFrames?: number;
+    qualityScore?: number;
+    faceSizePx?: number;
+    detectorScore?: number;
+    sharpnessVariance?: number;
+    poseScore?: number;
+    timeToConfirmMs?: number;
+    scansUsed?: number;
+    predicted?: boolean;
   };
   score?: number;
 }
@@ -108,6 +115,11 @@ interface FaceRecognitionTrack {
   confirmedStudent: RecognizedStudent | null;
   pendingSwitch: boolean;
   detectorSource: 'scrfd' | 'fallback';
+  matchHistory: Array<string | null>;
+  firstDetectedAt: number;
+  scansUsed: number;
+  confirmedAt?: number;
+  bestCrop?: FaceRegionQualityAssessment;
 }
 
 type LiveFaceBoxesRef = Readonly<{ current: readonly FaceDetectionRegion[] }>;
@@ -489,6 +501,7 @@ export function useFaceRecognition(
             }
 
             const timestamp = Date.now();
+            const qualityAssessments = regions.map(region => analyzeFaceRegionQuality(video, region));
             let provisionalTracks: Array<FaceRecognitionTrack | undefined> = [];
             if (regions.length > 0) {
               const frameWidth = video.videoWidth || 640;
@@ -510,6 +523,12 @@ export function useFaceRecognition(
                   ? undefined
                   : previousTracks[trackIndex];
               });
+              provisionalTracks.forEach((track, index) => {
+                const quality = qualityAssessments[index]!;
+                if (track && quality.usable && (!track.bestCrop || quality.score > track.bestCrop.score)) {
+                  track.bestCrop = quality;
+                }
+              });
               const selection = selectFaceDescriptorDetections(
                 provisionalTracks.map(track => ({
                   confirmed: Boolean(track?.confirmedStudent),
@@ -521,6 +540,9 @@ export function useFaceRecognition(
                 CONFIRMED_REVERIFY_INTERVAL_MS
               );
               descriptorRotationCursorRef.current = selection.nextRotationCursor;
+              const selectedIndices = selection.indices.filter(index =>
+                qualityAssessments[index]!.usable || Boolean(provisionalTracks[index]?.bestCrop)
+              );
               setIsAnalyzing(true);
               setRecognizedFaces(regions.map((region, index) => ({
                 id: `scan-${Math.round(performance.now())}-${index}`,
@@ -532,22 +554,19 @@ export function useFaceRecognition(
                 diagnostic: {},
               })));
 
-              const selectedRegions = selection.indices.map(index => regions[index]!);
-              const selectedResults = selectedRegions.length > 0
-                ? await describeScrfdFaceRegions(
-                    video,
-                    selectedRegions,
-                    undefined,
-                    LIVE_FACE_DESCRIPTOR_MODE
-                  )
-                : [];
+              const selectedResults = await Promise.all(selectedIndices.map(index => {
+                const current = qualityAssessments[index]!;
+                const cached = provisionalTracks[index]?.bestCrop;
+                const crop = cached && cached.score > current.score ? cached : current;
+                return describePaddedFaceCrop(regions[index]!, crop.crop, crop.cropX, crop.cropY);
+              }));
               const resultByIndex = new Map(
-                selection.indices.map((index, selectedIndex) => [index, selectedResults[selectedIndex]!])
+                selectedIndices.map((index, selectedIndex) => [index, selectedResults[selectedIndex]!])
               );
               regionResults = regions.map((region, index) => resultByIndex.get(index) ?? {
                 region,
                 status: 'skipped',
-                reason: 'descriptor_budget',
+                reason: qualityAssessments[index]!.usable ? 'descriptor_budget' : 'low_quality',
                 durationMs: 0,
               });
             } else {
@@ -613,6 +632,9 @@ export function useFaceRecognition(
                 confirmedStudent: null,
                 pendingSwitch: false,
                 detectorSource: attempt.region.detectorSource ?? 'scrfd',
+                matchHistory: [],
+                firstDetectedAt: timestamp,
+                scansUsed: 0,
               };
               if (assignedTrackIndex !== null && assignedTrackIndex !== undefined) {
                 usedTracks.add(assignedTrackIndex);
@@ -630,7 +652,14 @@ export function useFaceRecognition(
               track.detectorSource = attempt.region.detectorSource ?? 'scrfd';
               track.lastSeenAt = timestamp;
               track.missedFrames = 0;
-              if (attempt.status !== 'skipped') track.lastDescriptorAt = timestamp;
+              const quality = qualityAssessments[detectionIndex]!;
+              if (quality.usable && (!track.bestCrop || quality.score >= track.bestCrop.score)) {
+                track.bestCrop = quality;
+              }
+              if (attempt.status === 'descriptor') {
+                track.lastDescriptorAt = timestamp;
+                track.scansUsed++;
+              }
               if (match && decisions[detectionIndex]) {
                 track.lastMatchDistance = decisions[detectionIndex]!.result.distance;
               }
@@ -646,24 +675,39 @@ export function useFaceRecognition(
                 enrolledFace &&
                 isSameEnrolledPerson(attempt.detection.descriptor, enrolledFace.descriptors)
               );
+              const previousIdentity = track.confirmedStudent?.id ?? null;
               const identity = updateFaceTrackIdentity(
                 {
                   candidateStudentId: track.candidateStudentId,
                   stabilityCount: track.stabilityCount,
                   confirmedStudentId: track.confirmedStudent?.id ?? null,
                   pendingSwitch: track.pendingSwitch,
+                  matchHistory: track.matchHistory,
                 },
                 match?.id ?? null,
                 attempt.status === 'descriptor',
                 sameStudentVerified,
                 STABILITY_FRAMES_REQUIRED,
-                MATCH_SWITCH_STABILITY_FRAMES
+                MATCH_SWITCH_STABILITY_FRAMES,
+                Boolean(
+                  match &&
+                  canFastConfirmFaceMatch(
+                    decisions[detectionIndex]?.result.distance ?? Number.POSITIVE_INFINITY,
+                    decisions[detectionIndex]?.result.secondDistance ?? Number.POSITIVE_INFINITY,
+                    FAST_CONFIRM_ENABLED
+                  )
+                )
               );
               track.candidateStudentId = identity.candidateStudentId;
               track.stabilityCount = identity.stabilityCount;
               track.pendingSwitch = identity.pendingSwitch;
+              track.matchHistory = identity.matchHistory;
+              if (identity.confirmedStudentId && identity.confirmedStudentId !== previousIdentity) {
+                track.confirmedAt = timestamp;
+              }
               if (!identity.confirmedStudentId) {
                 track.confirmedStudent = null;
+                track.confirmedAt = undefined;
               } else if (
                 match?.id === identity.confirmedStudentId &&
                 (!sameConfirmedStudent || sameStudentVerified)
@@ -680,6 +724,8 @@ export function useFaceRecognition(
                     ? 'quality_rejected'
                     : track.confirmedStudent
                       ? 'recognized'
+                    : attempt.status === 'skipped' && attempt.reason === 'low_quality'
+                      ? 'quality_rejected'
                     : match || track.candidateStudentId
                         ? 'scanning'
                         : 'unknown';
@@ -701,35 +747,75 @@ export function useFaceRecognition(
                   source: attempt.status === 'descriptor' ? attempt.source : undefined,
                   detectorSource: attempt.region.detectorSource,
                   missedFrames: track.missedFrames,
+                  qualityScore: quality.score,
+                  faceSizePx: quality.faceSizePx,
+                  detectorScore: quality.detectorScore,
+                  sharpnessVariance: quality.sharpnessVariance,
+                  poseScore: quality.poseScore,
+                  timeToConfirmMs: track.confirmedAt
+                    ? track.confirmedAt - track.firstDetectedAt
+                    : timestamp - track.firstDetectedAt,
+                  scansUsed: track.scansUsed,
                 },
                 score: detection?.score,
               });
             }
 
+            faceTracksRef.current.forEach((track, trackIndex) => {
+              if (usedTracks.has(trackIndex)) return;
+              track.missedFrames++;
+              if (track.missedFrames > 2) return;
+              nextTracks.push(track);
+              recognizedItems.push({
+                id: track.id,
+                student: track.confirmedStudent,
+                box: { ...predictFaceTrackBox(
+                  track.box,
+                  track.velocityX,
+                  track.velocityY,
+                  track.lastSeenAt,
+                  timestamp
+                ), videoWidth: frameWidth, videoHeight: frameHeight },
+                isLive: true,
+                isMatching: false,
+                status: track.confirmedStudent ? 'recognized' : 'unknown',
+                diagnostic: {
+                  distance: Number.isFinite(track.lastMatchDistance)
+                    ? track.lastMatchDistance
+                    : undefined,
+                  missedFrames: track.missedFrames,
+                  predicted: true,
+                  scansUsed: track.scansUsed,
+                  timeToConfirmMs: track.confirmedAt
+                    ? track.confirmedAt - track.firstDetectedAt
+                    : timestamp - track.firstDetectedAt,
+                },
+              });
+            });
             const duplicateLosers = findDuplicateStudentClaimLosers(
               recognizedItems.map((item, index) => ({
                 studentId: item.student?.id ?? null,
-                distance: item.diagnostic.distance ?? itemTracks[index]!.lastMatchDistance,
+                distance: item.diagnostic.distance ??
+                  itemTracks[index]?.lastMatchDistance ??
+                  Number.POSITIVE_INFINITY,
               }))
             );
             for (const index of duplicateLosers) {
-              const track = itemTracks[index]!;
+              const item = recognizedItems[index]!;
+              const track = itemTracks[index] ?? nextTracks.find(candidate => candidate.id === item.id);
+              if (!track) continue;
               track.confirmedStudent = null;
               track.candidateStudentId = '';
               track.stabilityCount = 0;
               track.pendingSwitch = false;
+              track.matchHistory = [];
+              track.confirmedAt = undefined;
               track.lastMatchDistance = Number.POSITIVE_INFINITY;
-              recognizedItems[index]!.student = null;
-              recognizedItems[index]!.status = 'unknown';
-              recognizedItems[index]!.isMatching = false;
-              recognizedItems[index]!.diagnostic.reason = 'duplicate_student_claim';
+              item.student = null;
+              item.status = 'unknown';
+              item.isMatching = false;
+              item.diagnostic.reason = 'duplicate_student_claim';
             }
-
-            faceTracksRef.current.forEach((track, trackIndex) => {
-              if (usedTracks.has(trackIndex)) return;
-              track.missedFrames++;
-              if (track.missedFrames <= 2) nextTracks.push(track);
-            });
             faceTracksRef.current = nextTracks;
             if (performance.now() <= overlapDebugUntilRef.current) {
               nextTracks.forEach((track, index) => {

@@ -5,10 +5,13 @@ import {
 } from '@/lib/faceOverlayGeometry';
 import {
   assignFaceDetectionTracks,
+  canFastConfirmFaceMatch,
   findDuplicateStudentClaimLosers,
+  predictFaceTrackBox,
   selectFaceDescriptorDetections,
   updateFaceTrackIdentity,
 } from '@/features/attendance/lib/faceTracking';
+import { scoreFaceNetMatch } from '@/features/attendance/lib/faceNetMatcher';
 import { releaseFaceScan, tryAcquireFaceScan } from '@/features/attendance/lib/faceScanLock';
 
 describe('live face tracking', () => {
@@ -59,6 +62,23 @@ describe('live face tracking', () => {
     ).toEqual([0, 1]);
   });
 
+  it('predicts a missed track box from velocity and caps stale extrapolation', () => {
+    expect(predictFaceTrackBox(
+      { x: 10, y: 20, width: 30, height: 40 },
+      0.1,
+      -0.05,
+      1000,
+      1200
+    )).toEqual({ x: 30, y: 10, width: 30, height: 40 });
+    expect(predictFaceTrackBox(
+      { x: 10, y: 20, width: 30, height: 40 },
+      0.1,
+      0,
+      1000,
+      3000
+    ).x).toBe(50);
+  });
+
   it('prevents identity swaps among five close faces with a global assignment', () => {
     const tracks = Array.from({ length: 5 }, (_, index) => ({
       box: { x: index * 36, y: 40, width: 40, height: 48 },
@@ -107,16 +127,17 @@ describe('live face tracking', () => {
     expect(second.indices.length).toBeLessThanOrEqual(3);
   });
 
-  it('confirms in three matches, switches in five, and survives a failed extraction', () => {
+  it('confirms on two matching results in four scans, switches in five, and survives a skipped scan', () => {
     let state = {
       candidateStudentId: '',
       stabilityCount: 0,
       confirmedStudentId: null as string | null,
       pendingSwitch: false,
+      matchHistory: [] as Array<string | null>,
     };
-    for (let frame = 0; frame < 3; frame++) {
-      state = updateFaceTrackIdentity(state, 'student-a', true);
-    }
+    state = updateFaceTrackIdentity(state, 'student-a', true);
+    state = updateFaceTrackIdentity(state, null, false);
+    state = updateFaceTrackIdentity(state, 'student-a', true);
     expect(state.confirmedStudentId).toBe('student-a');
 
     for (let frame = 0; frame < 4; frame++) {
@@ -128,6 +149,49 @@ describe('live face tracking', () => {
 
     const failed = updateFaceTrackIdentity(state, null, false);
     expect(failed).toEqual(state);
+  });
+
+  it('does not confirm when accepted matches alternate between two students', () => {
+    let state = {
+      candidateStudentId: '',
+      stabilityCount: 0,
+      confirmedStudentId: null as string | null,
+      pendingSwitch: false,
+      matchHistory: [] as Array<string | null>,
+    };
+    for (const id of ['student-a', 'student-b', 'student-a', 'student-b']) {
+      state = updateFaceTrackIdentity(state, id, true);
+    }
+    expect(state.confirmedStudentId).toBeNull();
+  });
+
+  it('keeps unknown and ambiguous faces unconfirmed', () => {
+    const gallery = [
+      { label: 'student-a', descriptors: [[0.2, 0]] },
+      { label: 'student-b', descriptors: [[0.25, 0]] },
+    ];
+    const unknown = scoreFaceNetMatch([1, 0], gallery);
+    const similar = scoreFaceNetMatch([0, 0], gallery);
+    expect(unknown.accepted).toBe(false);
+    expect(similar.reason).toBe('ambiguous');
+
+    let state = {
+      candidateStudentId: '',
+      stabilityCount: 0,
+      confirmedStudentId: null as string | null,
+      pendingSwitch: false,
+      matchHistory: [] as Array<string | null>,
+    };
+    state = updateFaceTrackIdentity(state, unknown.accepted ? unknown.label : null, true);
+    state = updateFaceTrackIdentity(state, similar.accepted ? similar.label : null, true);
+    expect(state.confirmedStudentId).toBeNull();
+  });
+
+  it('keeps fast confirmation disabled by default and enforces its distance/margin gates', () => {
+    expect(canFastConfirmFaceMatch(0.30, 0.50, false)).toBe(false);
+    expect(canFastConfirmFaceMatch(0.30, 0.395, true)).toBe(false);
+    expect(canFastConfirmFaceMatch(0.30, 0.50, true)).toBe(true);
+    expect(canFastConfirmFaceMatch(0.33, 0.60, true)).toBe(false);
   });
 });
 

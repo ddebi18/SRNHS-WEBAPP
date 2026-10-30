@@ -148,6 +148,20 @@ export type FaceRegionQualityRejection =
   | 'below_detection_confidence'
   | 'inconsistent_landmarks';
 
+export interface FaceRegionQualityAssessment {
+  score: number;
+  faceSizePx: number;
+  detectorScore: number;
+  sizeScore: number;
+  sharpnessVariance: number;
+  poseScore: number;
+  usable: boolean;
+  reason?: 'below_minimum_face_size' | 'below_detection_confidence' | 'blurry' | 'poor_pose';
+  crop: HTMLCanvasElement;
+  cropX: number;
+  cropY: number;
+}
+
 export type FaceRegionRecognitionResult =
   | {
       region: FaceDetectionRegion;
@@ -172,7 +186,7 @@ export type FaceRegionRecognitionResult =
   | {
       region: FaceDetectionRegion;
       status: 'skipped';
-      reason: 'descriptor_budget' | 'reverify_not_due';
+      reason: 'descriptor_budget' | 'reverify_not_due' | 'low_quality';
       durationMs: 0;
     };
 
@@ -359,6 +373,107 @@ export async function detectLiveFaceRegions(
       score: detection.score,
     }];
   });
+}
+
+export function measureLaplacianVariance(pixels: Uint8ClampedArray, width: number, height: number): number {
+  if (width < 3 || height < 3 || pixels.length < width * height * 4) return 0;
+  const gray = new Float32Array(width * height);
+  for (let index = 0; index < gray.length; index++) {
+    const pixel = index * 4;
+    gray[index] = 0.299 * pixels[pixel]! + 0.587 * pixels[pixel + 1]! + 0.114 * pixels[pixel + 2]!;
+  }
+  let sum = 0;
+  let squaredSum = 0;
+  let count = 0;
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const index = y * width + x;
+      const laplacian = gray[index - width]! + gray[index - 1]! - 4 * gray[index]! +
+        gray[index + 1]! + gray[index + width]!;
+      sum += laplacian;
+      squaredSum += laplacian * laplacian;
+      count++;
+    }
+  }
+  const mean = sum / count;
+  return Math.max(0, squaredSum / count - mean * mean);
+}
+
+export function analyzeFaceRegionQuality(
+  input: HTMLVideoElement | HTMLCanvasElement,
+  region: FaceDetectionRegion,
+  minFaceSize = 60,
+  minSharpnessVariance = 12
+): FaceRegionQualityAssessment {
+  const isVideo = typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement;
+  const inputWidth = isVideo ? input.videoWidth : input.width;
+  const inputHeight = isVideo ? input.videoHeight : input.height;
+  const paddingX = Math.max(8, region.width * 0.2);
+  const paddingY = Math.max(8, region.height * 0.2);
+  const cropX = Math.max(0, Math.floor(region.x - paddingX));
+  const cropY = Math.max(0, Math.floor(region.y - paddingY));
+  const cropRight = Math.min(inputWidth, Math.ceil(region.x + region.width + paddingX));
+  const cropBottom = Math.min(inputHeight, Math.ceil(region.y + region.height + paddingY));
+  const crop = document.createElement('canvas');
+  crop.width = cropRight - cropX;
+  crop.height = cropBottom - cropY;
+  const context = crop.getContext('2d', { willReadFrequently: true });
+  if (!context || crop.width <= 0 || crop.height <= 0) {
+    throw new Error('Could not create a quality-assessment face crop.');
+  }
+  context.drawImage(input, cropX, cropY, crop.width, crop.height, 0, 0, crop.width, crop.height);
+  const sharpnessVariance = measureLaplacianVariance(
+    context.getImageData(0, 0, crop.width, crop.height).data,
+    crop.width,
+    crop.height
+  );
+  const detectorScore = region.score ?? 1;
+  const sizeScore = Math.min(1, Math.min(region.width, region.height) / 120);
+  const faceSizePx = Math.min(region.width, region.height);
+  const sharpnessScore = Math.min(1, sharpnessVariance / 100);
+  let poseScore = 1;
+  if (hasScrfdKeypoints(region.landmarks)) {
+    const leftEye = region.landmarks[0]!;
+    const rightEye = region.landmarks[1]!;
+    const nose = region.landmarks[2]!;
+    const leftMouth = region.landmarks[3]!;
+    const rightMouth = region.landmarks[4]!;
+    const eyeDistance = Math.hypot(rightEye[0] - leftEye[0], rightEye[1] - leftEye[1]);
+    if (eyeDistance > 0) {
+      const roll = Math.abs(Math.atan2(rightEye[1] - leftEye[1], rightEye[0] - leftEye[0]) * 180 / Math.PI);
+      const leftNoseDistance = Math.hypot(nose[0] - leftEye[0], nose[1] - leftEye[1]);
+      const rightNoseDistance = Math.hypot(nose[0] - rightEye[0], nose[1] - rightEye[1]);
+      const yawBalance = 1 - Math.abs(leftNoseDistance - rightNoseDistance) /
+        Math.max(1, leftNoseDistance + rightNoseDistance);
+      const eyeY = (leftEye[1] + rightEye[1]) / 2;
+      const mouthY = (leftMouth[1] + rightMouth[1]) / 2;
+      const noseRatio = (nose[1] - eyeY) / Math.max(1, mouthY - eyeY);
+      const pitchBalance = Math.max(0, 1 - Math.abs(noseRatio - 0.5) * 1.5);
+      poseScore = Math.max(0, 1 - roll / 60) * yawBalance * pitchBalance;
+    }
+  }
+  const reason = region.width < minFaceSize || region.height < minFaceSize
+    ? 'below_minimum_face_size'
+    : detectorScore < MIN_LIVE_DETECTION_SCORE
+      ? 'below_detection_confidence'
+      : sharpnessVariance < minSharpnessVariance
+        ? 'blurry'
+        : poseScore < 0.25
+          ? 'poor_pose'
+          : undefined;
+  return {
+    score: sizeScore * 0.2 + detectorScore * 0.2 + sharpnessScore * 0.4 + poseScore * 0.2,
+    faceSizePx,
+    detectorScore,
+    sizeScore,
+    sharpnessVariance,
+    poseScore,
+    usable: !reason,
+    reason,
+    crop,
+    cropX,
+    cropY,
+  };
 }
 
 let regionCropCanvas: HTMLCanvasElement | null = null;
@@ -739,6 +854,55 @@ export async function describeScrfdFaceRegions(
   }
 
   return results;
+}
+
+export async function describePaddedFaceCrop(
+  region: FaceDetectionRegion,
+  crop: HTMLCanvasElement,
+  cropX: number,
+  cropY: number,
+  minScore = MIN_LIVE_DETECTION_SCORE
+): Promise<FaceRegionRecognitionResult> {
+  const startedAt = performance.now();
+  try {
+    const options = faceapi.nets.tinyFaceDetector.isLoaded
+      ? new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: minScore })
+      : faceapi.nets.ssdMobilenetv1.isLoaded
+        ? new faceapi.SsdMobilenetv1Options({ minConfidence: minScore })
+        : null;
+    if (!options) throw new Error('No face detector is loaded for the padded crop.');
+    const detection = await faceapi
+      .detectSingleFace(crop, options)
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+    if (!detection) {
+      return { region, status: 'failed', reason: 'no_face_in_crop', durationMs: performance.now() - startedAt };
+    }
+    const rejection = getQualityRejection(detection, minScore, MIN_LIVE_RECOGNITION_FACE_SIZE_PX);
+    if (rejection) {
+      return { region, status: 'quality_rejected', reason: rejection, durationMs: performance.now() - startedAt };
+    }
+    const box = detection.detection.box;
+    return {
+      region,
+      status: 'descriptor',
+      detection: {
+        box: { x: cropX + box.x, y: cropY + box.y, width: box.width, height: box.height },
+        landmarks: detection.landmarks.positions.map(point => ({ x: cropX + point.x, y: cropY + point.y })),
+        descriptor: detection.descriptor,
+        score: detection.detection.score,
+      },
+      durationMs: performance.now() - startedAt,
+      source: 'crop',
+    };
+  } catch (error) {
+    return {
+      region,
+      status: 'failed',
+      reason: error instanceof Error ? error.message : String(error),
+      durationMs: performance.now() - startedAt,
+    };
+  }
 }
 
 export async function compareAlignedAndCropDescriptors(

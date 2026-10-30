@@ -13,7 +13,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   scoreFaceNetMatch,
-  STABILITY_FRAMES_REQUIRED,
   FACENET_DISTANCE_THRESHOLD,
   type LabeledDescriptors,
 } from '@/features/attendance/lib/faceNetMatcher';
@@ -109,6 +108,7 @@ function runMultiFaceBench(faceCount: number): BenchResult {
     stabilityCount: number;
     confirmedStudentId: string | null;
     pendingSwitch: boolean;
+    matchHistory: Array<string | null>;
     lastDescriptorAt: number;
   })[] = [];
   // ── Per-face timing accumulators ─────────────────────────────────────
@@ -218,6 +218,7 @@ function runMultiFaceBench(faceCount: number): BenchResult {
         stabilityCount: 0,
         confirmedStudentId: null,
         pendingSwitch: false,
+        matchHistory: [],
         lastDescriptorAt: 0,
       };
 
@@ -290,7 +291,7 @@ describe('Multi-face recognition performance benchmark', () => {
 
     expect(result.perFace.every(f => f.confirmedAtFrame >= 0)).toBe(true);
     expect(result.maxDescriptorsInScan).toBeLessThanOrEqual(3);
-    expect(result.framesToAllConfirmed).toBeGreaterThanOrEqual(STABILITY_FRAMES_REQUIRED - 1);
+    expect(result.framesToAllConfirmed).toBeGreaterThanOrEqual(1);
     expect(result.totalTimeMs).toBeLessThan(3_000);
   });
 
@@ -314,8 +315,8 @@ describe('Multi-face recognition performance benchmark', () => {
     expect(result.perFace.every(f => f.confirmedAtFrame >= 0)).toBe(true);
     expect(result.maxDescriptorsInScan).toBeLessThanOrEqual(3);
 
-    // Stability requires STABILITY_FRAMES_REQUIRED consecutive matches.
-    expect(result.framesToAllConfirmed).toBeGreaterThanOrEqual(STABILITY_FRAMES_REQUIRED - 1);
+    // Sliding confirmation requires two matching descriptor scans.
+    expect(result.framesToAllConfirmed).toBeGreaterThanOrEqual(1);
 
     // 3 faces should be well under 3 s.
     expect(result.totalTimeMs).toBeLessThan(3_000);
@@ -341,8 +342,8 @@ describe('Multi-face recognition performance benchmark', () => {
     expect(result.perFace.every(f => f.confirmedAtFrame >= 0)).toBe(true);
     expect(result.maxDescriptorsInScan).toBeLessThanOrEqual(3);
 
-    // Stability gate.
-    expect(result.framesToAllConfirmed).toBeGreaterThanOrEqual(STABILITY_FRAMES_REQUIRED - 1);
+    // Sliding confirmation requires two matching descriptor scans.
+    expect(result.framesToAllConfirmed).toBeGreaterThanOrEqual(1);
 
     // THE 3-SECOND BUDGET: if this fails, the measurements above tell us
     // exactly which part (matching vs. stability frames) needs optimization.
@@ -385,7 +386,7 @@ describe('Multi-face recognition performance benchmark', () => {
     console.log('╠══════════════════════════════════════════════════════════╣');
     console.log(`║  Matching share of total ...... ${(matchingFraction * 100).toFixed(1).padStart(10)}%        ║`);
     console.log(`║  Tracking + overhead share .... ${((1 - matchingFraction) * 100).toFixed(1).padStart(10)}%        ║`);
-    console.log(`║  Stability frames needed ...... ${String(STABILITY_FRAMES_REQUIRED).padStart(10)}          ║`);
+    console.log('║  Confirm rule ................. 2 of 4 scans               ║');
     console.log(`║  Distance threshold ........... ${String(FACENET_DISTANCE_THRESHOLD).padStart(10)}          ║`);
     console.log('╚══════════════════════════════════════════════════════════╝\n');
 

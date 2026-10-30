@@ -13,6 +13,22 @@ export interface PredictableFaceTrack {
   studentId: string | null;
 }
 
+export function predictFaceTrackBox(
+  box: FaceTrackBox,
+  velocityX: number,
+  velocityY: number,
+  lastSeenAt: number,
+  timestamp: number,
+  maxPredictionMs = 400
+): FaceTrackBox {
+  const elapsed = Math.min(maxPredictionMs, Math.max(0, timestamp - lastSeenAt));
+  return {
+    ...box,
+    x: box.x + velocityX * elapsed,
+    y: box.y + velocityY * elapsed,
+  };
+}
+
 export interface DescriptorTrackState {
   confirmed: boolean;
   lastDescriptorAt: number;
@@ -23,6 +39,19 @@ export interface FaceTrackIdentityState {
   stabilityCount: number;
   confirmedStudentId: string | null;
   pendingSwitch: boolean;
+  matchHistory: Array<string | null>;
+}
+
+export function canFastConfirmFaceMatch(
+  distance: number,
+  secondDistance: number,
+  enabled: boolean,
+  fastThreshold = 0.33,
+  ambiguityMargin = 0.1
+): boolean {
+  return enabled &&
+    distance < fastThreshold &&
+    secondDistance - distance > ambiguityMargin;
 }
 
 export function updateFaceTrackIdentity(
@@ -31,19 +60,35 @@ export function updateFaceTrackIdentity(
   descriptorEvaluated: boolean,
   sameStudentVerified = true,
   confirmationFrames = 3,
-  switchFrames = 5
+  switchFrames = 5,
+  fastConfirm = false
 ): FaceTrackIdentityState {
   if (!descriptorEvaluated) return state;
   if (matchedStudentId && matchedStudentId === state.confirmedStudentId) {
     if (!sameStudentVerified) return state;
     return {
+      ...state,
       candidateStudentId: matchedStudentId,
       stabilityCount: confirmationFrames,
       confirmedStudentId: matchedStudentId,
       pendingSwitch: false,
     };
   }
+  const matchHistory = [...state.matchHistory, matchedStudentId].slice(-4);
   if (matchedStudentId) {
+    if (!state.confirmedStudentId) {
+      const count = matchHistory.filter(id => id === matchedStudentId).length;
+      const hasConflictingMatch = matchHistory.some(id => id !== null && id !== matchedStudentId);
+      return {
+        candidateStudentId: matchedStudentId,
+        stabilityCount: count,
+        confirmedStudentId: fastConfirm || (count >= 2 && !hasConflictingMatch)
+          ? matchedStudentId
+          : null,
+        pendingSwitch: false,
+        matchHistory,
+      };
+    }
     const changingIdentity = state.pendingSwitch ||
       Boolean(state.confirmedStudentId && state.confirmedStudentId !== matchedStudentId);
     const stabilityCount = state.candidateStudentId === matchedStudentId
@@ -51,6 +96,7 @@ export function updateFaceTrackIdentity(
       : 1;
     const requiredFrames = changingIdentity ? switchFrames : confirmationFrames;
     return {
+      matchHistory,
       candidateStudentId: matchedStudentId,
       stabilityCount,
       confirmedStudentId: stabilityCount >= requiredFrames
@@ -60,6 +106,7 @@ export function updateFaceTrackIdentity(
     };
   }
   return {
+    matchHistory,
     candidateStudentId: '',
     stabilityCount: 0,
     confirmedStudentId: state.confirmedStudentId,

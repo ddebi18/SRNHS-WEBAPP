@@ -20,7 +20,6 @@ import { MIN_ATTENDANCE_LOG_CONFIDENCE } from '../lib/faceNetMatcher';
 import { attendanceEventKey, reserveAttendanceEvent } from '../lib/attendanceDedup';
 import {
   faceBoxOverlap,
-  getUnpairedFaceBoxIndices,
   mapVideoFaceBoxToViewport,
   type VideoFaceBox,
 } from '@/lib/faceOverlayGeometry';
@@ -128,16 +127,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     qualityPassed,
   } = useFaceRecognition(videoRef, hasVideoSource, allFaceBoxesRef);
   const activeBox = isFaceDetected ? (faceBox || recognitionBox) : null;
-  const liveRecognizedFaces = useMemo(() => recognizedFaces.filter(face =>
-      allFaceBoxes.some(box => {
-        const { iou, centerDistance } = faceBoxOverlap(face.box, box);
-        return iou > 0.3 || centerDistance <
-          Math.max(40, Math.min(face.box.width, face.box.height, box.width, box.height) * 0.75);
-      })
-    ), [recognizedFaces, allFaceBoxes]);
-  const unpairedDetectionBoxIndices = useMemo(
-    () => getUnpairedFaceBoxIndices(allFaceBoxes, liveRecognizedFaces.map(face => face.box)),
-    [allFaceBoxes, liveRecognizedFaces]
+  const liveRecognizedFaces = useMemo(
+    () => Array.from(new Map(recognizedFaces.map(face => [face.id, face])).values()),
+    [recognizedFaces]
   );
   const liveMatchedStudents = useMemo(() => Array.from(
     new Map(
@@ -617,34 +609,14 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                           : face.isMatching
                             ? 'Identifying…'
                             : 'Scanning face…'}
+                  {import.meta.env.DEV && (
+                    <span className="block font-mono font-medium normal-case">
+                      T+{face.diagnostic.timeToConfirmMs ?? 0}ms · {face.diagnostic.scansUsed ?? 0} scans
+                    </span>
+                  )}
                 </span>
               </div>
             ))}
-
-            {/* Multi-Face SCRFD Bounding Box Overlay */}
-            {allFaceBoxes && allFaceBoxes.length > 0 && allFaceBoxes.map((b, idx) => {
-              const overlapsRecognizedFace = !unpairedDetectionBoxIndices.includes(idx);
-              const isPrimary = liveRecognizedFaces.length === 0 && activeBox && (
-                Math.hypot(
-                  (b.x + b.width / 2) - (activeBox.x + activeBox.width / 2),
-                  (b.y + b.height / 2) - (activeBox.y + activeBox.height / 2)
-                ) < Math.max(28, Math.min(b.width, b.height) * 0.45)
-              );
-              if (overlapsRecognizedFace || isPrimary) return null;
-
-              return (
-                <div
-                  key={`multi_face_feed_${idx}`}
-                  className="absolute z-10 border-2 border-amber-400 rounded-lg pointer-events-none transition-all duration-150 shadow-[0_0_12px_rgba(251,191,36,0.35)]"
-                  style={getOverlayStyle(b)}
-                >
-                  <span className="absolute -top-5 left-0 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-400 text-slate-950 shadow flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
-                    Scanning Face…
-                  </span>
-                </div>
-              );
-            })}
 
             {liveRecognizedFaces.length === 0 && activeBox && (() => {
               const isHighConfidence = Boolean(liveMatchedStudent && liveMatchedStudent.confidence >= 0.50);

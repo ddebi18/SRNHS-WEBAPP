@@ -52,6 +52,26 @@ describe('faceNetEngine', () => {
     vi.unstubAllGlobals();
   });
 
+  it('uses Laplacian variance to distinguish flat crops from sharp edges', async () => {
+    const { measureLaplacianVariance } = await import('@/features/attendance/lib/faceNetEngine');
+    const flat = new Uint8ClampedArray(5 * 5 * 4);
+    for (let index = 0; index < flat.length; index += 4) {
+      flat[index] = flat[index + 1] = flat[index + 2] = 128;
+      flat[index + 3] = 255;
+    }
+    const checkerboard = new Uint8ClampedArray(flat.length);
+    for (let y = 0; y < 5; y++) {
+      for (let x = 0; x < 5; x++) {
+        const pixel = (y * 5 + x) * 4;
+        const value = (x + y) % 2 ? 255 : 0;
+        checkerboard[pixel] = checkerboard[pixel + 1] = checkerboard[pixel + 2] = value;
+        checkerboard[pixel + 3] = 255;
+      }
+    }
+    expect(measureLaplacianVariance(flat, 5, 5)).toBe(0);
+    expect(measureLaplacianVariance(checkerboard, 5, 5)).toBeGreaterThan(0);
+  });
+
   it('does not reject when an individual FaceNet model fails to load', async () => {
     const { ensureFaceNetModels } = await import('@/features/attendance/lib/faceNetEngine');
     await expect(ensureFaceNetModels()).resolves.toBeUndefined();
