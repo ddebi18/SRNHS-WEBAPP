@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Modal } from '@/components/ui/Modal';
 import {
   createClassQrSession,
+  fetchClassQrCheckins,
   revokeClassQrSession,
 } from '../api/classQrApi';
 import { ClassQrSession } from '@/types/domain.types';
@@ -46,6 +47,7 @@ export const ClassQrModal: React.FC<ClassQrModalProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [attendees, setAttendees] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -54,6 +56,8 @@ export const ClassQrModal: React.FC<ClassQrModalProps> = ({
   const rotateSession = useCallback(async () => {
     if (!teacherId || !sectionId || !subjectId) return;
     setIsLoading(true);
+    setSession(null);
+    setErrorMessage(null);
     try {
       const newSession = await createClassQrSession({
         teacher_id: teacherId,
@@ -65,15 +69,24 @@ export const ClassQrModal: React.FC<ClassQrModalProps> = ({
       setSecondsRemaining(DEFAULT_TTL_SECONDS);
     } catch (err) {
       console.warn('Failed to create QR session:', err);
+      setErrorMessage(err instanceof Error ? err.message : 'Could not create a shared QR session.');
     } finally {
       setIsLoading(false);
     }
   }, [teacherId, sectionId, subjectId]);
 
+  const refreshAttendees = useCallback(async () => {
+    const records = await fetchClassQrCheckins({ sectionId, subjectId });
+    const names = records.map(record => record.student_name);
+    setAttendees([...new Set(names)]);
+    return records;
+  }, [sectionId, subjectId]);
+
   // Start on modal open
   useEffect(() => {
     if (isOpen) {
       setAttendees([]);
+      setErrorMessage(null);
       rotateSession();
     } else {
       if (session) {
@@ -83,6 +96,14 @@ export const ClassQrModal: React.FC<ClassQrModalProps> = ({
       if (timerRef.current) clearInterval(timerRef.current);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    refreshAttendees().catch(err => {
+      console.warn('Failed to load classroom QR attendees:', err);
+      setErrorMessage(err instanceof Error ? err.message : 'Could not load classroom check-ins.');
+    });
+  }, [isOpen, refreshAttendees]);
 
   // Countdown timer
   useEffect(() => {
@@ -104,7 +125,7 @@ export const ClassQrModal: React.FC<ClassQrModalProps> = ({
     };
   }, [isOpen, session, rotateSession]);
 
-  // Realtime subscription for attendee scans
+  // Realtime subscription for persisted student check-ins
   useEffect(() => {
     if (!isOpen || !supabase) return;
 
@@ -112,22 +133,36 @@ export const ClassQrModal: React.FC<ClassQrModalProps> = ({
       .channel(`qr_attendance_${sectionId}_${subjectId}`)
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'recognition_events' },
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'class_qr_checkins',
+          filter: `section_id=eq.${sectionId}`,
+        },
         payload => {
-          const newRow = payload.new as any;
-          if (newRow.subject_id === subjectId) {
-            const name = newRow.student_name || 'Enrolled Student';
-            setAttendees(prev => (prev.includes(name) ? prev : [name, ...prev]));
-            onStudentCheckedIn?.(name);
-          }
+          const studentId = payload.new.subject_id === subjectId
+            ? payload.new.student_id
+            : null;
+          if (!studentId) return;
+          refreshAttendees().then(records => {
+            const checkedIn = records.find(record => record.student_id === studentId);
+            if (checkedIn) onStudentCheckedIn?.(checkedIn.student_name);
+          }).catch(err => {
+            console.warn('Failed to refresh classroom QR attendees:', err);
+            setErrorMessage(err instanceof Error ? err.message : 'Could not refresh classroom check-ins.');
+          });
         }
       )
-      .subscribe();
+      .subscribe(status => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setErrorMessage('Live check-in updates are unavailable. Refresh the attendance list to see new check-ins.');
+        }
+      });
 
     return () => {
       supabase?.removeChannel(channel);
     };
-  }, [isOpen, sectionId, subjectId, onStudentCheckedIn]);
+  }, [isOpen, sectionId, subjectId, onStudentCheckedIn, refreshAttendees]);
 
   const handleEndSession = async () => {
     if (session) {
@@ -176,6 +211,12 @@ export const ClassQrModal: React.FC<ClassQrModalProps> = ({
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
         </div>
+
+        {errorMessage && (
+          <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-300">
+            {errorMessage}
+          </div>
+        )}
 
         {/* QR Display Card */}
         <div className="flex flex-col items-center justify-center p-6 bg-slate-50/70 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">

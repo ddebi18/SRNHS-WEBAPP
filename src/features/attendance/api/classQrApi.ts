@@ -1,10 +1,8 @@
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { ClassQrSession, AttendanceStatus } from '@/types/domain.types';
-import { isValidUUID, getStoredStudents } from '@/features/faceRegistration/api';
-import { mockRecognitionAdapter } from '../services/MockRecognitionAdapter';
+import { isValidUUID } from '@/features/faceRegistration/api';
 
 const LS_CLASS_QR_KEY = 'srnhs_class_qr_sessions_v1';
-const LS_CHECKINS_KEY = 'srnhs_class_qr_checkins_v1';
 
 export function getLocalClassQrSessions(): ClassQrSession[] {
   try {
@@ -41,19 +39,6 @@ export async function createClassQrSession(params: {
   const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
   const token = generateSecureToken();
 
-  // 1. Revoke existing active sessions for this teacher + section + subject
-  const localSessions = getLocalClassQrSessions().map(s => {
-    if (
-      s.teacher_id === params.teacher_id &&
-      s.section_id === params.section_id &&
-      s.subject_id === params.subject_id &&
-      !s.revoked_at
-    ) {
-      return { ...s, revoked_at: now.toISOString() };
-    }
-    return s;
-  });
-
   const newSession: ClassQrSession = {
     id: `cqr-sess-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
     teacher_id: params.teacher_id,
@@ -66,42 +51,49 @@ export async function createClassQrSession(params: {
     created_at: now.toISOString(),
   };
 
+  if (supabase && isSupabaseConfigured) {
+    if (!isValidUUID(params.section_id) || !isValidUUID(params.subject_id) || !isValidUUID(params.teacher_id)) {
+      throw new Error('A valid teacher, section, and subject are required to create a classroom QR session.');
+    }
+
+    const { error: revokeError } = await supabase
+      .from('class_qr_sessions')
+      .update({ revoked_at: now.toISOString() })
+      .eq('teacher_id', params.teacher_id)
+      .eq('section_id', params.section_id)
+      .eq('subject_id', params.subject_id)
+      .is('revoked_at', null);
+    if (revokeError) throw new Error(`Could not rotate the previous QR session: ${revokeError.message}`);
+
+    const { data, error } = await supabase
+      .from('class_qr_sessions')
+      .insert({
+        teacher_id: params.teacher_id,
+        section_id: params.section_id,
+        subject_id: params.subject_id,
+        school_year_id: (params.school_year_id && isValidUUID(params.school_year_id)) ? params.school_year_id : null,
+        token,
+        expires_at: expiresAt,
+      })
+      .select()
+      .single();
+
+    if (error || !data) {
+      throw new Error(`Could not create a shared QR session${error ? `: ${error.message}` : '.'}`);
+    }
+    newSession.id = data.id;
+  }
+
+  const localSessions = getLocalClassQrSessions().map(s => (
+    s.teacher_id === params.teacher_id &&
+      s.section_id === params.section_id &&
+      s.subject_id === params.subject_id &&
+      !s.revoked_at
+      ? { ...s, revoked_at: now.toISOString() }
+      : s
+  ));
   localSessions.push(newSession);
   saveLocalClassQrSessions(localSessions);
-
-  // 2. Persist to Supabase if configured
-  if (supabase && isSupabaseConfigured && isValidUUID(params.section_id) && isValidUUID(params.subject_id)) {
-    try {
-      // Revoke in cloud
-      await supabase
-        .from('class_qr_sessions')
-        .update({ revoked_at: now.toISOString() })
-        .eq('teacher_id', params.teacher_id)
-        .eq('section_id', params.section_id)
-        .eq('subject_id', params.subject_id)
-        .is('revoked_at', null);
-
-      // Insert new session
-      const { data, error } = await supabase
-        .from('class_qr_sessions')
-        .insert({
-          teacher_id: params.teacher_id,
-          section_id: params.section_id,
-          subject_id: params.subject_id,
-          school_year_id: (params.school_year_id && isValidUUID(params.school_year_id)) ? params.school_year_id : null,
-          token,
-          expires_at: expiresAt,
-        })
-        .select()
-        .single();
-
-      if (!error && data) {
-        newSession.id = data.id;
-      }
-    } catch (err) {
-      console.warn('[ClassQR API] Supabase session creation note:', err);
-    }
-  }
 
   return newSession;
 }
@@ -188,97 +180,95 @@ export async function recordStudentQrCheckIn(params: {
   token: string;
   lrn: string;
   birthdateOrLastName: string;
-  lateThresholdDate?: Date;
 }): Promise<{
   success: boolean;
   studentName?: string;
   status?: AttendanceStatus;
   message?: string;
 }> {
-  const tokenValidation = await validateClassQrToken(params.token);
-  if (!tokenValidation.valid || !tokenValidation.session) {
-    return { success: false, message: tokenValidation.reason || 'Invalid QR session.' };
+  if (!supabase || !isSupabaseConfigured) {
+    return { success: false, message: 'QR attendance is unavailable because the server is not configured.' };
   }
 
-  const session = tokenValidation.session;
-  const cleanLrn = params.lrn.trim();
-  const verifier = params.birthdateOrLastName.trim().toLowerCase();
-
-  // Find student in roster
-  const allStudents = getStoredStudents();
-  const student = allStudents.find((s: any) => {
-    const sLrn = (s.studentNumber || s.lrn || '').trim();
-    return sLrn === cleanLrn;
+  const { data, error } = await supabase.functions.invoke('class-qr-check-in', {
+    body: {
+      token: params.token.trim(),
+      lrn: params.lrn.trim(),
+      birthdateOrLastName: params.birthdateOrLastName.trim(),
+    },
   });
 
-  if (!student) {
-    return { success: false, message: 'Student record not found. Please verify your 12-digit LRN.' };
+  if (error) {
+    let message = error.message || 'Attendance check-in failed.';
+    const context = (error as { context?: unknown }).context;
+    if (context instanceof Response) {
+      const body = await context.clone().json().catch(() => null) as { message?: unknown } | null;
+      if (typeof body?.message === 'string') message = body.message;
+    }
+    return { success: false, message };
   }
 
-  // Verify identity (birthdate YYYY-MM-DD or last name)
-  const studentLastName = ((student as any).lastName || (student as any).last_name || '').trim().toLowerCase();
-  const studentDob = ((student as any).birthdate || (student as any).birth_date || '').trim().toLowerCase();
-
-  const isLastNameMatch = studentLastName && (studentLastName === verifier || verifier.includes(studentLastName));
-  const isDobMatch = studentDob && studentDob === verifier;
-
-  if (!isLastNameMatch && !isDobMatch) {
-    return { success: false, message: 'Identity verification failed. Please check your Last Name or Birth Date.' };
+  if (!data || typeof data.success !== 'boolean') {
+    throw new Error('The attendance server returned an invalid response.');
   }
-
-  // Rule: Verify student is enrolled in that specific section!
-  const studentSecId = student.sectionId || (student as any).section_id;
-  if (studentSecId && studentSecId !== session.section_id) {
-    return {
-      success: false,
-      message: 'Access denied: You are not enrolled in this class section.',
-    };
-  }
-
-  // Rule: Prevent duplicate scan for this session or day
-  const todayStr = new Date().toISOString().split('T')[0];
-  const checkinKey = `chk_${session.id}_${student.id}_${todayStr}`;
-  const rawCheckins = localStorage.getItem(LS_CHECKINS_KEY);
-  const checkins: Record<string, string> = rawCheckins ? JSON.parse(rawCheckins) : {};
-
-  if (checkins[checkinKey]) {
-    return {
-      success: false,
-      message: 'You have already checked in for this classroom session today.',
-    };
-  }
-
-  // Compute Present vs Late
-  const now = new Date();
-  let status: AttendanceStatus = 'present';
-  if (params.lateThresholdDate && now > params.lateThresholdDate) {
-    status = 'late';
-  }
-
-  // Mark in local checkins
-  checkins[checkinKey] = now.toISOString();
-  localStorage.setItem(LS_CHECKINS_KEY, JSON.stringify(checkins));
-
-  const studentFullName = student.name || `${ (student as any).firstName || ''} ${ (student as any).lastName || ''}`.trim() || 'Student';
-
-  // Log to attendance pipeline via Mock / Supabase
-  try {
-    await mockRecognitionAdapter.logManualEvent({
-      student_id: student.id,
-      student_name: studentFullName,
-      student_lrn: cleanLrn,
-      event_type: 'entry',
-      section_name: student.sectionName || undefined,
-      subject_id: session.subject_id,
-    });
-  } catch (err) {
-    console.warn('[ClassQR API] Attendance event note:', err);
-  }
-
+  const statuses: AttendanceStatus[] = ['present', 'late', 'absent', 'excused'];
   return {
-    success: true,
-    studentName: studentFullName,
-    status,
-    message: `Attendance marked as ${status.toUpperCase()}!`,
+    success: data.success,
+    studentName: typeof data.studentName === 'string' ? data.studentName : undefined,
+    status: statuses.includes(data.status) ? data.status as AttendanceStatus : undefined,
+    message: typeof data.message === 'string' ? data.message : undefined,
   };
+}
+
+export interface ClassQrCheckin {
+  id: string;
+  student_id: string;
+  section_id: string;
+  subject_id: string;
+  attendance_date: string;
+  checked_in_at: string;
+  student_name: string;
+}
+
+interface ClassQrCheckinQueryRow extends Omit<ClassQrCheckin, 'student_name'> {
+  students: { first_name: string | null; last_name: string | null }[] | null;
+}
+
+function manilaDate(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find(item => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+export async function fetchClassQrCheckins(filters: {
+  sectionId?: string;
+  subjectId?: string;
+} = {}): Promise<ClassQrCheckin[]> {
+  if (!supabase || !isSupabaseConfigured) return [];
+
+  let query = supabase
+    .from('class_qr_checkins')
+    .select('id, student_id, section_id, subject_id, attendance_date, checked_in_at, students(first_name, last_name)')
+    .eq('attendance_date', manilaDate())
+    .order('checked_in_at', { ascending: false });
+  if (filters.sectionId && filters.sectionId !== 'all') query = query.eq('section_id', filters.sectionId);
+  if (filters.subjectId) query = query.eq('subject_id', filters.subjectId);
+
+  const { data, error } = await query;
+  if (error) throw new Error(`Could not load classroom QR attendance: ${error.message}`);
+
+  return (data || []).map((row: ClassQrCheckinQueryRow) => ({
+    id: row.id,
+    student_id: row.student_id,
+    section_id: row.section_id,
+    subject_id: row.subject_id,
+    attendance_date: row.attendance_date,
+    checked_in_at: row.checked_in_at,
+    student_name: `${row.students?.[0]?.first_name || ''} ${row.students?.[0]?.last_name || ''}`.trim() || 'Enrolled Student',
+  }));
 }

@@ -9,6 +9,7 @@ import { fetchSections, fetchSectionRoster } from '@/features/faceRegistration/a
 import { Section, Student } from '@/features/faceRegistration/types';
 import { Subject } from '@/types/domain.types';
 import { cn } from '@/lib/utils';
+import { ClassQrCheckin, fetchClassQrCheckins } from '../api/classQrApi';
 import { ClassQrModal } from './ClassQrModal';
 
 const LS_SUBJECTS = 'srnhs_academics_subjects_v1';
@@ -63,9 +64,11 @@ export const ClassroomAttendanceBoard: React.FC = () => {
   const [selectedSubject, setSelectedSubject] = useState('');
   const [roster, setRoster] = useState<Student[]>([]);
   const [scanEvents, setScanEvents] = useState<RecognitionEvent[]>([]);
+  const [qrCheckins, setQrCheckins] = useState<ClassQrCheckin[]>([]);
   const [manualOverrides, setManualOverrides] = useState<Record<string, { status: AttendanceStatus; markedBy?: string }>>(loadStoredOverrides());
   const [isLoading, setIsLoading] = useState(true);
   const [isClassQrOpen, setIsClassQrOpen] = useState(false);
+  const selectedSubjectId = subjects.find(subject => subject.title === selectedSubject)?.id;
 
   // Filter sections by teacher ownership
   const authorizedSections = React.useMemo(() => {
@@ -114,6 +117,27 @@ export const ClassroomAttendanceBoard: React.FC = () => {
     });
   }, [selectedSection]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedSubjectId) {
+      setQrCheckins([]);
+      return;
+    }
+
+    fetchClassQrCheckins({
+      sectionId: selectedSection,
+      subjectId: selectedSubjectId,
+    }).then(records => {
+      if (!cancelled) setQrCheckins(records);
+    }).catch(err => {
+      console.warn('Failed to load classroom QR check-ins:', err);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSection, selectedSubjectId]);
+
   // Load recent scan events (gate turnstiles) for today
   const loadScans = useCallback(async () => {
     try {
@@ -135,6 +159,16 @@ export const ClassroomAttendanceBoard: React.FC = () => {
   const handleRefresh = async () => {
     setIsLoading(true);
     await loadScans();
+    if (selectedSubjectId) {
+      try {
+        setQrCheckins(await fetchClassQrCheckins({
+          sectionId: selectedSection,
+          subjectId: selectedSubjectId,
+        }));
+      } catch (err) {
+        console.warn('Failed to refresh classroom QR check-ins:', err);
+      }
+    }
     if (selectedSection) {
       const students = await fetchSectionRoster(selectedSection);
       setRoster(students);
@@ -156,12 +190,18 @@ export const ClassroomAttendanceBoard: React.FC = () => {
       });
 
       const entryScan = studentScans.find(e => e.event_type === 'entry') || studentScans[0];
+      const qrCheckin = qrCheckins.find(checkin => checkin.student_id === student.id);
+      const attendanceTime = [
+        entryScan?.captured_at,
+        qrCheckin?.checked_in_at,
+      ].filter((value): value is string => Boolean(value))
+        .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0];
 
       let computedStatus: AttendanceStatus = 'absent';
       let lastScanTime: string | undefined;
 
-      if (entryScan) {
-        const scanDate = new Date(entryScan.captured_at);
+      if (attendanceTime) {
+        const scanDate = new Date(attendanceTime);
         lastScanTime = scanDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const cutoff = new Date(scanDate);
         cutoff.setHours(8, 0, 0, 0);
@@ -182,7 +222,7 @@ export const ClassroomAttendanceBoard: React.FC = () => {
         guardianPhone: student.guardianPhone || '',
       };
     });
-  }, [roster, scanEvents, manualOverrides]);
+  }, [roster, scanEvents, qrCheckins, selectedSubjectId, manualOverrides]);
 
   const summary = React.useMemo(() => {
     const counts = { present: 0, late: 0, absent: 0, excused: 0 };
