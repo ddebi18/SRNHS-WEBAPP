@@ -113,7 +113,6 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
   const {
     isFaceDetected,
-    faceBox,
     allFaceBoxes,
     allFaceBoxesRef,
     detectionFrameRef,
@@ -135,7 +134,6 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     isReady: isRecognitionReady,
     recognizedFaces,
     error: recognitionError,
-    recognitionBox,
     isLive,
     isAnalyzing,
     diagnosticInfo,
@@ -145,22 +143,23 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     startupTimings,
     retryInitialization,
   } = useFaceRecognition(videoRef, hasVideoSource, allFaceBoxesRef, detectionFrameRef);
-  const activeBoxCandidate = isFaceDetected ? faceBox || recognitionBox : null;
-  const activeBox = activeBoxCandidate &&
-    inspectFaceBoxOverlays([activeBoxCandidate], allFaceBoxes, overlayNow)[0]?.visible
-    ? activeBoxCandidate
-    : null;
-  const liveRecognizedFaces = useMemo(
+  const liveFaceBoxPairs = useMemo(
     () => getFreshFaceBoxPairs(
       recognizedFaces.map(face => face.box),
       allFaceBoxes,
       overlayNow
-    ).map(({ boxIndex, detectionIndex }) => ({
+    ),
+    [allFaceBoxes, overlayNow, recognizedFaces]
+  );
+  const liveRecognizedFaces = useMemo(
+    () => liveFaceBoxPairs.map(({ boxIndex, detectionIndex }) => ({
       ...recognizedFaces[boxIndex]!,
       box: allFaceBoxes[detectionIndex]!,
     })),
-    [allFaceBoxes, overlayNow, recognizedFaces]
+    [allFaceBoxes, liveFaceBoxPairs, recognizedFaces]
   );
+  const pairedDetectionIndices = new Set(liveFaceBoxPairs.map(pair => pair.detectionIndex));
+  const unmatchedFaceBoxes = allFaceBoxes.filter((_, index) => !pairedDetectionIndices.has(index));
   const liveMatchedStudents = useMemo(() => Array.from(
     new Map(
       liveRecognizedFaces
@@ -771,53 +770,18 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               })()
             ))}
 
-            {liveRecognizedFaces.length === 0 && activeBox && (() => {
-              const isHighConfidence = Boolean(liveMatchedStudent && liveMatchedStudent.confidence >= 0.50);
-              const isRecognized = Boolean(liveMatchedStudent);
-              const isSpoofWarning = isRecognized && !isLive;
-
-              return (
-                <div
-                  className={cn(
-                    'absolute z-10 border-2 rounded-lg pointer-events-none transition-all duration-150',
-                    isSpoofWarning
-                      ? 'border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.4)]'
-                      : isHighConfidence
-                      ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
-                      : isRecognized
-                      ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
-                      : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.3)]'
-                  )}
-                  style={getOverlayStyle(activeBox)}
-                >
-                  <span
-                    className={cn(
-                      'absolute -top-6 sm:-top-7 left-0 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-md text-[9px] sm:text-[10px] font-black uppercase tracking-wider whitespace-nowrap shadow-lg flex items-center gap-1 sm:gap-1.5',
-                      isSpoofWarning
-                        ? 'bg-amber-500 text-slate-950'
-                        : isHighConfidence
-                        ? 'bg-emerald-500 text-slate-950'
-                        : isRecognized
-                        ? 'bg-emerald-500 text-slate-950'
-                        : 'bg-rose-500 text-white'
-                    )}
-                  >
-                    {isSpoofWarning ? (
-                      <>
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-pulse" />
-                        Verifying Liveness…
-                      </>
-                    ) : isRecognized ? (
-                      dailyCompletedMap.has(attendanceEventKey(liveMatchedStudent!.id, scanMode, new Date()))
-                        ? `${liveMatchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In Done' : 'Time-Out Done'}`
-                        : `${liveMatchedStudent!.name} · ${scanMode === 'entry' ? 'Time-In' : 'Time-Out'}`
-                    ) : (
-                      'Scanning Face…'
-                    )}
-                  </span>
-                </div>
-              );
-            })()}
+            {unmatchedFaceBoxes.map((box, index) => (
+              <div
+                key={`detected-face-${index}`}
+                title="Face detected; recognition is in progress"
+                className="absolute z-10 border-2 border-amber-400 rounded-lg pointer-events-none shadow-[0_0_12px_rgba(251,191,36,0.35)]"
+                style={getOverlayStyle(box)}
+              >
+                <span className="absolute -top-6 left-0 px-1.5 py-0.5 rounded-md bg-amber-400 text-slate-950 text-[9px] sm:text-[10px] font-black uppercase tracking-wider whitespace-nowrap shadow-lg">
+                  Face detected
+                </span>
+              </div>
+            ))}
 
             {/* Center Standby Viewfinder Placeholder */}
             {!hasVideoSource && (
