@@ -45,3 +45,13 @@ export function getScrfdInputSize(isMobileOptimized: boolean, configuredSize?: s
   if (configuredSize === '320') return 320;
   return 640;
 }
+
+export function isRecentFaceDetection(
+  lastDetectedAt: number | null,
+  now: number,
+  maxAgeMs = 1000
+): boolean {
+  if (lastDetectedAt === null) return false;
+  const ageMs = now - lastDetectedAt;
+  return ageMs >= 0 && ageMs <= maxAgeMs;
+}

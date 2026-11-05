@@ -3,6 +3,7 @@ import {
   getFaceDescriptorBudget,
   getFaceCropDetectorInputSize,
   getScrfdInputSize,
+  isRecentFaceDetection,
   isMobileDevice,
 } from '@/features/attendance/lib/faceOptimizationFlags';
 
@@ -33,5 +34,12 @@ describe('face optimization flags', () => {
     expect(isMobileDevice('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toBe(false);
     expect(isMobileDevice('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', true)).toBe(true);
     expect(isMobileDevice('Mozilla/5.0 (iPhone)', false)).toBe(false);
+  });
+
+  it('only retries the lazy fallback shortly after a face was detected', () => {
+    expect(isRecentFaceDetection(null, 1000)).toBe(false);
+    expect(isRecentFaceDetection(500, 1000)).toBe(true);
+    expect(isRecentFaceDetection(0, 1001)).toBe(false);
+    expect(isRecentFaceDetection(1100, 1000)).toBe(false);
   });
 });

@@ -14,6 +14,7 @@ import {
   FACE_DIAGNOSTICS_ENABLED,
   FACE_MOTION_OPTIMIZATIONS_ENABLED,
   FACE_STARTUP_OPTIMIZATIONS_ENABLED,
+  isRecentFaceDetection,
   isMobileFaceOptimizationActive,
 } from '@/features/attendance/lib/faceOptimizationFlags';
 import { getMedianAndP90 } from '@/features/attendance/lib/faceRecognitionDiagnostics';
@@ -86,6 +87,7 @@ export function useFaceDetection(
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const missedFramesRef = useRef(0);
   const faceBoxRef = useRef<FaceBox | null>(null);
+  const lastFaceDetectionAtRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
 
   const MAX_MISSED_FRAMES = options?.maxMissedFrames ?? 4;
@@ -184,6 +186,7 @@ export function useFaceDetection(
       setWarningMessage(null);
       setDetectorError(null);
       setStartupTimings({ scrfdLoadMs: null, mediaPipeLoadMs: null });
+      lastFaceDetectionAtRef.current = null;
       return;
     }
 
@@ -200,10 +203,10 @@ export function useFaceDetection(
         const useMotionSnapshot = FACE_MOTION_OPTIMIZATIONS_ENABLED &&
           options?.motionRecognitionFeed === true;
         const snapshot = useMotionSnapshot ? captureFaceFrame(video) : null;
-        const motionSnapshot = snapshot?.source ?? null;
-        const detectionSource = motionSnapshot ?? video;
-        const capturedAt = snapshot?.capturedAt ?? performance.now();
-        const frameTimestamp = snapshot?.frameTimestamp ?? video.currentTime;
+        let motionSnapshot = snapshot?.source ?? null;
+        let detectionSource = motionSnapshot ?? video;
+        let capturedAt = snapshot?.capturedAt ?? performance.now();
+        let frameTimestamp = snapshot?.frameTimestamp ?? video.currentTime;
         let detectedBoxes: FaceBox[] = [];
         let scrfdFailed = false;
 
@@ -243,14 +246,26 @@ export function useFaceDetection(
           }
         }
 
-        // Avoid running a second model on every empty SCRFD frame in the live camera.
+        const recentlyDetectedFace = isRecentFaceDetection(
+          lastFaceDetectionAtRef.current,
+          performance.now()
+        );
         const shouldUseMediaPipe = FACE_STARTUP_OPTIMIZATIONS_ENABLED
-          ? scrfdFailed || !scrfdSessionRef.current
+          ? scrfdFailed || !scrfdSessionRef.current || recentlyDetectedFace
           : scrfdFailed ||
             !scrfdSessionRef.current ||
             options?.useMediaPipeFallback !== false;
         if (detectedBoxes.length === 0 && shouldUseMediaPipe) {
           const fallback = mediaPipeDetectorRef.current ?? await ensureMediaPipeDetector();
+          if (fallback && useMotionSnapshot && videoRef.current) {
+            const fallbackSnapshot = captureFaceFrame(videoRef.current);
+            if (fallbackSnapshot) {
+              motionSnapshot = fallbackSnapshot.source;
+              detectionSource = fallbackSnapshot.source;
+              capturedAt = fallbackSnapshot.capturedAt;
+              frameTimestamp = fallbackSnapshot.frameTimestamp;
+            }
+          }
           const result = fallback?.detectForVideo(detectionSource, performance.now());
           if (result?.detections && result.detections.length > 0) {
             for (const det of result.detections) {
@@ -280,6 +295,7 @@ export function useFaceDetection(
           detectionResultAt: resultArrivedAt,
           frameTimestamp,
         }));
+        if (detectedBoxes.length > 0) lastFaceDetectionAtRef.current = resultArrivedAt;
         if (motionSnapshot) {
           detectionFrameRef.current = {
             source: motionSnapshot,
