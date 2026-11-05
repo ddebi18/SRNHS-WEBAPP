@@ -19,7 +19,11 @@ import { getRecognitionStatusText } from '../lib/recognitionStatus';
 import { MIN_ATTENDANCE_LOG_CONFIDENCE } from '../lib/faceNetMatcher';
 import { attendanceEventKey, reserveAttendanceEvent } from '../lib/attendanceDedup';
 import {
+  clampVideoFaceBox,
   faceBoxOverlap,
+  getFreshFaceBoxPairs,
+  getRecognitionOverlayLabel,
+  inspectFaceBoxOverlays,
   mapVideoFaceBoxToViewport,
   type VideoFaceBox,
 } from '@/lib/faceOverlayGeometry';
@@ -31,6 +35,7 @@ import {
   FACE_DIAGNOSTICS_ENABLED,
   FACE_STARTUP_OPTIMIZATIONS_ENABLED,
 } from '../lib/faceOptimizationFlags';
+import { getMedianAndP90 } from '../lib/faceRecognitionDiagnostics';
 
 interface LiveCameraFeedCardProps {
   className?: string;
@@ -53,11 +58,14 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [streamState, setStreamState] = useState<'standby' | 'connecting' | 'live' | 'error'>('standby');
   const [isVideoReady, setIsVideoReady] = useState(false);
+  const [overlayNow, setOverlayNow] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const viewfinderRef = useRef<HTMLDivElement>(null);
+  const rawDetectionOverlayRef = useRef<HTMLCanvasElement>(null);
+  const boxAgeSamplesRef = useRef<number[]>([]);
+  const boxAgeWindowStartedAtRef = useRef(performance.now());
   const webRtcConnectionRef = useRef<WebRtcStreamConnection | null>(null);
   const loggedMatchesRef = useRef<Map<string, number>>(new Map());
-  const overlayDebugStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -108,6 +116,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     faceBox,
     allFaceBoxes,
     allFaceBoxesRef,
+    detectionFrameRef,
     detectorError,
     startupTimings: detectorStartupTimings,
   } = useFaceDetection(
@@ -118,6 +127,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
       maxMissedFrames: 0,
       useMediaPipeFallback: true,
       modelUrl: '/models/scrfd/scrfd_500m_bnkps.onnx',
+      motionRecognitionFeed: true,
     }
   );
   const {
@@ -134,11 +144,22 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     startupStage,
     startupTimings,
     retryInitialization,
-  } = useFaceRecognition(videoRef, hasVideoSource, allFaceBoxesRef);
-  const activeBox = isFaceDetected ? (faceBox || recognitionBox) : null;
+  } = useFaceRecognition(videoRef, hasVideoSource, allFaceBoxesRef, detectionFrameRef);
+  const activeBoxCandidate = isFaceDetected ? faceBox || recognitionBox : null;
+  const activeBox = activeBoxCandidate &&
+    inspectFaceBoxOverlays([activeBoxCandidate], allFaceBoxes, overlayNow)[0]?.visible
+    ? activeBoxCandidate
+    : null;
   const liveRecognizedFaces = useMemo(
-    () => Array.from(new Map(recognizedFaces.map(face => [face.id, face])).values()),
-    [recognizedFaces]
+    () => getFreshFaceBoxPairs(
+      recognizedFaces.map(face => face.box),
+      allFaceBoxes,
+      overlayNow
+    ).map(({ boxIndex, detectionIndex }) => ({
+      ...recognizedFaces[boxIndex]!,
+      box: allFaceBoxes[detectionIndex]!,
+    })),
+    [allFaceBoxes, overlayNow, recognizedFaces]
   );
   const liveMatchedStudents = useMemo(() => Array.from(
     new Map(
@@ -152,58 +173,161 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
   const isAnyFaceDetected = isFaceDetected || allFaceBoxes.length > 0;
 
   useEffect(() => {
-    if (!import.meta.env.DEV || !hasVideoSource) {
-      overlayDebugStartedAtRef.current = null;
-      return;
-    }
-    if (overlayDebugStartedAtRef.current === null) {
-      overlayDebugStartedAtRef.current = performance.now();
-    }
-    if (performance.now() - overlayDebugStartedAtRef.current > 5000) return;
+    if (!FACE_DIAGNOSTICS_ENABLED || !hasVideoSource) return;
 
-    allFaceBoxes.forEach((box, boxIndex) => {
-      recognizedFaces.forEach(face => {
-        const { iou, centerDistance } = faceBoxOverlap(box, face.box);
-        if (iou <= 0.3) return;
-        console.debug('[FaceOverlay] Overlapping boxes', {
-          trackId: face.id,
-          source: [box.detectorSource ?? 'scrfd', face.diagnostic.detectorSource ?? face.diagnostic.source ?? 'unknown'],
-          status: face.status,
-          iou: Number(iou.toFixed(3)),
-          centerDistance: Number(centerDistance.toFixed(1)),
-          missedFrames: face.diagnostic.missedFrames ?? 0,
-          detectionIndex: boxIndex,
-        });
+    const overlayChecks = inspectFaceBoxOverlays(
+      recognizedFaces.map(face => face.box),
+      allFaceBoxes,
+      performance.now()
+    );
+    recognizedFaces.forEach((face, index) => {
+      const closestDetection = allFaceBoxes
+        .map((box, detectionIndex) => ({
+          box,
+          detectionIndex,
+          ...faceBoxOverlap(face.box, box),
+        }))
+        .sort((a, b) => b.iou - a.iou || a.centerDistance - b.centerDistance)[0];
+      console.debug('[FaceOverlay] Face render decision', {
+        detectionIndex: closestDetection?.detectionIndex ?? null,
+        trackId: face.id,
+        selectedForExtraction: face.diagnostic.selectedForExtraction ?? false,
+        trackExists: face.diagnostic.trackExists ?? true,
+        trackStatus: face.status,
+        overlayFilteredReasons: overlayChecks[index]?.reasons ?? ['no_track_result'],
+        iouWithClosestDetection: Number((closestDetection?.iou ?? 0).toFixed(3)),
+        centerDistancePx: Number((closestDetection?.centerDistance ?? 0).toFixed(1)),
+      });
+    });
+    allFaceBoxes.forEach((box, detectionIndex) => {
+      const bestMatch = recognizedFaces
+        .map((face, index) => ({ face, index, ...faceBoxOverlap(box, face.box) }))
+        .sort((a, b) => b.iou - a.iou || a.centerDistance - b.centerDistance)[0];
+      console.debug('[FaceOverlay] Detection render decision', {
+        detectionIndex,
+        selectedForExtraction: bestMatch?.face.diagnostic.selectedForExtraction ?? false,
+        trackExists: Boolean(bestMatch),
+        trackId: bestMatch?.face.id ?? null,
+        trackStatus: bestMatch?.face.status ?? 'no_track_result',
+        overlayFilteredReasons: bestMatch
+          ? overlayChecks[bestMatch.index]?.reasons ?? []
+          : ['no_track_result'],
+        detectorSource: box.detectorSource ?? 'scrfd',
       });
     });
   }, [allFaceBoxes, hasVideoSource, recognizedFaces]);
 
   const getOverlayStyle = (box: VideoFaceBox): React.CSSProperties => {
-    const viewport = viewfinderRef.current?.getBoundingClientRect();
-    const mapped = viewport
-      ? mapVideoFaceBoxToViewport(
-          box,
-          { width: viewport.width, height: viewport.height },
-          isFullscreen ? 'contain' : 'cover',
-          true
-        )
-      : null;
-    if (!mapped) {
+    const { box: visibleBox } = clampVideoFaceBox(box);
+    if (visibleBox.width <= 0 || visibleBox.height <= 0) return { display: 'none' };
+    const video = videoRef.current;
+    const parent = viewfinderRef.current;
+    const videoRect = video?.getBoundingClientRect();
+    const parentRect = parent?.getBoundingClientRect();
+    const computedVideoStyle = video ? getComputedStyle(video) : null;
+    const mirrored = computedVideoStyle?.transform.startsWith('matrix(-') ?? false;
+    const fit = computedVideoStyle?.objectFit === 'contain' ? 'contain' : 'cover';
+    if (!videoRect || !parentRect) {
       return {
-        left: `${100 - ((box.x + box.width) / box.videoWidth) * 100}%`,
-        top: `${(box.y / box.videoHeight) * 100}%`,
-        width: `${(box.width / box.videoWidth) * 100}%`,
-        height: `${(box.height / box.videoHeight) * 100}%`,
+        display: 'none',
       };
     }
+    const mapped = mapVideoFaceBoxToViewport(
+      visibleBox,
+      { width: videoRect.width, height: videoRect.height },
+      fit,
+      mirrored
+    );
+    if (!mapped) return { display: 'none' };
 
     return {
-      left: `${mapped.left}%`,
-      top: `${mapped.top}%`,
-      width: `${mapped.width}%`,
-      height: `${mapped.height}%`,
+      left: `${videoRect.left - parentRect.left + mapped.left * videoRect.width / 100}px`,
+      top: `${videoRect.top - parentRect.top + mapped.top * videoRect.height / 100}px`,
+      width: `${mapped.width * videoRect.width / 100}px`,
+      height: `${mapped.height * videoRect.height / 100}px`,
+      minWidth: '4px',
+      minHeight: '4px',
     };
   };
+
+  useEffect(() => {
+    if (!hasVideoSource) return;
+    const timer = setInterval(() => setOverlayNow(performance.now()), 100);
+    return () => clearInterval(timer);
+  }, [hasVideoSource]);
+
+  useEffect(() => {
+    if (!FACE_DIAGNOSTICS_ENABLED) return;
+    const canvas = rawDetectionOverlayRef.current;
+    const parent = viewfinderRef.current;
+    if (!canvas || !parent) return;
+    const rect = parent.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = `${rect.height}px`;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, rect.width, rect.height);
+    context.strokeStyle = '#00e5ff';
+    context.fillStyle = '#00e5ff';
+    context.lineWidth = 2;
+    const freshIndices = inspectFaceBoxOverlays(allFaceBoxes, allFaceBoxes, overlayNow)
+      .filter(check => check.visible)
+      .map(check => check.index);
+    for (const index of freshIndices) {
+      const box = allFaceBoxes[index]!;
+      const style = getOverlayStyle(box);
+      const left = Number.parseFloat(String(style.left));
+      const top = Number.parseFloat(String(style.top));
+      const width = Number.parseFloat(String(style.width));
+      const height = Number.parseFloat(String(style.height));
+      context.strokeRect(left, top, width, height);
+      context.font = '12px monospace';
+      context.fillText(
+        `SCRFD ${Math.round(box.x)},${Math.round(box.y)}`,
+        left,
+        Math.max(12, top - 4)
+      );
+    }
+  }, [allFaceBoxes, isFullscreen, overlayNow]);
+
+  useEffect(() => {
+    if (!FACE_DIAGNOSTICS_ENABLED || recognizedFaces.length === 0) return;
+    const drawnAt = performance.now();
+    const drawnIndices = inspectFaceBoxOverlays(
+      recognizedFaces.map(face => face.box),
+      allFaceBoxes,
+      drawnAt
+    ).filter(check => check.visible).map(check => check.index);
+    drawnIndices.forEach(index => {
+      const face = recognizedFaces[index]!;
+      const capturedAt = face.box.frameCapturedAt ?? drawnAt;
+      const boxAgeMs = drawnAt - capturedAt;
+      boxAgeSamplesRef.current.push(boxAgeMs);
+      console.debug('[FaceOverlay] Box age at draw', {
+        trackId: face.id,
+        frameTimestamp: face.box.frameTimestamp ?? null,
+        detectorResultArrivedAt: face.box.detectionResultAt ?? null,
+        drawnAt: Number(drawnAt.toFixed(1)),
+        boxAgeMs: Number(boxAgeMs.toFixed(1)),
+      });
+    });
+    if (drawnAt - boxAgeWindowStartedAtRef.current < 10_000) return;
+    const values = boxAgeSamplesRef.current;
+    const { p90 } = getMedianAndP90(values);
+    console.info('[FaceOverlay] Box age summary (10-second window)', {
+      samples: values.length,
+      averageMs: values.length
+        ? Number((values.reduce((sum, age) => sum + age, 0) / values.length).toFixed(1))
+        : null,
+      p90Ms: p90,
+    });
+    boxAgeSamplesRef.current = [];
+    boxAgeWindowStartedAtRef.current = drawnAt;
+  }, [allFaceBoxes, recognizedFaces]);
 
   useEffect(() => {
     if (!useWebcam) {
@@ -588,7 +712,29 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               />
             )}
 
+            {FACE_DIAGNOSTICS_ENABLED && (
+              <canvas
+                ref={rawDetectionOverlayRef}
+                aria-hidden="true"
+                className="absolute inset-0 z-[5] pointer-events-none"
+              />
+            )}
+
             {liveRecognizedFaces.map(face => (
+              (() => {
+                const { clipped } = clampVideoFaceBox(face.box);
+                const isScanning = face.status === 'scanning';
+                const label = getRecognitionOverlayLabel(
+                  face.status,
+                  {
+                    studentName: face.student
+                      ? `${face.student.name} · ${scanMode === 'entry' ? 'Time-In' : 'Time-Out'}`
+                      : undefined,
+                    edgeClipped: clipped,
+                    reason: face.diagnostic.reason,
+                  }
+                );
+                return (
               <div
                 key={face.id}
                 title={face.diagnostic.reason ?? face.status}
@@ -596,7 +742,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                   'absolute z-10 border-2 rounded-lg pointer-events-none transition-all duration-150',
                   face.student
                     ? 'border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.35)]'
-                    : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.35)]'
+                    : isScanning
+                      ? 'border-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.35)]'
+                      : 'border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.35)]'
                 )}
                 style={getOverlayStyle(face.box)}
               >
@@ -605,23 +753,12 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                     'absolute -top-6 left-0 px-2 py-1 rounded-md text-[9px] sm:text-[10px] font-black whitespace-nowrap shadow-lg',
                     face.student
                       ? 'bg-emerald-400 text-slate-950'
-                      : 'bg-rose-500 text-white'
+                      : isScanning
+                        ? 'bg-amber-400 text-slate-950'
+                        : 'bg-rose-500 text-white'
                   )}
                 >
-                  {face.student
-                    ? `${face.student.name} · ${scanMode === 'entry' ? 'Time-In' : 'Time-Out'}`
-                    : face.status === 'unknown'
-                      ? 'Unknown Face'
-                      : face.status === 'quality_rejected'
-                          ? face.diagnostic.reason === 'poor_pose' ||
-                            face.diagnostic.reason === 'inconsistent_landmarks'
-                            ? 'Turn toward the camera'
-                            : 'Move closer / face the camera'
-                          : face.status === 'processing_failed'
-                            ? 'Hold still / face the camera'
-                            : face.isMatching
-                              ? 'Identifying…'
-                            : 'Scanning face…'}
+                  {label}
                   {import.meta.env.DEV && (
                     <span className="block font-mono font-medium normal-case">
                       T+{face.diagnostic.timeToConfirmMs ?? 0}ms · {face.diagnostic.scansUsed ?? 0} scans
@@ -630,6 +767,8 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                   )}
                 </span>
               </div>
+                );
+              })()
             ))}
 
             {liveRecognizedFaces.length === 0 && activeBox && (() => {

@@ -6,6 +6,21 @@ export const FACE_SELF_HOSTED_MODELS_ENABLED =
   import.meta.env.VITE_FACE_SELF_HOSTED_MODELS === 'true';
 export const FACE_DIAGNOSTICS_ENABLED =
   import.meta.env.DEV && import.meta.env.VITE_FACE_DIAGNOSTICS === 'true';
+export const FACE_CROP_RETRY_DIAGNOSTICS_ENABLED =
+  FACE_DIAGNOSTICS_ENABLED && import.meta.env.VITE_FACE_CROP_RETRY_DIAGNOSTICS === 'true';
+export const FACE_CROP_PADDING_COMPARISON_ENABLED =
+  FACE_DIAGNOSTICS_ENABLED && import.meta.env.VITE_FACE_CROP_PADDING_COMPARISON === 'true';
+export const FACE_CROP_ADAPTIVE_RETRY_ENABLED =
+  FACE_CROP_RETRY_DIAGNOSTICS_ENABLED && import.meta.env.VITE_FACE_CROP_ADAPTIVE_RETRY === 'true';
+export const FACE_MOTION_OPTIMIZATIONS_ENABLED =
+  import.meta.env.VITE_FACE_MOTION_OPTIMIZATIONS === 'true';
+
+export function getFaceCropDetectorInputSize(
+  configuredValue = import.meta.env.VITE_FACE_CROP_DETECTOR_INPUT_SIZE
+): number {
+  const configured = Number(configuredValue);
+  return configured >= 416 && configured <= 608 && configured % 32 === 0 ? configured : 416;
+}
 
 export function isMobileDevice(
   userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent,

@@ -5,6 +5,55 @@ export interface VideoFaceBox {
   height: number;
   videoWidth: number;
   videoHeight: number;
+  frameCapturedAt?: number;
+  detectionResultAt?: number;
+  frameTimestamp?: number;
+  predicted?: boolean;
+}
+
+type FaceDetectionBox = Pick<VideoFaceBox, 'x' | 'y' | 'width' | 'height'> &
+  Partial<Pick<VideoFaceBox, 'videoWidth' | 'videoHeight' | 'frameCapturedAt'>>;
+
+export function getFreshFaceBoxPairs<T extends VideoFaceBox>(
+  boxes: readonly T[],
+  detections: readonly FaceDetectionBox[],
+  now: number,
+  maxAgeMs = 400
+): Array<{ boxIndex: number; detectionIndex: number }> {
+  const pairs = boxes.flatMap((box, boxIndex) => {
+    return detections.flatMap((detection, detectionIndex) => {
+      const ageMs = detection.frameCapturedAt ?? box.frameCapturedAt;
+      if (ageMs === undefined || now - ageMs > maxAgeMs || now - ageMs < 0) return [];
+      const { box: visibleBox } = clampVideoFaceBox(box);
+      const { box: visibleDetection } = clampVideoFaceBox({
+        ...detection,
+        videoWidth: detection.videoWidth ?? box.videoWidth,
+        videoHeight: detection.videoHeight ?? box.videoHeight,
+      });
+      const { iou } = faceBoxOverlap(visibleBox, visibleDetection);
+      return iou > 0 ? [{ boxIndex, detectionIndex, iou }] : [];
+    });
+  }).sort((a, b) => b.iou - a.iou);
+  const pairedBoxes = new Set<number>();
+  const pairedDetections = new Set<number>();
+  const selectedPairs: Array<{ boxIndex: number; detectionIndex: number }> = [];
+  for (const pair of pairs) {
+    if (pairedBoxes.has(pair.boxIndex) || pairedDetections.has(pair.detectionIndex)) continue;
+    pairedBoxes.add(pair.boxIndex);
+    pairedDetections.add(pair.detectionIndex);
+    selectedPairs.push({ boxIndex: pair.boxIndex, detectionIndex: pair.detectionIndex });
+  }
+  return selectedPairs.sort((a, b) => a.boxIndex - b.boxIndex);
+}
+
+export function getFreshFaceBoxIndices<T extends VideoFaceBox>(
+  boxes: readonly T[],
+  detections: readonly FaceDetectionBox[],
+  now: number,
+  maxAgeMs = 400
+): number[] {
+  return getFreshFaceBoxPairs(boxes, detections, now, maxAgeMs)
+    .map(pair => pair.boxIndex);
 }
 
 export interface OverlayViewport {
@@ -17,6 +66,75 @@ export interface OverlayBoxStyle {
   top: number;
   width: number;
   height: number;
+}
+
+export function clampVideoFaceBox<T extends VideoFaceBox>(box: T): {
+  box: T;
+  clipped: boolean;
+} {
+  const left = Math.min(box.videoWidth, Math.max(0, box.x));
+  const top = Math.min(box.videoHeight, Math.max(0, box.y));
+  const right = Math.min(box.videoWidth, box.x + box.width);
+  const bottom = Math.min(box.videoHeight, box.y + box.height);
+  return {
+    box: {
+      ...box,
+      x: left,
+      y: top,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top),
+    },
+    clipped: left !== box.x || top !== box.y ||
+      right !== box.x + box.width || bottom !== box.y + box.height,
+  };
+}
+
+export function getRecognitionOverlayLabel(
+  status: 'recognized' | 'unknown' | 'scanning' | 'quality_rejected' | 'processing_failed',
+  options: { studentName?: string; edgeClipped?: boolean; reason?: string } = {}
+): string {
+  if (status === 'recognized' && options.studentName) return options.studentName;
+  if (status === 'unknown') return 'Unknown Face';
+  if (options.edgeClipped || options.reason === 'below_minimum_face_size') return 'Move into view';
+  if (status === 'scanning') return 'Scanning';
+  return 'Hold still / face the camera';
+}
+
+export interface FaceBoxOverlayCheck {
+  index: number;
+  reasons: Array<'stale' | 'no_latest_detection_overlap' | 'below_minimum_size' | 'edge_clipped'>;
+  visible: boolean;
+}
+
+export function inspectFaceBoxOverlays<T extends VideoFaceBox>(
+  boxes: readonly T[],
+  detections: readonly FaceDetectionBox[],
+  now: number,
+  maxAgeMs = 400,
+  minFaceSize = 60
+): FaceBoxOverlayCheck[] {
+  const freshPairs = getFreshFaceBoxPairs(boxes, detections, now, maxAgeMs);
+  const freshDetectionByBox = new Map(
+    freshPairs.map(({ boxIndex, detectionIndex }) => [boxIndex, detections[detectionIndex]])
+  );
+  return boxes.map((box, index) => {
+    const reasons: FaceBoxOverlayCheck['reasons'] = [];
+    const displayedDetection = freshDetectionByBox.get(index);
+    const capturedAt = displayedDetection?.frameCapturedAt ?? box.frameCapturedAt;
+    const boxAgeMs = capturedAt === undefined ? Number.POSITIVE_INFINITY : now - capturedAt;
+    const { clipped } = clampVideoFaceBox(box);
+    if (boxAgeMs > maxAgeMs || boxAgeMs < 0) reasons.push('stale');
+    if (!displayedDetection) reasons.push('no_latest_detection_overlap');
+    if (Math.min(box.width, box.height) < minFaceSize) reasons.push('below_minimum_size');
+    if (clipped) reasons.push('edge_clipped');
+    return {
+      index,
+      reasons,
+      visible: reasons.includes('stale') || reasons.includes('no_latest_detection_overlap')
+        ? false
+        : true,
+    };
+  });
 }
 
 export function faceBoxOverlap(

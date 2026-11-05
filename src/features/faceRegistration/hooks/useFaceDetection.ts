@@ -6,13 +6,17 @@ import {
   getScrfdSession,
   detectFacesWithScrfd,
   ScrfdFaceBox,
+  type ScrfdStageTimings,
   visionWasmFileset,
 } from '../lib/scrfdDetector';
+import { captureFaceFrame } from '@/features/attendance/lib/faceNetEngine';
 import {
   FACE_DIAGNOSTICS_ENABLED,
+  FACE_MOTION_OPTIMIZATIONS_ENABLED,
   FACE_STARTUP_OPTIMIZATIONS_ENABLED,
   isMobileFaceOptimizationActive,
 } from '@/features/attendance/lib/faceOptimizationFlags';
+import { getMedianAndP90 } from '@/features/attendance/lib/faceRecognitionDiagnostics';
 
 export interface FaceBox {
   x: number;
@@ -24,6 +28,18 @@ export interface FaceBox {
   score?: number;
   landmarks?: [number, number][];
   detectorSource?: 'scrfd' | 'fallback';
+  frameCapturedAt?: number;
+  detectionResultAt?: number;
+  frameTimestamp?: number;
+}
+
+export interface FaceDetectionFrame {
+  source: HTMLCanvasElement;
+  capturedAt: number;
+  frameTimestamp: number;
+  resultArrivedAt: number;
+  frameId: number;
+  boxes: FaceBox[];
 }
 
 export interface UseFaceDetectionReturn {
@@ -32,6 +48,7 @@ export interface UseFaceDetectionReturn {
   faceBox: FaceBox | null;
   allFaceBoxes: FaceBox[];
   allFaceBoxesRef: React.MutableRefObject<FaceBox[]>;
+  detectionFrameRef: React.MutableRefObject<FaceDetectionFrame | null>;
   warningMessage: string | null;
   detectorError: string | null;
   startupTimings: { scrfdLoadMs: number | null; mediaPipeLoadMs: number | null };
@@ -47,6 +64,7 @@ export function useFaceDetection(
     maxMissedFrames?: number;
     useMediaPipeFallback?: boolean;
     modelUrl?: string;
+    motionRecognitionFeed?: boolean;
   }
 ): UseFaceDetectionReturn {
   const [isFaceDetected, setIsFaceDetected] = useState(false);
@@ -61,6 +79,8 @@ export function useFaceDetection(
   });
 
   const allFaceBoxesRef = useRef<FaceBox[]>([]);
+  const detectionFrameRef = useRef<FaceDetectionFrame | null>(null);
+  const nextFrameIdRef = useRef(0);
   const scrfdSessionRef = useRef<ort.InferenceSession | null>(null);
   const mediaPipeDetectorRef = useRef<FaceDetector | null>(null);
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,6 +95,8 @@ export function useFaceDetection(
     let videoFrameHandle: number | null = null;
     let mediaPipeLoadingPromise: Promise<FaceDetector | null> | null = null;
     let visibilityHandler: (() => void) | null = null;
+    const scrfdTimingSamples: ScrfdStageTimings[] = [];
+    let scrfdTimingWindowStartedAt = performance.now();
 
     const shouldPause = () =>
       isMobileFaceOptimizationActive() && document.visibilityState === 'hidden';
@@ -158,6 +180,7 @@ export function useFaceDetection(
     if (!active || !videoRef.current) {
       cancelScheduledDetection();
       resetDetection();
+      detectionFrameRef.current = null;
       setWarningMessage(null);
       setDetectorError(null);
       setStartupTimings({ scrfdLoadMs: null, mediaPipeLoadMs: null });
@@ -174,13 +197,35 @@ export function useFaceDetection(
       try {
         const vw = video.videoWidth || 640;
         const vh = video.videoHeight || 480;
+        const useMotionSnapshot = FACE_MOTION_OPTIMIZATIONS_ENABLED &&
+          options?.motionRecognitionFeed === true;
+        const snapshot = useMotionSnapshot ? captureFaceFrame(video) : null;
+        const motionSnapshot = snapshot?.source ?? null;
+        const detectionSource = motionSnapshot ?? video;
+        const capturedAt = snapshot?.capturedAt ?? performance.now();
+        const frameTimestamp = snapshot?.frameTimestamp ?? video.currentTime;
         let detectedBoxes: FaceBox[] = [];
         let scrfdFailed = false;
 
         // 1. Try SCRFD ONNX Detection
         if (scrfdSessionRef.current) {
           try {
-            const rawScrfdBoxes: ScrfdFaceBox[] = await detectFacesWithScrfd(scrfdSessionRef.current, video, 0.4, 0.4);
+            const rawScrfdBoxes: ScrfdFaceBox[] = await detectFacesWithScrfd(
+              scrfdSessionRef.current,
+              detectionSource,
+              0.4,
+              0.4,
+              timing => {
+                if (!FACE_DIAGNOSTICS_ENABLED) return;
+                scrfdTimingSamples.push(timing);
+                if (scrfdTimingSamples.length > 100) scrfdTimingSamples.shift();
+                console.debug('[FaceDetection] SCRFD stage timing', {
+                  frameTimestamp,
+                  resultArrivedAt: Number(performance.now().toFixed(1)),
+                  ...timing,
+                });
+              }
+            );
             detectedBoxes = rawScrfdBoxes.map((b) => ({
               x: b.x,
               y: b.y,
@@ -206,7 +251,7 @@ export function useFaceDetection(
             options?.useMediaPipeFallback !== false;
         if (detectedBoxes.length === 0 && shouldUseMediaPipe) {
           const fallback = mediaPipeDetectorRef.current ?? await ensureMediaPipeDetector();
-          const result = fallback?.detectForVideo(video, performance.now());
+          const result = fallback?.detectForVideo(detectionSource, performance.now());
           if (result?.detections && result.detections.length > 0) {
             for (const det of result.detections) {
               const b = det.boundingBox;
@@ -228,6 +273,23 @@ export function useFaceDetection(
         }
 
         if (cancelled || shouldPause()) return;
+        const resultArrivedAt = performance.now();
+        detectedBoxes = detectedBoxes.map(box => ({
+          ...box,
+          frameCapturedAt: capturedAt,
+          detectionResultAt: resultArrivedAt,
+          frameTimestamp,
+        }));
+        if (motionSnapshot) {
+          detectionFrameRef.current = {
+            source: motionSnapshot,
+            capturedAt,
+            frameTimestamp,
+            resultArrivedAt,
+            frameId: ++nextFrameIdRef.current,
+            boxes: detectedBoxes,
+          };
+        }
 
         // Find primary locked face by size and frame-to-frame continuity
         let bestBox: FaceBox | null = null;
@@ -263,7 +325,7 @@ export function useFaceDetection(
           // Velocity-sensitive exponential smoothing
           const prev = faceBoxRef.current;
           let targetBox: FaceBox;
-          if (prev && prev.videoWidth === vw && prev.videoHeight === vh) {
+          if (!useMotionSnapshot && prev && prev.videoWidth === vw && prev.videoHeight === vh) {
             const moveDelta = Math.hypot(bestBox.x - prev.x, bestBox.y - prev.y);
             const alpha = moveDelta > 30 ? 0.85 : moveDelta > 12 ? 0.70 : 0.50;
 
@@ -299,6 +361,8 @@ export function useFaceDetection(
             setWarningMessage('Slight right tilt recognized. Hold position for capture.');
           }
         } else {
+          allFaceBoxesRef.current = [];
+          setAllFaceBoxes([]);
           missedFramesRef.current += 1;
           if (missedFramesRef.current > MAX_MISSED_FRAMES) {
             resetDetection();
@@ -374,6 +438,24 @@ export function useFaceDetection(
           detectedBoxes: allFaceBoxesRef.current.length,
           durationMs: performance.now() - startedAt,
         });
+        if (FACE_DIAGNOSTICS_ENABLED && performance.now() - scrfdTimingWindowStartedAt >= 10_000) {
+          const stages = ['preprocessMs', 'inferenceMs', 'decodeMs', 'nmsMs'] as const;
+          console.table(stages.map(stage => {
+            const values = scrfdTimingSamples.map(sample => sample[stage]);
+            const { median, p90 } = getMedianAndP90(values);
+            return {
+              stage,
+              averageMs: values.length
+                ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1))
+                : null,
+              medianMs: median,
+              p90Ms: p90,
+              samples: values.length,
+            };
+          }));
+          scrfdTimingSamples.length = 0;
+          scrfdTimingWindowStartedAt = performance.now();
+        }
         const delay = Math.max(0, LIVE_FACE_SCAN_INTERVAL_MS - (performance.now() - startedAt));
         scheduleDetectionLoop(delay);
       };
@@ -413,6 +495,7 @@ export function useFaceDetection(
     faceBox,
     allFaceBoxes,
     allFaceBoxesRef,
+    detectionFrameRef,
     warningMessage,
     detectorError,
     startupTimings,

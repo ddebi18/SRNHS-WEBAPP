@@ -3,7 +3,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { FaceBox } from '../hooks/useFaceDetection';
 import { CaptureAngle } from '../types';
 import { cn } from '@/lib/utils';
-import { mapVideoFaceBoxToViewport } from '@/lib/faceOverlayGeometry';
+import { getFreshFaceBoxIndices, mapVideoFaceBoxToViewport } from '@/lib/faceOverlayGeometry';
 
 interface CameraPreviewProps {
   stream: MediaStream | null;
@@ -66,6 +66,15 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
         height: `${mapped.height}%`,
       };
     };
+    const freshBoxIndices = getFreshFaceBoxIndices(
+      allFaceBoxes ?? [],
+      allFaceBoxes ?? [],
+      performance.now()
+    );
+    const primaryBoxIsFresh = Boolean(
+      faceBox &&
+      getFreshFaceBoxIndices([faceBox], allFaceBoxes ?? [], performance.now())[0] === 0
+    );
 
     return (
       <div ref={viewfinderRef} className="relative w-full h-72 sm:h-80 bg-slate-950 rounded-2xl overflow-hidden shadow-inner border border-slate-800 flex items-center justify-center">
@@ -117,6 +126,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
 
             {/* Additional Detected Multi-Faces (SCRFD) */}
             {allFaceBoxes && allFaceBoxes.length > 0 && allFaceBoxes.map((b, idx) => {
+              if (!freshBoxIndices.includes(idx)) return null;
               const isPrimary = faceBox && (
                 Math.hypot(
                   (b.x + b.width / 2) - (faceBox.x + faceBox.width / 2),
@@ -138,7 +148,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
             })}
 
             {/* Primary Target Face Bounding Box */}
-            {faceBox && (
+            {faceBox && primaryBoxIsFresh && (
               <div
                 className="absolute border-2 border-emerald-400 rounded-lg pointer-events-none transition-all duration-150 shadow-[0_0_12px_rgba(52,211,153,0.4)]"
                 style={getOverlayStyle(faceBox)}

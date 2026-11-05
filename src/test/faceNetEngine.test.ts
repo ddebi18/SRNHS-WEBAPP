@@ -79,6 +79,56 @@ describe('faceNetEngine', () => {
     expect(measureLaplacianVariance(checkerboard, 5, 5)).toBeGreaterThan(0);
   });
 
+  it('extracts from the captured detection frame after the live video moves', async () => {
+    const { analyzeFaceRegionQuality, captureFaceFrame, describePaddedFaceCrop } =
+      await import('@/features/attendance/lib/faceNetEngine');
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      videoWidth: { value: 640 },
+      videoHeight: { value: 480 },
+    });
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+      drawImage,
+      getImageData: vi.fn((_x: number, _y: number, width: number, height: number) => ({
+        data: new Uint8ClampedArray(width * height * 4),
+      })),
+    } as never));
+    const snapshot = captureFaceFrame(video);
+    const region = { x: 120, y: 80, width: 100, height: 110, score: 0.9 };
+    const quality = analyzeFaceRegionQuality(snapshot.source, region);
+    const positions = Array.from({ length: 68 }, () => ({ x: 50, y: 50 }));
+    [36, 37, 38, 39, 40, 41].forEach(index => { positions[index] = { x: 30, y: 40 }; });
+    [42, 43, 44, 45, 46, 47].forEach(index => { positions[index] = { x: 70, y: 40 }; });
+    [27, 28, 29, 30, 31, 32, 33, 34, 35].forEach(index => { positions[index] = { x: 50, y: 54 }; });
+    [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67]
+      .forEach(index => { positions[index] = { x: 50, y: 70 }; });
+    mockFaceApi.detectSingleFace.mockReturnValue({
+      withFaceLandmarks: () => ({
+        withFaceDescriptor: async () => ({
+          detection: { box: { x: 20, y: 20, width: 80, height: 80 }, score: 0.9 },
+          landmarks: { positions },
+          descriptor: new Float32Array(128).fill(0.02),
+        }),
+      }),
+    } as never);
+
+    const result = await describePaddedFaceCrop(
+      region,
+      quality.crop,
+      quality.cropX,
+      quality.cropY,
+      undefined,
+      snapshot.source,
+      false
+    );
+
+    expect(result.status).toBe('descriptor');
+    expect(drawImage).toHaveBeenNthCalledWith(1, video, 0, 0, 640, 480);
+    expect(drawImage.mock.calls[1]?.[0]).toBe(snapshot.source);
+    expect(mockFaceApi.detectSingleFace.mock.calls[0]?.[0]).toBe(quality.crop);
+  });
+
   it('keeps a slightly soft frontal face usable and attempts a descriptor', async () => {
     const { analyzeFaceRegionQuality, describePaddedFaceCrop } = await import('@/features/attendance/lib/faceNetEngine');
     const video = document.createElement('video');
@@ -172,6 +222,174 @@ describe('faceNetEngine', () => {
       null,
     ]);
     expect(mockFaceApi.detectSingleFace).toHaveBeenCalledTimes(2);
+  });
+
+  it('can try 40% padding first with an opt-in larger detector input', async () => {
+    const { describePaddedFaceCrop } = await import('@/features/attendance/lib/faceNetEngine');
+    const positions = Array.from({ length: 68 }, () => ({ x: 50, y: 50 }));
+    [36, 37, 38, 39, 40, 41].forEach(index => { positions[index] = { x: 30, y: 40 }; });
+    [42, 43, 44, 45, 46, 47].forEach(index => { positions[index] = { x: 70, y: 40 }; });
+    [27, 28, 29, 30, 31, 32, 33, 34, 35].forEach(index => { positions[index] = { x: 50, y: 54 }; });
+    [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67]
+      .forEach(index => { positions[index] = { x: 50, y: 70 }; });
+    const detection = {
+      detection: { box: { x: 20, y: 20, width: 80, height: 80 }, score: 0.9 },
+      landmarks: { positions },
+      descriptor: new Float32Array(128).fill(0.02),
+    };
+    mockFaceApi.detectSingleFace.mockReturnValue({
+      withFaceLandmarks: () => ({
+        withFaceDescriptor: async () => detection,
+      }),
+    } as never);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+      drawImage: vi.fn(),
+    } as never));
+    const input = document.createElement('video');
+    Object.defineProperties(input, {
+      videoWidth: { value: 640 },
+      videoHeight: { value: 480 },
+    });
+
+    const result = await describePaddedFaceCrop(
+      { x: 120, y: 80, width: 100, height: 110, score: 0.9 },
+      Object.assign(document.createElement('canvas'), { width: 140, height: 154 }),
+      100,
+      58,
+      undefined,
+      input,
+      true,
+      { preferredStep: 'larger_padding_40', maxDetectorPasses: 2, detectorInputSize: 512 }
+    );
+
+    expect(result.status).toBe('descriptor');
+    expect(result.retryStepSucceeded).toBe('larger_padding_40');
+    expect(result.retryAttempts?.map(attempt => attempt.step)).toEqual(['larger_padding_40']);
+    expect(result.retryAttempts?.[0]?.durationMs).toBeGreaterThanOrEqual(0);
+    expect(result.retryAttempts?.[0]?.detectorInputSize).toBe(512);
+    expect(mockFaceApi.detectSingleFace.mock.calls[0]?.[0].width).toBe(180);
+    expect(mockFaceApi.detectSingleFace.mock.calls[0]?.[1].options.inputSize).toBe(512);
+  });
+
+  it('skips this scan after two failed retry passes when the cap is enabled', async () => {
+    const { describePaddedFaceCrop } = await import('@/features/attendance/lib/faceNetEngine');
+    mockFaceApi.nets.ssdMobilenetv1.isLoaded = true;
+    mockFaceApi.detectSingleFace.mockReturnValue({
+      withFaceLandmarks: () => ({
+        withFaceDescriptor: async () => null,
+      }),
+    } as never);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+      drawImage: vi.fn(),
+    } as never));
+    const input = document.createElement('video');
+    Object.defineProperties(input, {
+      videoWidth: { value: 640 },
+      videoHeight: { value: 480 },
+    });
+
+    const result = await describePaddedFaceCrop(
+      { x: 120, y: 80, width: 100, height: 110, score: 0.9 },
+      Object.assign(document.createElement('canvas'), { width: 140, height: 154 }),
+      100,
+      58,
+      undefined,
+      input,
+      true,
+      { preferredStep: 'larger_padding_40', maxDetectorPasses: 2 }
+    );
+
+    expect(result.status).toBe('skipped');
+    expect(result.status === 'skipped' && result.reason).toBe('retry_budget_exhausted');
+    expect(result.retryAttempts?.map(attempt => attempt.step)).toEqual([
+      'larger_padding_40',
+      'initial',
+    ]);
+    expect(result.retryAttempts?.every(attempt => Boolean(attempt.detector))).toBe(true);
+    expect(mockFaceApi.detectSingleFace).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the two-pass retry cap for each of five faces', async () => {
+    const { describePaddedFaceCrop } = await import('@/features/attendance/lib/faceNetEngine');
+    mockFaceApi.nets.ssdMobilenetv1.isLoaded = true;
+    mockFaceApi.detectSingleFace.mockReturnValue({
+      withFaceLandmarks: () => ({
+        withFaceDescriptor: async () => null,
+      }),
+    } as never);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+      drawImage: vi.fn(),
+    } as never));
+    const input = document.createElement('video');
+    Object.defineProperties(input, {
+      videoWidth: { value: 640 },
+      videoHeight: { value: 480 },
+    });
+
+    const results = await Promise.all(Array.from({ length: 5 }, (_, index) =>
+      describePaddedFaceCrop(
+        { x: 40 + index * 100, y: 80, width: 100, height: 110, score: 0.9 },
+        Object.assign(document.createElement('canvas'), { width: 140, height: 154 }),
+        20 + index * 100,
+        58,
+        undefined,
+        input,
+        true,
+        { maxDetectorPasses: 2 }
+      )
+    ));
+
+    expect(results).toHaveLength(5);
+    expect(results.every(result =>
+      result.retryAttempts?.length === 2 &&
+      result.status === 'skipped' &&
+      result.reason === 'retry_budget_exhausted'
+    )).toBe(true);
+    expect(mockFaceApi.detectSingleFace).toHaveBeenCalledTimes(10);
+  });
+
+  it('compares 20% and 40% descriptors from the same captured frame', async () => {
+    const { compareFacePaddingDescriptors } = await import('@/features/attendance/lib/faceNetEngine');
+    const positions = Array.from({ length: 68 }, () => ({ x: 50, y: 50 }));
+    [36, 37, 38, 39, 40, 41].forEach(index => { positions[index] = { x: 30, y: 40 }; });
+    [42, 43, 44, 45, 46, 47].forEach(index => { positions[index] = { x: 70, y: 40 }; });
+    [27, 28, 29, 30, 31, 32, 33, 34, 35].forEach(index => { positions[index] = { x: 50, y: 54 }; });
+    [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67]
+      .forEach(index => { positions[index] = { x: 50, y: 70 }; });
+    let detectionCount = 0;
+    mockFaceApi.detectSingleFace.mockImplementation(() => {
+      const descriptorValue = detectionCount++ === 0 ? 0.1 : 0.2;
+      return {
+        withFaceLandmarks: () => ({
+          withFaceDescriptor: async () => ({
+            detection: { box: { x: 20, y: 20, width: 80, height: 80 }, score: 0.9 },
+            landmarks: { positions },
+            descriptor: new Float32Array(128).fill(descriptorValue),
+          }),
+        }),
+      } as never;
+    });
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => ({
+      drawImage,
+    } as never));
+    const input = document.createElement('video');
+    Object.defineProperties(input, {
+      videoWidth: { value: 640 },
+      videoHeight: { value: 480 },
+    });
+
+    const result = await compareFacePaddingDescriptors(
+      { x: 120, y: 80, width: 100, height: 110, score: 0.9 },
+      input
+    );
+
+    expect(result.twentyPercent).toBe(true);
+    expect(result.fortyPercent).toBe(true);
+    expect(result.distance).toBeCloseTo(Math.sqrt(128) * 0.1, 5);
+    expect(drawImage).toHaveBeenCalledTimes(3);
+    expect(drawImage.mock.calls[0]?.[0]).toBe(input);
+    expect(drawImage.mock.calls[1]?.[0]).toBe(drawImage.mock.calls[2]?.[0]);
   });
 
   it('reports extraction failure after all crop retries find no face', async () => {

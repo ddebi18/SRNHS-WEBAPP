@@ -26,6 +26,14 @@ export interface ScrfdFaceBox {
   landmarks?: [number, number][];
 }
 
+export interface ScrfdStageTimings {
+  preprocessMs: number;
+  inferenceMs: number;
+  decodeMs: number;
+  nmsMs: number;
+  inputSize: number;
+}
+
 const STRIDES = [8, 16, 32] as const;
 const ANCHORS_PER_LOCATION = 2;
 const DEFAULT_TARGET_SIZE = 640;
@@ -162,9 +170,10 @@ export async function getScrfdSession(
 const canvasOffscreen = typeof document !== 'undefined' ? document.createElement('canvas') : null;
 let cachedCanvasContext: CanvasRenderingContext2D | null = null;
 
-export function preprocessVideoFrame(video: HTMLVideoElement, targetSize = DEFAULT_TARGET_SIZE) {
-  const srcW = video.videoWidth || 640;
-  const srcH = video.videoHeight || 480;
+export function preprocessVideoFrame(video: HTMLVideoElement | HTMLCanvasElement, targetSize = DEFAULT_TARGET_SIZE) {
+  const isVideo = video instanceof HTMLVideoElement;
+  const srcW = isVideo ? video.videoWidth || 640 : video.width || 640;
+  const srcH = isVideo ? video.videoHeight || 480 : video.height || 480;
 
   if (!canvasOffscreen) throw new Error('DOM Canvas unavailable');
 
@@ -252,8 +261,10 @@ export function decodeScrfdOutputs(
   scale: number,
   confThreshold = 0.25,
   nmsThreshold = 0.4,
-  targetSize = DEFAULT_TARGET_SIZE
+  targetSize = DEFAULT_TARGET_SIZE,
+  onTiming?: (timing: Pick<ScrfdStageTimings, 'decodeMs' | 'nmsMs'>) => void
 ): ScrfdDetection[] {
+  const decodeStartedAt = performance.now();
   const candidates: ScrfdDetection[] = [];
 
   for (let level = 0; level < STRIDES.length; level++) {
@@ -328,32 +339,42 @@ export function decodeScrfdOutputs(
     }
   }
 
-  return applyNms(candidates, nmsThreshold);
+  const decodeMs = performance.now() - decodeStartedAt;
+  const nmsStartedAt = performance.now();
+  const detections = applyNms(candidates, nmsThreshold);
+  onTiming?.({ decodeMs, nmsMs: performance.now() - nmsStartedAt });
+  return detections;
 }
 
 export async function detectFacesWithScrfd(
   session: ort.InferenceSession,
-  video: HTMLVideoElement,
+  video: HTMLVideoElement | HTMLCanvasElement,
   confThreshold = 0.30,
-  nmsThreshold = 0.4
+  nmsThreshold = 0.4,
+  onTiming?: (timing: ScrfdStageTimings) => void
 ): Promise<ScrfdFaceBox[]> {
   const targetSize = getScrfdInputSize(
     isMobileFaceOptimizationActive(),
     import.meta.env.VITE_FACE_SCRFD_INPUT_SIZE
   );
+  const preprocessStartedAt = performance.now();
   const { tensor, scale, srcW, srcH } = preprocessVideoFrame(video, targetSize);
+  const preprocessMs = performance.now() - preprocessStartedAt;
   const inputName = session.inputNames[0] ?? 'input.1';
   const feeds: Record<string, ort.Tensor> = {};
   feeds[inputName] = tensor;
 
+  const inferenceStartedAt = performance.now();
   const outputs = await session.run(feeds);
+  const inferenceMs = performance.now() - inferenceStartedAt;
   const rawDetections = decodeScrfdOutputs(
     outputs,
     session.outputNames,
     scale,
     confThreshold,
     nmsThreshold,
-    targetSize
+    targetSize,
+    timings => onTiming?.({ preprocessMs, inferenceMs, ...timings, inputSize: targetSize })
   );
 
   return rawDetections.map((det) => ({

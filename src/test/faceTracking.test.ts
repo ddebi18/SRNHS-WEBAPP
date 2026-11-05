@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clampVideoFaceBox,
+  getFreshFaceBoxPairs,
+  getFreshFaceBoxIndices,
+  getRecognitionOverlayLabel,
+  inspectFaceBoxOverlays,
   getUnpairedFaceBoxIndices,
   mapVideoFaceBoxToViewport,
 } from '@/lib/faceOverlayGeometry';
@@ -113,6 +118,21 @@ describe('live face tracking', () => {
     expect(second.indices).toEqual([3, 4, 0]);
     expect(first.indices.length).toBeLessThanOrEqual(3);
     expect(second.indices.length).toBeLessThanOrEqual(3);
+  });
+
+  it('rotates the mobile budget of two while reserving work for due confirmed tracks', () => {
+    const tracks = Array.from({ length: 4 }, () => ({ confirmed: false, lastDescriptorAt: 0 }));
+    const first = selectFaceDescriptorDetections(tracks, 0, 0, 2, 1000);
+    const second = selectFaceDescriptorDetections(tracks, 200, first.nextRotationCursor, 2, 1000);
+    expect(first.indices).toEqual([0, 1]);
+    expect(second.indices).toEqual([2, 3]);
+
+    const withDueConfirmed = [
+      { confirmed: true, lastDescriptorAt: 0 },
+      { confirmed: false, lastDescriptorAt: 0 },
+      { confirmed: false, lastDescriptorAt: 0 },
+    ];
+    expect(selectFaceDescriptorDetections(withDueConfirmed, 1000, 0, 2, 1000).indices).toEqual([1, 0]);
   });
 
   it('prioritizes the most frontal unconfirmed faces for descriptor attempts', () => {
@@ -323,6 +343,107 @@ describe('face overlay geometry', () => {
         true
       )
     ).toEqual({ left: 78.125, top: 0, width: 15.625, height: 27.77777777777778 });
+  });
+
+  it('maps a video-left face to the visual right side of the mirrored preview', () => {
+    const mapped = mapVideoFaceBoxToViewport(
+      { x: 40, y: 60, width: 100, height: 100, videoWidth: 640, videoHeight: 480 },
+      { width: 640, height: 480 },
+      'cover',
+      true
+    );
+    expect(mapped?.left).toBeGreaterThan(75);
+  });
+
+  it('hides boxes older than 400ms and keeps five faces paired one-to-one with detections', () => {
+    const boxes = Array.from({ length: 5 }, (_, index) => ({
+      x: 30 + index * 110,
+      y: 40,
+      width: 70,
+      height: 80,
+      videoWidth: 640,
+      videoHeight: 480,
+      frameCapturedAt: 700,
+      detectionResultAt: 760,
+    }));
+    const latestDetections = [...boxes].reverse().map(box => ({
+      ...box,
+      x: box.x + 3,
+      frameCapturedAt: undefined,
+    }));
+    expect(getFreshFaceBoxIndices(boxes, latestDetections, 900)).toEqual([0, 1, 2, 3, 4]);
+    expect(getFreshFaceBoxIndices(boxes, latestDetections, 1101)).toEqual([]);
+    expect(getFreshFaceBoxIndices(boxes, [], 900)).toEqual([]);
+    expect(getFreshFaceBoxIndices(
+      [boxes[0]!],
+      [{ x: 500, y: 300, width: 60, height: 60 }],
+      900
+    )).toEqual([]);
+  });
+
+  it('keeps a recognition result visible while its paired detection is fresh', () => {
+    const recognizedFace = {
+      x: 120,
+      y: 80,
+      width: 100,
+      height: 110,
+      videoWidth: 640,
+      videoHeight: 480,
+      frameCapturedAt: 100,
+    };
+    const recentDetection = {
+      ...recognizedFace,
+      x: 124,
+      frameCapturedAt: 900,
+    };
+
+    expect(getFreshFaceBoxPairs([recognizedFace], [recentDetection], 1000)).toEqual([
+      { boxIndex: 0, detectionIndex: 0 },
+    ]);
+    expect(inspectFaceBoxOverlays([recognizedFace], [recentDetection], 1000)[0]?.reasons)
+      .not.toContain('stale');
+    expect(getFreshFaceBoxPairs(
+      [recognizedFace],
+      [{ ...recentDetection, frameCapturedAt: 500 }],
+      1000
+    )).toEqual([]);
+  });
+
+  it('renders two tracked faces once each, including a partially visible left-edge face', () => {
+    const now = 1000;
+    const trackedFaces = [
+      {
+        x: 230, y: 80, width: 90, height: 110,
+        videoWidth: 640, videoHeight: 480, frameCapturedAt: 850,
+      },
+      {
+        x: -18, y: 100, width: 82, height: 100,
+        videoWidth: 640, videoHeight: 480, frameCapturedAt: 850,
+      },
+    ];
+    const detections = trackedFaces.map(box => ({ ...box }));
+    const checks = inspectFaceBoxOverlays(trackedFaces, detections, now);
+
+    expect(checks.filter(check => check.visible).map(check => check.index)).toEqual([0, 1]);
+    expect(getFreshFaceBoxPairs(trackedFaces, detections, now)).toEqual([
+      { boxIndex: 0, detectionIndex: 0 },
+      { boxIndex: 1, detectionIndex: 1 },
+    ]);
+    expect(clampVideoFaceBox(trackedFaces[1]!).box).toMatchObject({
+      x: 0,
+      y: 100,
+      width: 64,
+      height: 100,
+    });
+    expect(checks[1]!.reasons).toContain('edge_clipped');
+    expect(getRecognitionOverlayLabel('processing_failed', { edgeClipped: true })).toBe('Move into view');
+  });
+
+  it('labels an unenrolled face unknown without returning a student name', () => {
+    expect(getRecognitionOverlayLabel('unknown')).toBe('Unknown Face');
+    expect(getRecognitionOverlayLabel('scanning')).toBe('Scanning');
+    expect(getRecognitionOverlayLabel('recognized', { studentName: 'Enrolled Student' }))
+      .toBe('Enrolled Student');
   });
 
   it('rejects unusable source or viewport dimensions', () => {

@@ -12,6 +12,7 @@ import {
   MIN_LIVE_RECOGNITION_FACE_SIZE_PX,
   scoreFaceNetMatch,
 } from '@/features/attendance/lib/faceNetMatcher';
+import { getRecognitionOverlayLabel } from '@/lib/faceOverlayGeometry';
 
 function unit(values: number[]): Float32Array {
   const vec = new Float32Array(values);
@@ -62,6 +63,7 @@ describe('FaceNet matcher', () => {
     expect(result.accepted).toBe(false);
     expect(result.label).not.toBe('std-a');
     expect(result.label).not.toBe('std-b');
+    expect(getRecognitionOverlayLabel(result.accepted ? 'recognized' : 'unknown')).toBe('Unknown Face');
   });
 
   it('classifies five completed unfamiliar descriptors as unknown rather than as unprocessed', () => {
