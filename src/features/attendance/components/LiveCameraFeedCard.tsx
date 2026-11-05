@@ -27,6 +27,10 @@ import { supabaseRecognitionAdapter } from '../services/SupabaseRecognitionAdapt
 import { useCamera } from '@/features/faceRegistration/hooks/useCamera';
 import type { EventType } from '@/types/domain.types';
 import { isSupabaseConfigured } from '@/lib/supabase';
+import {
+  FACE_DIAGNOSTICS_ENABLED,
+  FACE_STARTUP_OPTIMIZATIONS_ENABLED,
+} from '../lib/faceOptimizationFlags';
 
 interface LiveCameraFeedCardProps {
   className?: string;
@@ -96,7 +100,8 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     });
   };
 
-  const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } = useCamera();
+  const { stream: webcamStream, start: startWebcam, stop: stopWebcam, errorMessage: cameraErrorMessage } =
+    useCamera({ optimizeForMobile: true });
   const hasVideoSource = useWebcam ? Boolean(webcamStream) : Boolean(streamUrl || whepUrl);
   const {
     isFaceDetected,
@@ -104,6 +109,7 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     allFaceBoxes,
     allFaceBoxesRef,
     detectorError,
+    startupTimings: detectorStartupTimings,
   } = useFaceDetection(
     videoRef,
     'front',
@@ -125,6 +131,9 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
     diagnosticInfo,
     qualityGuidance,
     qualityPassed,
+    startupStage,
+    startupTimings,
+    retryInitialization,
   } = useFaceRecognition(videoRef, hasVideoSource, allFaceBoxesRef);
   const activeBox = isFaceDetected ? (faceBox || recognitionBox) : null;
   const liveRecognizedFaces = useMemo(
@@ -736,10 +745,16 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
                 <span className="truncate">
                   {dailyHistoryError
                     ? 'Attendance history unavailable; automatic logging paused'
+                    : startupStage === 'error'
+                    ? recognitionError || 'Face recognition could not be initialized.'
                     : recognitionError
                     ? 'Enrollment required for recognition'
+                    : FACE_STARTUP_OPTIMIZATIONS_ENABLED && startupStage !== 'ready' && startupStage !== 'idle'
+                    ? startupStage === 'loading_models' ? 'Loading models...' : 'Loading students...'
                     : detectorError
                     ? `Error: ${detectorError}`
+                    : FACE_STARTUP_OPTIMIZATIONS_ENABLED && startupStage === 'ready' && !isAnyFaceDetected
+                    ? 'Ready'
                     : getRecognitionStatusText({
                     matchedStudent: liveMatchedStudent,
                     isLoading: isRecognitionLoading,
@@ -778,6 +793,15 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
             </div>
 
             <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+              {FACE_STARTUP_OPTIMIZATIONS_ENABLED && startupStage === 'error' && (
+                <button
+                  type="button"
+                  onClick={retryInitialization}
+                  className="px-3 py-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200 hover:bg-amber-500/20 text-xs font-semibold"
+                >
+                  Retry recognition
+                </button>
+              )}
               <button
                 onClick={() => setIsFullscreen(!isFullscreen)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-950/15 dark:border-emerald-800/50 text-slate-700 dark:text-emerald-200 hover:bg-emerald-50 dark:hover:bg-[#143828] transition-all shadow-xs text-xs font-semibold active:scale-95 cursor-pointer"
@@ -788,6 +812,19 @@ export const LiveCameraFeedCard: React.FC<LiveCameraFeedCardProps> = ({ classNam
               </button>
             </div>
           </div>
+          {FACE_DIAGNOSTICS_ENABLED && (
+            <details className="mt-2 text-[10px] text-slate-500 dark:text-emerald-400/70">
+              <summary className="cursor-pointer">Face performance diagnostics</summary>
+              <div className="mt-1 grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1">
+                <span>Face-api models: {startupTimings.faceApiModelMs?.toFixed(0) ?? '—'}ms</span>
+                <span>SCRFD load/init: {detectorStartupTimings.scrfdLoadMs?.toFixed(0) ?? '—'}ms</span>
+                <span>MediaPipe fallback: {detectorStartupTimings.mediaPipeLoadMs === null ? 'not loaded' : `${detectorStartupTimings.mediaPipeLoadMs.toFixed(0)}ms`}</span>
+                <span>Student roster: {startupTimings.rosterFetchMs?.toFixed(0) ?? '—'}ms</span>
+                <span>Legacy descriptors: {startupTimings.legacyDescriptorMs?.toFixed(0) ?? 'pending'}ms</span>
+                <span>Page open → first recognition: {startupTimings.firstRecognitionMs?.toFixed(0) ?? 'pending'}ms</span>
+              </div>
+            </details>
+          )}
         </div>
       </div>
     </>

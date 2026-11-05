@@ -7,6 +7,12 @@ interface ImportMetaEnv {
   readonly VITE_FACE_LANDMARK_ALIGNMENT?: string;
   readonly VITE_FACE_FAST_CONFIRM?: string;
   readonly VITE_FACE_QUALITY_GATE?: string;
+  readonly VITE_FACE_STARTUP_OPTIMIZATIONS?: string;
+  readonly VITE_FACE_MOBILE_OPTIMIZATIONS?: string;
+  readonly VITE_FACE_SELF_HOSTED_MODELS?: string;
+  readonly VITE_FACE_DIAGNOSTICS?: string;
+  readonly VITE_FACE_ONNX_WASM_THREADS?: string;
+  readonly VITE_FACE_SCRFD_INPUT_SIZE?: string;
 }
 
 interface ImportMeta {

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { isMobileFaceOptimizationActive } from '@/features/attendance/lib/faceOptimizationFlags';
 
 export type CameraErrorType = 'permission-denied' | 'no-camera' | 'device-busy' | 'unknown' | null;
 
@@ -11,12 +12,13 @@ export interface UseCameraReturn {
   stop: () => void;
 }
 
-export function useCamera(): UseCameraReturn {
+export function useCamera(options?: { optimizeForMobile?: boolean }): UseCameraReturn {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<CameraErrorType>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const activeStreamRef = useRef<MediaStream | null>(null);
+  const optimizeForMobile = options?.optimizeForMobile ?? false;
 
   const stop = useCallback(() => {
     if (activeStreamRef.current) {
@@ -43,10 +45,11 @@ export function useCamera(): UseCameraReturn {
     }
 
     try {
+      const mobile = optimizeForMobile && isMobileFaceOptimizationActive();
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: mobile ? 640 : 1280 },
+          height: { ideal: mobile ? 480 : 720 },
           facingMode: 'user',
         },
         audio: false,
@@ -73,7 +76,7 @@ export function useCamera(): UseCameraReturn {
         setErrorMessage(err.message || 'An unexpected camera initialization error occurred.');
       }
     }
-  }, [stop]);
+  }, [optimizeForMobile, stop]);
 
   // Clean up on component unmount
   useEffect(() => {

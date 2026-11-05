@@ -8,8 +8,14 @@ import {
   FACENET_DISTANCE_THRESHOLD,
   evaluateFacePartConsistency,
 } from './faceNetMatcher';
+import {
+  FACE_DIAGNOSTICS_ENABLED,
+  FACE_SELF_HOSTED_MODELS_ENABLED,
+  FACE_STARTUP_OPTIMIZATIONS_ENABLED,
+} from './faceOptimizationFlags';
 
 const MODEL_URL = 'https://vladmandic.github.io/face-api/model';
+const LOCAL_MODEL_URL = '/models/face-api-v1';
 const LOW_LIGHT_MEAN_LUMA = 88;
 const LOW_LIGHT_GAMMA = 0.68;
 
@@ -17,26 +23,69 @@ let modelsPromise: Promise<void> | null = null;
 
 export function ensureFaceNetModels(): Promise<void> {
   if (!modelsPromise) {
+    const startedAt = performance.now();
+    const loadModel = async (net: { isLoaded: boolean; loadFromUri: (url: string) => Promise<unknown> }) => {
+      if (FACE_SELF_HOSTED_MODELS_ENABLED) {
+        try {
+          await net.loadFromUri(LOCAL_MODEL_URL);
+          return;
+        } catch (error) {
+          console.warn('[FaceNet] Self-hosted model load failed; falling back to the external model URL:', error);
+        }
+      }
+      await net.loadFromUri(MODEL_URL);
+    };
     const promise = Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL).catch(() => {
+      loadModel(faceapi.nets.tinyFaceDetector).catch(() => {
         console.warn('[FaceNet] TinyFaceDetector unavailable; SSD will be used');
       }),
-      faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL).catch(() => {
+      loadModel(faceapi.nets.ssdMobilenetv1).catch(() => {
         console.warn('[FaceNet] SSD Mobilenet detector unavailable; other FaceNet stages will continue when possible');
       }),
-      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+      loadModel(faceapi.nets.faceLandmark68Net),
+      loadModel(faceapi.nets.faceRecognitionNet),
     ]).then(() => {
       if (!faceapi.nets.tinyFaceDetector.isLoaded && !faceapi.nets.ssdMobilenetv1.isLoaded) {
         throw new Error('Face detection models could not be loaded.');
       }
+      if (FACE_STARTUP_OPTIMIZATIONS_ENABLED) return warmUpFaceNetModels();
     }).catch(error => {
       modelsPromise = null;
       throw error;
     });
+    void promise.then(
+      () => {
+        if (FACE_DIAGNOSTICS_ENABLED) {
+          console.info(`[FaceNet] Models loaded${FACE_STARTUP_OPTIMIZATIONS_ENABLED ? ' and warmed' : ''} in ${(performance.now() - startedAt).toFixed(0)}ms.`);
+        }
+      },
+      () => undefined
+    );
     modelsPromise = promise;
   }
   return modelsPromise;
+}
+
+async function warmUpFaceNetModels(): Promise<void> {
+  const warmupFrame = document.createElement('canvas');
+  warmupFrame.width = 320;
+  warmupFrame.height = 320;
+
+  if (faceapi.nets.tinyFaceDetector.isLoaded) {
+    await faceapi.detectAllFaces(
+      warmupFrame,
+      new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: MIN_LIVE_DETECTION_SCORE })
+    );
+  }
+  if (faceapi.nets.ssdMobilenetv1.isLoaded) {
+    await faceapi.detectAllFaces(
+      warmupFrame,
+      new faceapi.SsdMobilenetv1Options({ minConfidence: MIN_LIVE_DETECTION_SCORE })
+    );
+  }
+  const landmarks = await faceapi.nets.faceLandmark68Net.forward(warmupFrame);
+  landmarks.dispose();
+  await faceapi.nets.faceRecognitionNet.computeFaceDescriptor(warmupFrame);
 }
 
 export type FaceDescriptorMode = 'legacy' | 'landmark_aligned' | 'keypoint_aligned';
@@ -422,7 +471,8 @@ export function analyzeFaceRegionQuality(
   input: HTMLVideoElement | HTMLCanvasElement,
   region: FaceDetectionRegion,
   minFaceSize = 60,
-  minSharpnessVariance = 0
+  minSharpnessVariance = 0,
+  reusableCanvas?: HTMLCanvasElement
 ): FaceRegionQualityAssessment {
   const isVideo = typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement;
   const inputWidth = isVideo ? input.videoWidth : input.width;
@@ -433,9 +483,9 @@ export function analyzeFaceRegionQuality(
   const cropY = Math.max(0, Math.floor(region.y - paddingY));
   const cropRight = Math.min(inputWidth, Math.ceil(region.x + region.width + paddingX));
   const cropBottom = Math.min(inputHeight, Math.ceil(region.y + region.height + paddingY));
-  const crop = document.createElement('canvas');
-  crop.width = cropRight - cropX;
-  crop.height = cropBottom - cropY;
+  const crop = reusableCanvas ?? document.createElement('canvas');
+  if (crop.width !== cropRight - cropX) crop.width = cropRight - cropX;
+  if (crop.height !== cropBottom - cropY) crop.height = cropBottom - cropY;
   let sharpnessVariance = 0;
   let assessmentFailed = false;
   try {

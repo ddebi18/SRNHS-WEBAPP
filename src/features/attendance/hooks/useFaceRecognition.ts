@@ -37,14 +37,20 @@ import {
 } from '../lib/faceTracking';
 import { releaseFaceScan, tryAcquireFaceScan } from '../lib/faceScanLock';
 import { faceBoxOverlap } from '@/lib/faceOverlayGeometry';
+import {
+  FACE_DIAGNOSTICS_ENABLED,
+  FACE_STARTUP_OPTIMIZATIONS_ENABLED,
+  getFaceDescriptorBudget,
+  isMobileFaceOptimizationActive,
+} from '../lib/faceOptimizationFlags';
 
 export type { RecognitionStatusInput } from '../lib/recognitionStatus';
 export { computeCosineSimilarity, computeCosineDistance } from '../lib/faceNetMatcher';
 
 const SCAN_INTERVAL_MS = 200;
+const STARTUP_TIMEOUT_MS = 15_000;
 const SCAN_OVERRUN_COOLDOWN_MIN_MS = 100;
 const MATCH_SWITCH_STABILITY_FRAMES = 5;
-const MAX_DESCRIPTORS_PER_SCAN = 3;
 const CONFIRMED_REVERIFY_INTERVAL_MS = 1000;
 const FAST_CONFIRM_ENABLED = import.meta.env.VITE_FACE_FAST_CONFIRM === 'true';
 const QUALITY_GATE_ENABLED = import.meta.env.VITE_FACE_QUALITY_GATE !== 'false';
@@ -128,6 +134,15 @@ interface FaceRecognitionTrack {
 
 type LiveFaceBoxesRef = Readonly<{ current: readonly FaceDetectionRegion[] }>;
 
+export type RecognitionStartupStage = 'idle' | 'loading_models' | 'loading_students' | 'ready' | 'error';
+
+export interface RecognitionStartupTimings {
+  faceApiModelMs: number | null;
+  rosterFetchMs: number | null;
+  legacyDescriptorMs: number | null;
+  firstRecognitionMs: number | null;
+}
+
 export interface UseFaceRecognitionReturn {
   isLoading: boolean;
   isReady: boolean;
@@ -144,6 +159,9 @@ export interface UseFaceRecognitionReturn {
   nativeIOD: number;
   qualityGuidance: string | null;
   qualityPassed: boolean;
+  startupStage: RecognitionStartupStage;
+  startupTimings: RecognitionStartupTimings;
+  retryInitialization: () => void;
 }
 
 function toLabeledGallery(labeled: faceapi.LabeledFaceDescriptors[]): LabeledDescriptors[] {
@@ -172,6 +190,14 @@ export function useFaceRecognition(
   const [nativeIOD, setNativeIOD] = useState<number>(0);
   const [qualityGuidance, setQualityGuidance] = useState<string | null>(null);
   const [qualityPassed, setQualityPassed] = useState<boolean>(false);
+  const [startupStage, setStartupStage] = useState<RecognitionStartupStage>('idle');
+  const [startupTimings, setStartupTimings] = useState<RecognitionStartupTimings>({
+    faceApiModelMs: null,
+    rosterFetchMs: null,
+    legacyDescriptorMs: null,
+    firstRecognitionMs: null,
+  });
+  const [retryToken, setRetryToken] = useState(0);
 
   const galleryRef = useRef<LabeledDescriptors[]>([]);
   const faceTracksRef = useRef<FaceRecognitionTrack[]>([]);
@@ -181,10 +207,17 @@ export function useFaceRecognition(
   const lastMatchResultRef = useRef<{ reason: string; distance: number; secondDistance: number } | null>(null);
   const lastBoxRef = useRef<FaceRecognitionBox | null>(null);
   const overlapDebugUntilRef = useRef(0);
+  const firstRecognitionLoggedRef = useRef(false);
 
   const isLiveRef = useRef(false);
   const studentsRef = useRef<any[]>([]);
   const lastConfirmedMatchRef = useRef<{ student: RecognizedStudent; timestamp: number } | null>(null);
+
+  const retryInitialization = useCallback(() => {
+    setError(null);
+    setStartupStage('loading_models');
+    setRetryToken(current => current + 1);
+  }, []);
 
   const applyDetectionOverlay = useCallback((
     detection: faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }> | FaceNetLiveDetection,
@@ -300,8 +333,38 @@ export function useFaceRecognition(
 
   useEffect(() => {
     let cancelled = false;
+    let startupTimedOut = false;
+    let initializationFailed = false;
+    let startupTimer: ReturnType<typeof setTimeout> | null = null;
     let interval: ReturnType<typeof setTimeout> | null = null;
     let videoFrameHandle: number | null = null;
+    let finishVisibilityWait: (() => void) | null = null;
+    let visibilityHandler: (() => void) | null = null;
+
+    const shouldPause = () =>
+      isMobileFaceOptimizationActive() && document.visibilityState === 'hidden';
+
+    const clearStartupTimer = () => {
+      if (startupTimer) clearTimeout(startupTimer);
+      startupTimer = null;
+    };
+
+    const waitForVisiblePage = () => new Promise<void>(resolve => {
+      if (!shouldPause()) {
+        resolve();
+        return;
+      }
+      const finish = () => {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+        finishVisibilityWait = null;
+        resolve();
+      };
+      const onVisibilityChange = () => {
+        if (!shouldPause()) finish();
+      };
+      finishVisibilityWait = finish;
+      document.addEventListener('visibilitychange', onVisibilityChange);
+    });
 
     const cancelScheduledScan = () => {
       if (interval) {
@@ -329,6 +392,13 @@ export function useFaceRecognition(
       setNativeIOD(0);
       setQualityGuidance(null);
       setQualityPassed(false);
+      setStartupStage('idle');
+      setStartupTimings({
+        faceApiModelMs: null,
+        rosterFetchMs: null,
+        legacyDescriptorMs: null,
+        firstRecognitionMs: null,
+      });
       galleryRef.current = [];
       faceTracksRef.current = [];
       nextFaceTrackIdRef.current = 1;
@@ -346,69 +416,161 @@ export function useFaceRecognition(
     const initialize = async () => {
       setIsLoading(true);
       setError(null);
+      setStartupStage('loading_models');
       setDiagnosticInfo('Loading FaceNet models…');
-      console.log('[FaceRecognition] Starting initialization…');
+      if (FACE_DIAGNOSTICS_ENABLED) console.info('[FaceRecognition] Starting initialization…');
+
+      if (FACE_STARTUP_OPTIMIZATIONS_ENABLED) {
+        startupTimer = setTimeout(() => {
+          startupTimedOut = true;
+          setIsLoading(false);
+          setStartupStage('error');
+          const timeoutMessage = `Face recognition startup timed out after ${STARTUP_TIMEOUT_MS / 1000} seconds. Check the network and retry.`;
+          setError(timeoutMessage);
+          setDiagnosticInfo(timeoutMessage);
+        }, STARTUP_TIMEOUT_MS);
+      }
 
       try {
-        await ensureFaceNetModels();
-        setDiagnosticInfo('Models loaded. Fetching enrolled students…');
-
-        const students = await fetchRegisteredStudents();
+        let students: Awaited<ReturnType<typeof fetchRegisteredStudents>>;
+        if (FACE_STARTUP_OPTIMIZATIONS_ENABLED) {
+          let modelsReady = false;
+          let rosterReady = false;
+          const updateProgress = () => {
+            if (cancelled || startupTimedOut || initializationFailed) return;
+            setStartupStage(!modelsReady ? 'loading_models' : !rosterReady ? 'loading_students' : 'loading_students');
+          };
+          const modelPromise = (async () => {
+            const startedAt = performance.now();
+            await ensureFaceNetModels();
+            const durationMs = performance.now() - startedAt;
+            if (!cancelled && !startupTimedOut) {
+              setStartupTimings(current => ({ ...current, faceApiModelMs: durationMs }));
+              if (FACE_DIAGNOSTICS_ENABLED) console.info(`[FaceRecognition] Face-api model stage: ${durationMs.toFixed(0)}ms.`);
+            }
+            modelsReady = true;
+            updateProgress();
+          })();
+          const rosterPromise = (async () => {
+            const startedAt = performance.now();
+            try {
+              return await fetchRegisteredStudents();
+            } finally {
+              const durationMs = performance.now() - startedAt;
+              if (!cancelled && !startupTimedOut) {
+                setStartupTimings(current => ({ ...current, rosterFetchMs: durationMs }));
+                if (FACE_DIAGNOSTICS_ENABLED) console.info(`[FaceRecognition] Student roster stage: ${durationMs.toFixed(0)}ms.`);
+              }
+              rosterReady = true;
+              updateProgress();
+            }
+          })();
+          [, students] = await Promise.all([modelPromise, rosterPromise]);
+        } else {
+          const modelStartedAt = performance.now();
+          await ensureFaceNetModels();
+          if (cancelled || startupTimedOut) return;
+          setStartupTimings(current => ({ ...current, faceApiModelMs: performance.now() - modelStartedAt }));
+          const rosterStartedAt = performance.now();
+          students = await fetchRegisteredStudents();
+          if (cancelled || startupTimedOut) return;
+          setStartupTimings(current => ({ ...current, rosterFetchMs: performance.now() - rosterStartedAt }));
+        }
+        clearStartupTimer();
+        if (cancelled || startupTimedOut) return;
         studentsRef.current = students;
-        setDiagnosticInfo(`Found ${students.length} enrolled student(s). Extracting FaceNet descriptors…`);
+        setStartupStage('loading_students');
+        setDiagnosticInfo(`Found ${students.length} enrolled student(s). Loading FaceNet descriptors…`);
 
         if (students.length === 0) {
           setIsLoading(false);
+          setStartupStage('error');
           const msg = 'No registered students found. Enroll a student and register their face first.';
           setError(msg);
           setDiagnosticInfo(msg);
           return;
         }
 
-        const labeledDescriptors = (await Promise.all(students.map(async student => {
-          if (
-            student.faceDescriptorVersion === FACE_DESCRIPTOR_VERSION &&
-            student.faceDescriptors &&
-            student.faceDescriptors.length > 0
-          ) {
-            const floats = student.faceDescriptors
-              .map(deserializeFaceNetDescriptor)
-              .filter((descriptor): descriptor is Float32Array => descriptor !== null);
-            if (floats.length > 0) {
-              return new faceapi.LabeledFaceDescriptors(student.id, floats);
-            }
-          }
-
+        const getStudentPhotoUrls = (student: typeof students[number]) => {
           const photoUrlSet = new Set<string>();
           if (student.registeredPhotos?.front) photoUrlSet.add(student.registeredPhotos.front);
           if (student.registeredPhotos?.left) photoUrlSet.add(student.registeredPhotos.left);
           if (student.registeredPhotos?.right) photoUrlSet.add(student.registeredPhotos.right);
           if (photoUrlSet.size === 0 && student.photoUrl) photoUrlSet.add(student.photoUrl);
+          return Array.from(photoUrlSet);
+        };
 
-          const photoUrls = Array.from(photoUrlSet);
-          if (photoUrls.length === 0) return null;
+        const descriptorStageStartedAt = performance.now();
+        const missingDescriptorStudents: typeof students = [];
+        const labeledDescriptors = FACE_STARTUP_OPTIMIZATIONS_ENABLED
+          ? students.flatMap(student => {
+              if (
+                student.faceDescriptorVersion === FACE_DESCRIPTOR_VERSION &&
+                student.faceDescriptors &&
+                student.faceDescriptors.length > 0
+              ) {
+                const floats = student.faceDescriptors
+                  .map(deserializeFaceNetDescriptor)
+                  .filter((descriptor): descriptor is Float32Array => descriptor !== null);
+                if (floats.length > 0) {
+                  return [new faceapi.LabeledFaceDescriptors(student.id, floats)];
+                }
+              }
+              missingDescriptorStudents.push(student);
+              return [];
+            })
+          : (await Promise.all(students.map(async student => {
+              if (
+                student.faceDescriptorVersion === FACE_DESCRIPTOR_VERSION &&
+                student.faceDescriptors &&
+                student.faceDescriptors.length > 0
+              ) {
+                const floats = student.faceDescriptors
+                  .map(deserializeFaceNetDescriptor)
+                  .filter((descriptor): descriptor is Float32Array => descriptor !== null);
+                if (floats.length > 0) {
+                  return new faceapi.LabeledFaceDescriptors(student.id, floats);
+                }
+              }
 
-          const descriptors: Float32Array[] = [];
-          for (const url of photoUrls) {
-            try {
-              const image = await loadImage(url);
-              const desc = await extractDescriptorFromImage(image);
-              if (desc) descriptors.push(desc);
-            } catch (imageError) {
-              console.warn(`[FaceRecognition] Photo descriptor note for ${student.name}:`, imageError);
-            }
+              const photoUrls = getStudentPhotoUrls(student);
+              if (photoUrls.length === 0) return null;
+
+              const descriptors: Float32Array[] = [];
+              for (const url of photoUrls) {
+                try {
+                  const image = await loadImage(url);
+                  const desc = await extractDescriptorFromImage(image);
+                  if (desc) descriptors.push(desc);
+                } catch (imageError) {
+                  console.warn(`[FaceRecognition] Photo descriptor note for ${student.name}:`, imageError);
+                }
+              }
+
+              if (descriptors.length === 0) return null;
+
+              assignStudentFaceDescriptors(student.id, descriptors);
+              return new faceapi.LabeledFaceDescriptors(student.id, descriptors);
+            }))).filter((descriptor): descriptor is faceapi.LabeledFaceDescriptors => Boolean(descriptor));
+
+        if (cancelled || startupTimedOut) return;
+        if (!FACE_STARTUP_OPTIMIZATIONS_ENABLED) {
+          const durationMs = performance.now() - descriptorStageStartedAt;
+          setStartupTimings(current => ({ ...current, legacyDescriptorMs: durationMs }));
+          if (FACE_DIAGNOSTICS_ENABLED) console.info(`[FaceRecognition] Legacy descriptor stage: ${durationMs.toFixed(0)}ms.`);
+        }
+
+        if (FACE_STARTUP_OPTIMIZATIONS_ENABLED) {
+          const pendingWithPhotos = missingDescriptorStudents.filter(student => getStudentPhotoUrls(student).length > 0);
+          if (FACE_DIAGNOSTICS_ENABLED) {
+            console.info(`[FaceRecognition] ${missingDescriptorStudents.length} student(s) lack saved FaceNet descriptors; ${pendingWithPhotos.length} legacy photo fallback(s) queued after Ready.`);
           }
+          missingDescriptorStudents.splice(0, missingDescriptorStudents.length, ...pendingWithPhotos);
+        }
 
-          if (descriptors.length === 0) return null;
-
-          assignStudentFaceDescriptors(student.id, descriptors);
-          return new faceapi.LabeledFaceDescriptors(student.id, descriptors);
-        }))).filter((descriptor): descriptor is faceapi.LabeledFaceDescriptors => Boolean(descriptor));
-
-        if (cancelled) return;
-
-        if (labeledDescriptors.length === 0) {
+        if (labeledDescriptors.length === 0 && missingDescriptorStudents.length === 0) {
           setIsLoading(false);
+          setStartupStage('error');
           const msg = `No FaceNet descriptors could be extracted from ${students.length} enrolled photo(s). Re-register with a clear, well-lit face.`;
           setError(msg);
           setDiagnosticInfo(msg);
@@ -418,11 +580,15 @@ export function useFaceRecognition(
         galleryRef.current = toLabeledGallery(labeledDescriptors);
         setIsLoading(false);
         setIsReady(true);
+        setStartupStage('ready');
         const descriptorCount = labeledDescriptors.reduce(
           (total, entry) => total + entry.descriptors.length,
           0
         );
-        const readyMsg = `Ready — FaceNet scanning ${labeledDescriptors.length} student(s), ${descriptorCount} descriptors, threshold ${FACENET_DISTANCE_THRESHOLD}`;
+        const pendingMessage = missingDescriptorStudents.length > 0
+          ? `; ${missingDescriptorStudents.length} legacy photo descriptor(s) queued after Ready`
+          : '';
+        const readyMsg = `Ready — FaceNet scanning ${labeledDescriptors.length} student(s), ${descriptorCount} descriptors, threshold ${FACENET_DISTANCE_THRESHOLD}${pendingMessage}`;
         setDiagnosticInfo(readyMsg);
 
         let scrfdSession: Awaited<ReturnType<typeof getScrfdSession>> | null = null;
@@ -433,7 +599,7 @@ export function useFaceRecognition(
             console.warn('[FaceRecognition] SCRFD unavailable; using FaceNet detectors:', scrfdError);
           }
         }
-        if (cancelled) return;
+        if (cancelled || startupTimedOut) return;
         overlapDebugUntilRef.current = import.meta.env.DEV ? performance.now() + 5000 : 0;
         let regionResultLogCount = 0;
         let qualityScanLogCount = 0;
@@ -450,6 +616,11 @@ export function useFaceRecognition(
           skippedByDescriptor: 0,
         };
         let cropAttemptLogCount = 0;
+        let performanceWindowStartedAt = performance.now();
+        let scansInPerformanceWindow = 0;
+        let updatesInPerformanceWindow = 0;
+        let scanDurationInPerformanceWindow = 0;
+        const mobileQualityCanvasPool: HTMLCanvasElement[] = [];
         const cropAttemptCounts = {
           no_face_in_crop: 0,
           inference_error: 0,
@@ -466,8 +637,9 @@ export function useFaceRecognition(
 
         const scheduleScan = (delay: number) => {
           cancelScheduledScan();
+          if (shouldPause()) return;
           const startOnVideoFrame = () => {
-            if (cancelled) return;
+            if (cancelled || shouldPause()) return;
             const video = videoRef.current;
             if (video && typeof video.requestVideoFrameCallback === 'function') {
               videoFrameHandle = video.requestVideoFrameCallback(() => {
@@ -488,6 +660,8 @@ export function useFaceRecognition(
           const scanStartedAt = performance.now();
           const video = videoRef.current;
           if (
+            cancelled ||
+            shouldPause() ||
             !video ||
             galleryRef.current.length === 0 ||
             video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
@@ -532,9 +706,13 @@ export function useFaceRecognition(
             }
 
             const timestamp = Date.now();
-            const qualityAssessments = regions.map(region => {
+            const mobileOptimizationActive = isMobileFaceOptimizationActive();
+            const qualityAssessments = regions.map((region, index) => {
               try {
-                return analyzeFaceRegionQuality(video, region);
+                const reusableCanvas = mobileOptimizationActive
+                  ? (mobileQualityCanvasPool[index] ??= document.createElement('canvas'))
+                  : undefined;
+                return analyzeFaceRegionQuality(video, region, 60, 0, reusableCanvas);
               } catch (error) {
                 if (import.meta.env.DEV) {
                   console.warn('[FaceRecognition] Quality assessment threw; allowing descriptor attempt:', error);
@@ -617,7 +795,7 @@ export function useFaceRecognition(
                 })),
                 timestamp,
                 descriptorRotationCursorRef.current,
-                MAX_DESCRIPTORS_PER_SCAN,
+                getFaceDescriptorBudget(isMobileFaceOptimizationActive()),
                 CONFIRMED_REVERIFY_INTERVAL_MS
               );
               descriptorRotationCursorRef.current = selection.nextRotationCursor;
@@ -657,6 +835,7 @@ export function useFaceRecognition(
                   allowRetries
                 );
               }));
+              if (cancelled || shouldPause()) return;
               const resultByIndex = new Map(
                 selectedIndices.map((index, selectedIndex) => [index, selectedResults[selectedIndex]!])
               );
@@ -1058,10 +1237,19 @@ export function useFaceRecognition(
             const uniqueStudents = Array.from(
               new Map(confirmedStudents.map(student => [student.id, student])).values()
             );
+            if (uniqueStudents.length > 0 && !firstRecognitionLoggedRef.current) {
+              firstRecognitionLoggedRef.current = true;
+              const durationMs = performance.now();
+              setStartupTimings(current => ({ ...current, firstRecognitionMs: durationMs }));
+              if (FACE_DIAGNOSTICS_ENABLED) {
+                console.info(`[FaceRecognition] Page-open to first successful recognition: ${durationMs.toFixed(0)}ms.`);
+              }
+            }
             const primaryStudent = recognizedItems
               .find(item => item.student !== null)?.student ?? null;
 
             setRecognizedFaces(recognizedItems);
+            updatesInPerformanceWindow++;
             setMatchedStudents(uniqueStudents);
             setMatchedStudent(primaryStudent);
             setQualityPassed(true);
@@ -1138,9 +1326,9 @@ export function useFaceRecognition(
               };
               if (regionResultLogCount < 8) {
                 regionResultLogCount += 1;
-                console.info('[FaceRecognition] Region results', scanDiagnostics);
+                if (FACE_DIAGNOSTICS_ENABLED) console.info('[FaceRecognition] Region results', scanDiagnostics);
               } else {
-                console.debug('[FaceRecognition] Scan diagnostics', scanDiagnostics);
+                if (FACE_DIAGNOSTICS_ENABLED) console.debug('[FaceRecognition] Scan diagnostics', scanDiagnostics);
               }
             }
             setIsLive(uniqueStudents.length > 0);
@@ -1161,7 +1349,21 @@ export function useFaceRecognition(
             console.warn('[FaceRecognition] Live scan failed:', scanError);
           } finally {
             releaseFaceScan(processingRef);
-            if (!cancelled) {
+            scansInPerformanceWindow++;
+            scanDurationInPerformanceWindow += performance.now() - scanStartedAt;
+            const performanceWindowMs = performance.now() - performanceWindowStartedAt;
+            if (FACE_DIAGNOSTICS_ENABLED && performanceWindowMs >= 5000) {
+              console.info('[FaceRecognition] Performance window', {
+                averageScanMs: Number((scanDurationInPerformanceWindow / scansInPerformanceWindow).toFixed(1)),
+                scansPerSecond: Number((scansInPerformanceWindow * 1000 / performanceWindowMs).toFixed(2)),
+                recognitionUpdatesPerSecond: Number((updatesInPerformanceWindow * 1000 / performanceWindowMs).toFixed(2)),
+              });
+              performanceWindowStartedAt = performance.now();
+              scansInPerformanceWindow = 0;
+              updatesInPerformanceWindow = 0;
+              scanDurationInPerformanceWindow = 0;
+            }
+            if (!cancelled && !shouldPause()) {
               const elapsed = performance.now() - scanStartedAt;
               const delay = elapsed > SCAN_INTERVAL_MS
                 ? scanOverrunCooldownMs(elapsed)
@@ -1170,10 +1372,62 @@ export function useFaceRecognition(
             }
           }
         };
+        visibilityHandler = () => {
+          if (shouldPause()) {
+            cancelScheduledScan();
+          } else {
+            scheduleScan(0);
+          }
+        };
+        document.addEventListener('visibilitychange', visibilityHandler);
         scheduleScan(SCAN_INTERVAL_MS);
+
+        if (missingDescriptorStudents.length > 0) {
+          void (async () => {
+            const descriptorStartedAt = performance.now();
+            for (const student of missingDescriptorStudents) {
+              await waitForVisiblePage();
+              if (cancelled) return;
+              await new Promise(resolve => setTimeout(resolve, 150));
+              if (cancelled) return;
+
+              const descriptors: Float32Array[] = [];
+              for (const url of getStudentPhotoUrls(student)) {
+                await waitForVisiblePage();
+                if (cancelled) return;
+                try {
+                  const image = await loadImage(url);
+                  const descriptor = await extractDescriptorFromImage(image);
+                  if (descriptor) descriptors.push(descriptor);
+                } catch (imageError) {
+                  console.warn(`[FaceRecognition] Photo descriptor note for ${student.name}:`, imageError);
+                }
+              }
+
+              if (cancelled) return;
+              if (descriptors.length > 0) {
+                assignStudentFaceDescriptors(student.id, descriptors);
+                galleryRef.current = [
+                  ...galleryRef.current.filter(entry => entry.label !== student.id),
+                  { label: student.id, descriptors },
+                ];
+              }
+            }
+            const durationMs = performance.now() - descriptorStartedAt;
+            setStartupTimings(current => ({ ...current, legacyDescriptorMs: durationMs }));
+            if (FACE_DIAGNOSTICS_ENABLED) {
+              console.info(`[FaceRecognition] Deferred legacy descriptor computation completed in ${durationMs.toFixed(0)}ms.`);
+            }
+          })().catch(error => {
+            if (!cancelled) console.error('[FaceRecognition] Deferred descriptor computation failed:', error);
+          });
+        }
       } catch (initializationError: any) {
-        if (!cancelled) {
+        clearStartupTimer();
+        initializationFailed = true;
+        if (!cancelled && !startupTimedOut) {
           setIsLoading(false);
+          setStartupStage('error');
           const msg = initializationError?.message || 'Face recognition could not be initialized.';
           setError(msg);
           setDiagnosticInfo(`Init error: ${msg}`);
@@ -1186,6 +1440,9 @@ export function useFaceRecognition(
 
     return () => {
       cancelled = true;
+      clearStartupTimer();
+      finishVisibilityWait?.();
+      if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
       cancelScheduledScan();
       galleryRef.current = [];
       faceTracksRef.current = [];
@@ -1195,7 +1452,7 @@ export function useFaceRecognition(
       lastConfirmedMatchRef.current = null;
       lastBoxRef.current = null;
     };
-  }, [active, applyDetectionOverlay, resolveMatch, videoRef, detectedFaceBoxesRef]);
+  }, [active, applyDetectionOverlay, resolveMatch, videoRef, detectedFaceBoxesRef, retryToken]);
 
   return {
     isLoading,
@@ -1213,5 +1470,8 @@ export function useFaceRecognition(
     nativeIOD,
     qualityGuidance,
     qualityPassed,
+    startupStage,
+    startupTimings,
+    retryInitialization,
   };
 }

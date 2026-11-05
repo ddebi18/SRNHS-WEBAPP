@@ -8,6 +8,11 @@ import {
   ScrfdFaceBox,
   visionWasmFileset,
 } from '../lib/scrfdDetector';
+import {
+  FACE_DIAGNOSTICS_ENABLED,
+  FACE_STARTUP_OPTIMIZATIONS_ENABLED,
+  isMobileFaceOptimizationActive,
+} from '@/features/attendance/lib/faceOptimizationFlags';
 
 export interface FaceBox {
   x: number;
@@ -29,6 +34,7 @@ export interface UseFaceDetectionReturn {
   allFaceBoxesRef: React.MutableRefObject<FaceBox[]>;
   warningMessage: string | null;
   detectorError: string | null;
+  startupTimings: { scrfdLoadMs: number | null; mediaPipeLoadMs: number | null };
 }
 
 const LIVE_FACE_SCAN_INTERVAL_MS = 200;
@@ -49,6 +55,10 @@ export function useFaceDetection(
   const [allFaceBoxes, setAllFaceBoxes] = useState<FaceBox[]>([]);
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
   const [detectorError, setDetectorError] = useState<string | null>(null);
+  const [startupTimings, setStartupTimings] = useState<UseFaceDetectionReturn['startupTimings']>({
+    scrfdLoadMs: null,
+    mediaPipeLoadMs: null,
+  });
 
   const allFaceBoxesRef = useRef<FaceBox[]>([]);
   const scrfdSessionRef = useRef<ort.InferenceSession | null>(null);
@@ -62,6 +72,78 @@ export function useFaceDetection(
 
   useEffect(() => {
     let cancelled = false;
+    let videoFrameHandle: number | null = null;
+    let mediaPipeLoadingPromise: Promise<FaceDetector | null> | null = null;
+    let visibilityHandler: (() => void) | null = null;
+
+    const shouldPause = () =>
+      isMobileFaceOptimizationActive() && document.visibilityState === 'hidden';
+
+    const cancelScheduledDetection = () => {
+      if (intervalRef.current) clearTimeout(intervalRef.current);
+      intervalRef.current = null;
+      const video = videoRef.current;
+      if (videoFrameHandle !== null && video && 'cancelVideoFrameCallback' in video) {
+        video.cancelVideoFrameCallback(videoFrameHandle);
+        videoFrameHandle = null;
+      }
+    };
+
+    const ensureMediaPipeDetector = (): Promise<FaceDetector | null> => {
+      if (mediaPipeDetectorRef.current) return Promise.resolve(mediaPipeDetectorRef.current);
+      if (mediaPipeLoadingPromise) return mediaPipeLoadingPromise;
+
+      const loadStartedAt = performance.now();
+      mediaPipeLoadingPromise = (async () => {
+        const detectorOptions = {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+            delegate: 'GPU' as const,
+          },
+          runningMode: 'VIDEO' as const,
+          minDetectionConfidence: 0.40,
+          minSuppressionThreshold: 0.35,
+        };
+        let detector: FaceDetector;
+        try {
+          detector = await FaceDetector.createFromOptions(visionWasmFileset, detectorOptions);
+        } catch {
+          detector = await FaceDetector.createFromOptions(visionWasmFileset, {
+            ...detectorOptions,
+            baseOptions: { ...detectorOptions.baseOptions, delegate: 'CPU' },
+          });
+        }
+
+        if (cancelled) {
+          detector.close();
+          return null;
+        }
+
+        if (FACE_STARTUP_OPTIMIZATIONS_ENABLED) {
+          const warmupFrame = document.createElement('canvas');
+          warmupFrame.width = 64;
+          warmupFrame.height = 64;
+          detector.detectForVideo(warmupFrame, performance.now());
+        }
+        mediaPipeDetectorRef.current = detector;
+        const durationMs = performance.now() - loadStartedAt;
+        setStartupTimings(current => ({ ...current, mediaPipeLoadMs: durationMs }));
+        if (import.meta.env.DEV) {
+          if (FACE_DIAGNOSTICS_ENABLED) {
+            console.info(`[FaceDetection] MediaPipe fallback loaded and warmed in ${durationMs.toFixed(0)}ms.`);
+          }
+        }
+        return detector;
+      })().catch(error => {
+        mediaPipeLoadingPromise = null;
+        if (!cancelled) {
+          console.warn('[FaceDetection] MediaPipe fallback initialization failed:', error);
+        }
+        return null;
+      });
+
+      return mediaPipeLoadingPromise;
+    };
 
     const resetDetection = () => {
       missedFramesRef.current = 0;
@@ -74,15 +156,17 @@ export function useFaceDetection(
     };
 
     if (!active || !videoRef.current) {
+      cancelScheduledDetection();
       resetDetection();
       setWarningMessage(null);
       setDetectorError(null);
+      setStartupTimings({ scrfdLoadMs: null, mediaPipeLoadMs: null });
       return;
     }
 
     const checkFace = async () => {
       const video = videoRef.current;
-      if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      if (shouldPause() || !video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
       if (isProcessingRef.current) return;
 
       isProcessingRef.current = true;
@@ -115,13 +199,15 @@ export function useFaceDetection(
         }
 
         // Avoid running a second model on every empty SCRFD frame in the live camera.
-        const shouldUseMediaPipe =
-          scrfdFailed ||
-          !scrfdSessionRef.current ||
-          options?.useMediaPipeFallback !== false;
-        if (detectedBoxes.length === 0 && shouldUseMediaPipe && mediaPipeDetectorRef.current) {
-          const result = mediaPipeDetectorRef.current.detectForVideo(video, performance.now());
-          if (result.detections && result.detections.length > 0) {
+        const shouldUseMediaPipe = FACE_STARTUP_OPTIMIZATIONS_ENABLED
+          ? scrfdFailed || !scrfdSessionRef.current
+          : scrfdFailed ||
+            !scrfdSessionRef.current ||
+            options?.useMediaPipeFallback !== false;
+        if (detectedBoxes.length === 0 && shouldUseMediaPipe) {
+          const fallback = mediaPipeDetectorRef.current ?? await ensureMediaPipeDetector();
+          const result = fallback?.detectForVideo(video, performance.now());
+          if (result?.detections && result.detections.length > 0) {
             for (const det of result.detections) {
               const b = det.boundingBox;
               const score = det.categories?.[0]?.score;
@@ -140,6 +226,8 @@ export function useFaceDetection(
             }
           }
         }
+
+        if (cancelled || shouldPause()) return;
 
         // Find primary locked face by size and frame-to-frame continuity
         let bestBox: FaceBox | null = null;
@@ -226,6 +314,7 @@ export function useFaceDetection(
 
     const initializeDetectors = async () => {
       // Step A: Load SCRFD Session
+      const scrfdLoadStartedAt = performance.now();
       try {
         console.log('[FaceDetection] Initializing SCRFD ONNX Detector...');
         const scrfdSession = await getScrfdSession(
@@ -233,41 +322,20 @@ export function useFaceDetection(
         );
         if (!cancelled) {
           scrfdSessionRef.current = scrfdSession;
-          console.log('[FaceDetection] SCRFD Detector ready.');
+          const durationMs = performance.now() - scrfdLoadStartedAt;
+          setStartupTimings(current => ({ ...current, scrfdLoadMs: durationMs }));
+          if (FACE_DIAGNOSTICS_ENABLED) console.info(`[FaceDetection] SCRFD ready in ${durationMs.toFixed(0)}ms.`);
         }
       } catch (scrfdError) {
+        setStartupTimings(current => ({
+          ...current,
+          scrfdLoadMs: performance.now() - scrfdLoadStartedAt,
+        }));
         console.warn('[FaceDetection] SCRFD initialization failed; proceeding to MediaPipe fallback:', scrfdError);
       }
 
-      // Step B: Load MediaPipe FaceDetector as secondary fallback
-      try {
-        const detectorOptions = {
-          baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
-            delegate: 'GPU' as const,
-          },
-          runningMode: 'VIDEO' as const,
-          minDetectionConfidence: 0.40,
-          minSuppressionThreshold: 0.35,
-        };
-
-        let mpDetector: FaceDetector;
-        try {
-          mpDetector = await FaceDetector.createFromOptions(visionWasmFileset, detectorOptions);
-        } catch (gpuError) {
-          mpDetector = await FaceDetector.createFromOptions(visionWasmFileset, {
-            ...detectorOptions,
-            baseOptions: { ...detectorOptions.baseOptions, delegate: 'CPU' },
-          });
-        }
-
-        if (cancelled) {
-          mpDetector.close();
-          return;
-        }
-        mediaPipeDetectorRef.current = mpDetector;
-      } catch (mpError) {
-        console.warn('[FaceDetection] MediaPipe initialization failed:', mpError);
+      if ((!FACE_STARTUP_OPTIMIZATIONS_ENABLED || !scrfdSessionRef.current) && !cancelled) {
+        await ensureMediaPipeDetector();
       }
 
       if (cancelled) return;
@@ -280,28 +348,53 @@ export function useFaceDetection(
       }
 
       setDetectorError(null);
+      const scheduleDetectionLoop = (delay: number) => {
+        cancelScheduledDetection();
+        intervalRef.current = setTimeout(() => {
+          intervalRef.current = null;
+          if (cancelled || shouldPause()) return;
+          const video = videoRef.current;
+          if (isMobileFaceOptimizationActive() && video && typeof video.requestVideoFrameCallback === 'function') {
+            videoFrameHandle = video.requestVideoFrameCallback(() => {
+              videoFrameHandle = null;
+              void runDetectionLoop();
+            });
+          } else {
+            void runDetectionLoop();
+          }
+        }, delay);
+      };
+
       const runDetectionLoop = async () => {
+        if (cancelled || shouldPause()) return;
         const startedAt = performance.now();
         await checkFace();
-        if (cancelled) return;
+        if (cancelled || shouldPause()) return;
         console.debug('[FaceDetection] Frame diagnostics', {
           detectedBoxes: allFaceBoxesRef.current.length,
           durationMs: performance.now() - startedAt,
         });
         const delay = Math.max(0, LIVE_FACE_SCAN_INTERVAL_MS - (performance.now() - startedAt));
-        intervalRef.current = setTimeout(() => {
-          void runDetectionLoop();
-        }, delay);
+        scheduleDetectionLoop(delay);
       };
+
+      visibilityHandler = () => {
+        if (shouldPause()) {
+          cancelScheduledDetection();
+        } else {
+          void runDetectionLoop();
+        }
+      };
+      document.addEventListener('visibilitychange', visibilityHandler);
       void runDetectionLoop();
     };
 
-    initializeDetectors();
+    void initializeDetectors();
 
     return () => {
       cancelled = true;
-      if (intervalRef.current) clearTimeout(intervalRef.current);
-      intervalRef.current = null;
+      cancelScheduledDetection();
+      if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
       mediaPipeDetectorRef.current?.close();
       mediaPipeDetectorRef.current = null;
     };
@@ -322,5 +415,6 @@ export function useFaceDetection(
     allFaceBoxesRef,
     warningMessage,
     detectorError,
+    startupTimings,
   };
 }

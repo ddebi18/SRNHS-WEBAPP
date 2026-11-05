@@ -3,6 +3,11 @@ import ortWasmBinaryUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
 import ortWasmModuleUrl from 'onnxruntime-web/ort-wasm-simd-threaded.mjs?url';
 import visionWasmLoaderUrl from '@mediapipe/tasks-vision/vision_wasm_internal.js?url';
 import visionWasmBinaryUrl from '@mediapipe/tasks-vision/vision_wasm_internal.wasm?url';
+import {
+  FACE_DIAGNOSTICS_ENABLED,
+  getScrfdInputSize,
+  isMobileFaceOptimizationActive,
+} from '@/features/attendance/lib/faceOptimizationFlags';
 
 export interface ScrfdDetection {
   box: [number, number, number, number]; // [x, y, w, h] in video coordinates
@@ -23,7 +28,7 @@ export interface ScrfdFaceBox {
 
 const STRIDES = [8, 16, 32] as const;
 const ANCHORS_PER_LOCATION = 2;
-const TARGET_SIZE = 640;
+const DEFAULT_TARGET_SIZE = 640;
 export const SCRFD_KEYPOINT_COUNT = 5;
 
 export const visionWasmFileset = {
@@ -33,6 +38,10 @@ export const visionWasmFileset = {
 
 function desiredOrtWasmThreads(): number {
   const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
+  if (isMobileFaceOptimizationActive()) {
+    if (!isolated || import.meta.env.VITE_FACE_ONNX_WASM_THREADS !== 'true') return 1;
+    return Math.min(4, (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 1) || 1);
+  }
   if (!isolated) return 1;
   return Math.min(4, (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 1) || 1);
 }
@@ -72,12 +81,15 @@ export async function getScrfdSession(
   const loadingPromise = (async () => {
     // Pre-fetch model as ArrayBuffer to avoid browser MIME type or internal fetch limitations
     let modelData: Uint8Array | string = modelUrl;
+    const fetchStartedAt = performance.now();
     try {
       const resp = await fetch(modelUrl);
       if (resp.ok) {
         const ab = await resp.arrayBuffer();
         modelData = new Uint8Array(ab);
-        console.log(`[SCRFD] Model binary fetched (${(modelData.length / (1024 * 1024)).toFixed(2)} MB).`);
+        if (FACE_DIAGNOSTICS_ENABLED) {
+          console.info(`[SCRFD] Model download complete in ${(performance.now() - fetchStartedAt).toFixed(0)}ms (${(modelData.length / (1024 * 1024)).toFixed(2)} MB).`);
+        }
       }
     } catch (fetchErr) {
       console.warn(`[SCRFD] Fetch buffer failed; falling back to URL string:`, fetchErr);
@@ -92,6 +104,7 @@ export async function getScrfdSession(
         try {
           configureOrtWasm(threads);
           console.log(`[SCRFD] Attempting session creation with provider [${ep}], threads=${threads}...`);
+          const initializationStartedAt = performance.now();
           const sessionOptions: ort.InferenceSession.SessionOptions = {
             executionProviders: [ep],
             graphOptimizationLevel: 'all',
@@ -102,13 +115,15 @@ export async function getScrfdSession(
 
           // Dummy verification pass
           const inputName = s.inputNames[0] ?? 'input.1';
-          const dummyData = new Float32Array(3 * TARGET_SIZE * TARGET_SIZE);
-          const dummyTensor = new ort.Tensor('float32', dummyData, [1, 3, TARGET_SIZE, TARGET_SIZE]);
+          const dummyData = new Float32Array(3 * DEFAULT_TARGET_SIZE * DEFAULT_TARGET_SIZE);
+          const dummyTensor = new ort.Tensor('float32', dummyData, [1, 3, DEFAULT_TARGET_SIZE, DEFAULT_TARGET_SIZE]);
           const feeds: Record<string, ort.Tensor> = {};
           feeds[inputName] = dummyTensor;
           await s.run(feeds);
 
-          console.log(`[SCRFD] Model initialized & verified successfully on provider [${ep}], threads=${threads}.`);
+          if (FACE_DIAGNOSTICS_ENABLED) {
+            console.info(`[SCRFD] Model initialized, warmed, and verified in ${(performance.now() - initializationStartedAt).toFixed(0)}ms on provider [${ep}], threads=${threads}.`);
+          }
           session = s;
           break;
         } catch (err) {
@@ -145,27 +160,39 @@ export async function getScrfdSession(
 }
 
 const canvasOffscreen = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+let cachedCanvasContext: CanvasRenderingContext2D | null = null;
 
-export function preprocessVideoFrame(video: HTMLVideoElement, targetSize = TARGET_SIZE) {
+export function preprocessVideoFrame(video: HTMLVideoElement, targetSize = DEFAULT_TARGET_SIZE) {
   const srcW = video.videoWidth || 640;
   const srcH = video.videoHeight || 480;
 
   if (!canvasOffscreen) throw new Error('DOM Canvas unavailable');
 
-  canvasOffscreen.width = targetSize;
-  canvasOffscreen.height = targetSize;
-  const ctx = canvasOffscreen.getContext('2d');
-  if (!ctx) throw new Error('Failed to get canvas 2d context');
+  const optimizeCanvas = isMobileFaceOptimizationActive();
+  let context: CanvasRenderingContext2D | null;
+  if (optimizeCanvas) {
+    if (!cachedCanvasContext) {
+      cachedCanvasContext = canvasOffscreen.getContext('2d', { willReadFrequently: true });
+    }
+    if (canvasOffscreen.width !== targetSize) canvasOffscreen.width = targetSize;
+    if (canvasOffscreen.height !== targetSize) canvasOffscreen.height = targetSize;
+    context = cachedCanvasContext;
+  } else {
+    canvasOffscreen.width = targetSize;
+    canvasOffscreen.height = targetSize;
+    context = canvasOffscreen.getContext('2d');
+  }
+  if (!context) throw new Error('Failed to get canvas 2d context');
 
   const scale = Math.min(targetSize / srcW, targetSize / srcH);
   const scaledW = Math.round(srcW * scale);
   const scaledH = Math.round(srcH * scale);
 
-  ctx.fillStyle = '#000000';
-  ctx.fillRect(0, 0, targetSize, targetSize);
-  ctx.drawImage(video, 0, 0, scaledW, scaledH);
+  context.fillStyle = '#000000';
+  context.fillRect(0, 0, targetSize, targetSize);
+  context.drawImage(video, 0, 0, scaledW, scaledH);
 
-  const imgData = ctx.getImageData(0, 0, targetSize, targetSize).data;
+  const imgData = context.getImageData(0, 0, targetSize, targetSize).data;
   const floatData = new Float32Array(3 * targetSize * targetSize);
   const area = targetSize * targetSize;
 
@@ -224,7 +251,8 @@ export function decodeScrfdOutputs(
   outputNames: readonly string[],
   scale: number,
   confThreshold = 0.25,
-  nmsThreshold = 0.4
+  nmsThreshold = 0.4,
+  targetSize = DEFAULT_TARGET_SIZE
 ): ScrfdDetection[] {
   const candidates: ScrfdDetection[] = [];
 
@@ -241,7 +269,7 @@ export function decodeScrfdOutputs(
     const scoreTensor = outputs[scoreName];
     const bboxTensor = outputs[bboxName];
     const kpsTensor = outputs[kpsName];
-    const featureWidth = TARGET_SIZE / stride;
+    const featureWidth = targetSize / stride;
     const anchorCount = featureWidth * featureWidth * ANCHORS_PER_LOCATION;
 
     if (
@@ -309,13 +337,24 @@ export async function detectFacesWithScrfd(
   confThreshold = 0.30,
   nmsThreshold = 0.4
 ): Promise<ScrfdFaceBox[]> {
-  const { tensor, scale, srcW, srcH } = preprocessVideoFrame(video);
+  const targetSize = getScrfdInputSize(
+    isMobileFaceOptimizationActive(),
+    import.meta.env.VITE_FACE_SCRFD_INPUT_SIZE
+  );
+  const { tensor, scale, srcW, srcH } = preprocessVideoFrame(video, targetSize);
   const inputName = session.inputNames[0] ?? 'input.1';
   const feeds: Record<string, ort.Tensor> = {};
   feeds[inputName] = tensor;
 
   const outputs = await session.run(feeds);
-  const rawDetections = decodeScrfdOutputs(outputs, session.outputNames, scale, confThreshold, nmsThreshold);
+  const rawDetections = decodeScrfdOutputs(
+    outputs,
+    session.outputNames,
+    scale,
+    confThreshold,
+    nmsThreshold,
+    targetSize
+  );
 
   return rawDetections.map((det) => ({
     x: det.box[0],
