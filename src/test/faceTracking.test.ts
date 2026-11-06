@@ -372,7 +372,7 @@ describe('face overlay geometry', () => {
       frameCapturedAt: undefined,
     }));
     expect(getFreshFaceBoxIndices(boxes, latestDetections, 900)).toEqual([0, 1, 2, 3, 4]);
-    expect(getFreshFaceBoxIndices(boxes, latestDetections, 1101)).toEqual([]);
+    expect(getFreshFaceBoxIndices(boxes, latestDetections, 1161)).toEqual([]);
     expect(getFreshFaceBoxIndices(boxes, [], 900)).toEqual([]);
     expect(getFreshFaceBoxIndices(
       [boxes[0]!],
@@ -407,6 +407,35 @@ describe('face overlay geometry', () => {
       [{ ...recentDetection, frameCapturedAt: 500 }],
       1000
     )).toEqual([]);
+  });
+
+  it('uses detector result time when inference takes longer than the overlay freshness window', () => {
+    const recognizedFace = {
+      x: 120,
+      y: 80,
+      width: 100,
+      height: 110,
+      videoWidth: 640,
+      videoHeight: 480,
+      frameCapturedAt: 100,
+      detectionResultAt: 800,
+    };
+    const recentDetection = {
+      ...recognizedFace,
+      frameCapturedAt: 100,
+      detectionResultAt: 800,
+    };
+
+    expect(getFreshFaceBoxPairs([recognizedFace], [recentDetection], 1000)).toEqual([
+      { boxIndex: 0, detectionIndex: 0 },
+    ]);
+    expect(inspectFaceBoxOverlays([recognizedFace], [recentDetection], 1000)[0]?.visible)
+      .toBe(true);
+
+    const staleDetection = { ...recentDetection, detectionResultAt: 500 };
+    expect(getFreshFaceBoxPairs([recognizedFace], [staleDetection], 1000)).toEqual([]);
+    expect(inspectFaceBoxOverlays([staleDetection], [staleDetection], 1000)[0]?.reasons)
+      .toContain('stale');
   });
 
   it('renders two tracked faces once each, including a partially visible left-edge face', () => {

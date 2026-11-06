@@ -12,7 +12,7 @@ export interface VideoFaceBox {
 }
 
 type FaceDetectionBox = Pick<VideoFaceBox, 'x' | 'y' | 'width' | 'height'> &
-  Partial<Pick<VideoFaceBox, 'videoWidth' | 'videoHeight' | 'frameCapturedAt'>>;
+  Partial<Pick<VideoFaceBox, 'videoWidth' | 'videoHeight' | 'frameCapturedAt' | 'detectionResultAt'>>;
 
 export function getFreshFaceBoxPairs<T extends VideoFaceBox>(
   boxes: readonly T[],
@@ -22,8 +22,10 @@ export function getFreshFaceBoxPairs<T extends VideoFaceBox>(
 ): Array<{ boxIndex: number; detectionIndex: number }> {
   const pairs = boxes.flatMap((box, boxIndex) => {
     return detections.flatMap((detection, detectionIndex) => {
-      const ageMs = detection.frameCapturedAt ?? box.frameCapturedAt;
-      if (ageMs === undefined || now - ageMs > maxAgeMs || now - ageMs < 0) return [];
+      const detectedAt = detection.detectionResultAt ?? detection.frameCapturedAt ??
+        box.detectionResultAt ?? box.frameCapturedAt;
+      const ageMs = detectedAt === undefined ? undefined : now - detectedAt;
+      if (ageMs === undefined || ageMs > maxAgeMs || ageMs < 0) return [];
       const { box: visibleBox } = clampVideoFaceBox(box);
       const { box: visibleDetection } = clampVideoFaceBox({
         ...detection,
@@ -120,8 +122,9 @@ export function inspectFaceBoxOverlays<T extends VideoFaceBox>(
   return boxes.map((box, index) => {
     const reasons: FaceBoxOverlayCheck['reasons'] = [];
     const displayedDetection = freshDetectionByBox.get(index);
-    const capturedAt = displayedDetection?.frameCapturedAt ?? box.frameCapturedAt;
-    const boxAgeMs = capturedAt === undefined ? Number.POSITIVE_INFINITY : now - capturedAt;
+    const detectedAt = displayedDetection?.detectionResultAt ?? displayedDetection?.frameCapturedAt ??
+      box.detectionResultAt ?? box.frameCapturedAt;
+    const boxAgeMs = detectedAt === undefined ? Number.POSITIVE_INFINITY : now - detectedAt;
     const { clipped } = clampVideoFaceBox(box);
     if (boxAgeMs > maxAgeMs || boxAgeMs < 0) reasons.push('stale');
     if (!displayedDetection) reasons.push('no_latest_detection_overlap');
