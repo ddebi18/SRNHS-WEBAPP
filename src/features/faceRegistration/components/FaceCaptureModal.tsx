@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, AlertCircle } from 'lucide-react';
 import { CaptureAngle, Student } from '../types';
@@ -12,6 +12,12 @@ import { CaptureProgressDots } from './CaptureProgressDots';
 import { CapturedFrameThumbnails } from './CapturedFrameThumbnails';
 import { ConsentConfirmCheckbox } from './ConsentConfirmCheckbox';
 import { CaptureControls } from './CaptureControls';
+import {
+  checkRegistrationPose,
+  FACE_REGISTRATION_POSE_CHECK_ENABLED,
+  measureImageQuality,
+  REGISTRATION_MIN_BRIGHTNESS,
+} from '../lib/registrationChecks';
 
 interface FaceCaptureModalProps {
   student: Student | null;
@@ -35,7 +41,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
     capturedFrames,
     consentConfirmed,
     isAllCaptured,
-    hasValidDescriptor,
+    hasAllDescriptors,
     isValidatingCapture,
     captureErrors,
     setConsentConfirmed,
@@ -54,10 +60,22 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   );
 
   const { isSubmitting, error: submitError, submit, resetError } = useRegisterStudentFace();
+  const [meanBrightness, setMeanBrightness] = useState<number | null>(null);
+  const faceBoxRef = useRef(faceBox);
+  faceBoxRef.current = faceBox;
+  const livePoseCheck = FACE_REGISTRATION_POSE_CHECK_ENABLED && currentStep !== 'review'
+    ? checkRegistrationPose(activeAngle, faceBox)
+    : null;
+  const isPoseReady = !FACE_REGISTRATION_POSE_CHECK_ENABLED || Boolean(
+    livePoseCheck?.accepted &&
+    meanBrightness !== null &&
+    meanBrightness >= REGISTRATION_MIN_BRIGHTNESS
+  );
 
   // Start camera when modal opens, stop when closes
   useEffect(() => {
     if (isOpen && student) {
+      setMeanBrightness(null);
       resetSession();
       resetError();
       startCamera();
@@ -65,6 +83,47 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
       stopCamera();
     }
   }, [isOpen, student]);
+
+  useEffect(() => {
+    if (!isOpen || !stream) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) {
+      console.warn('[FaceRegistration] Could not initialize the lighting preview.');
+      return;
+    }
+
+    const sampleBrightness = () => {
+      const video = videoRef.current;
+      const box = faceBoxRef.current;
+      if (!video || !box || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      try {
+        context.drawImage(
+          video,
+          box.x,
+          box.y,
+          box.width,
+          box.height,
+          0,
+          0,
+          canvas.width,
+          canvas.height
+        );
+        setMeanBrightness(measureImageQuality(
+          context.getImageData(0, 0, canvas.width, canvas.height)
+        ).meanBrightness);
+      } catch (error) {
+        setMeanBrightness(null);
+        console.warn('[FaceRegistration] Could not measure the live lighting level:', error);
+      }
+    };
+
+    sampleBrightness();
+    const interval = window.setInterval(sampleBrightness, 500);
+    return () => window.clearInterval(interval);
+  }, [isOpen, stream]);
 
   // Trap ESC key for modal closing
   useEffect(() => {
@@ -96,9 +155,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
     if (capturedFrames.front) framesArray.push({ angle: 'front', blob: capturedFrames.front.blob });
     if (capturedFrames.left)  framesArray.push({ angle: 'left',  blob: capturedFrames.left.blob });
     if (capturedFrames.right) framesArray.push({ angle: 'right', blob: capturedFrames.right.blob });
-    const faceDescriptors = framesArray
-      .map(frame => capturedFrames[frame.angle]?.descriptor)
-      .filter((descriptor): descriptor is number[] => Boolean(descriptor));
+    const faceDescriptors = framesArray.map(frame => capturedFrames[frame.angle]?.descriptor);
 
     try {
       const res = await submit({
@@ -106,7 +163,9 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
         sectionId: student.sectionId,
         frames: framesArray,
         consentConfirmed,
-        faceDescriptors: faceDescriptors.length > 0 ? faceDescriptors : undefined,
+        faceDescriptors: faceDescriptors.every((descriptor): descriptor is number[] => Boolean(descriptor))
+          ? faceDescriptors
+          : undefined,
       });
 
       if (res.success) {
@@ -158,8 +217,13 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                 </span>
               </div>
               <h2 id="modal-student-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100 mt-1">
-                Register face — {student.name}
+                {student.faceRegistrationStatus === 'registered' ? 'Re-register face' : 'Register face'} — {student.name}
               </h2>
+              {student.faceRegistrationStatus === 'registered' && (
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  The current registration remains active unless this replacement is saved successfully.
+                </p>
+              )}
             </div>
             <button
               onClick={handleClose}
@@ -201,6 +265,35 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             currentStep={currentStep}
             studentName={student.name}
           />
+          {FACE_REGISTRATION_POSE_CHECK_ENABLED && currentStep !== 'review' && (
+            <div
+              role="status"
+              className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-3 py-2.5 text-xs space-y-1"
+            >
+              <div className="font-bold text-slate-800 dark:text-slate-100">
+                {livePoseCheck?.pose
+                  ? `Estimated yaw ${livePoseCheck.pose.yawDeg.toFixed(1)}° · roll ${livePoseCheck.pose.rollDeg.toFixed(1)}°`
+                  : 'Waiting for SCRFD pose landmarks'}
+                {meanBrightness !== null && ` · brightness ${meanBrightness.toFixed(0)}/255`}
+              </div>
+              <div className="text-slate-600 dark:text-slate-300">
+                {meanBrightness !== null && meanBrightness < REGISTRATION_MIN_BRIGHTNESS
+                  ? 'Too dark. Improve the lighting before capture.'
+                  : livePoseCheck?.guidance ?? 'Pose checks are disabled.'}
+              </div>
+              <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                Approximation: (left nose-eye distance − right nose-eye distance) ÷ their sum × 90° for yaw; eye-line angle for roll.
+                Front ±10°; left/right 15–35°; roll ≤15°.
+              </div>
+              <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                Capture minimums: face 120px, detector score 0.60, sharpness 50, brightness 45/255;
+                descriptor separation &gt;0.08.
+              </div>
+              <div className="text-[10px] text-amber-700 dark:text-amber-300">
+                Pose guidance is not an anti-spoof liveness test.
+              </div>
+            </div>
+          )}
 
           {/* Camera Viewfinder */}
           {currentStep !== 'review' && (
@@ -234,7 +327,8 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             isFaceDetected={isFaceDetected}
             isCentered={isCentered}
             isAllCaptured={isAllCaptured}
-            hasValidDescriptor={hasValidDescriptor}
+            hasAllDescriptors={hasAllDescriptors}
+            isPoseReady={isPoseReady}
             isSubmitting={isSubmitting}
             isValidatingCapture={isValidatingCapture}
             onCapture={handleCaptureFrame}

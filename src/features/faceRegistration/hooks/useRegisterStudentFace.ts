@@ -6,6 +6,11 @@ import {
   extractDescriptorsFromBlobsWithDiagnostics,
 } from '@/features/attendance/lib/faceNetEngine';
 import { findDuplicateStudentId } from '@/features/attendance/lib/faceNetMatcher';
+import {
+  FACE_REGISTRATION_POSE_CHECK_ENABLED,
+  getMinimumPoseDescriptorDistance,
+  REGISTRATION_MIN_POSE_DESCRIPTOR_DISTANCE,
+} from '../lib/registrationChecks';
 
 export interface UseRegisterStudentFaceReturn {
   isSubmitting: boolean;
@@ -31,21 +36,39 @@ export function useRegisterStudentFace(): UseRegisterStudentFaceReturn {
     setQualityWarnings([]);
 
     try {
+      const angleOrder = ['front', 'left', 'right'] as const;
+      const frames = angleOrder.map(angle => payload.frames.find(frame => frame.angle === angle));
+      if (payload.frames.length !== 3 || frames.some(frame => !frame)) {
+        throw new Error('Capture front, left, and right angles before saving face registration.');
+      }
+      const orderedFrames = frames as NonNullable<(typeof frames)[number]>[];
+
       let faceDescriptors = payload.faceDescriptors;
-      if (!faceDescriptors || faceDescriptors.length === 0) {
-        const attempts = await extractDescriptorsFromBlobsWithDiagnostics(payload.frames.map(frame => frame.blob));
-        const extracted = attempts.flatMap(attempt => attempt.descriptor ? [attempt.descriptor] : []);
-        if (extracted.length === 0) {
+      if (faceDescriptors !== undefined) {
+        if (faceDescriptors.length !== 3) {
+          throw new Error('Exactly three face descriptors are required: front, left, and right.');
+        }
+      } else {
+        const attempts = await extractDescriptorsFromBlobsWithDiagnostics(orderedFrames.map(frame => frame.blob));
+        if (attempts.length !== 3 || attempts.some(attempt => !attempt.descriptor)) {
           const reasons = attempts.map((attempt, index) => (
-            `${payload.frames[index]?.angle ?? `Frame ${index + 1}`}: ` +
+            `${orderedFrames[index]?.angle ?? `Frame ${index + 1}`}: ` +
             FACE_DESCRIPTOR_EXTRACTION_FAILURE_MESSAGES[attempt.failure ?? 'inference_failed']
           ));
           throw new Error(
-            `No FaceNet embedding could be extracted. ${reasons.join('; ')}. ` +
-            'Retake the indicated angle(s); keep the full face visible, close, and evenly lit.'
+            `A descriptor is required for every capture. ${reasons.join('; ')}. ` +
+            'Retake each indicated angle; keep the full face visible, close, and evenly lit.'
           );
         }
-        faceDescriptors = extracted.map(d => Array.from(d));
+        faceDescriptors = attempts.map(attempt => Array.from(attempt.descriptor!));
+      }
+
+      if (FACE_REGISTRATION_POSE_CHECK_ENABLED &&
+        getMinimumPoseDescriptorDistance(faceDescriptors) <= REGISTRATION_MIN_POSE_DESCRIPTOR_DISTANCE) {
+        throw new Error(
+          `Two or more pose descriptors are suspiciously similar (minimum distance must exceed ` +
+          `${REGISTRATION_MIN_POSE_DESCRIPTOR_DISTANCE.toFixed(2)}). Retake the left and right views.`
+        );
       }
 
       const gallery = getStoredStudents()
@@ -62,6 +85,7 @@ export function useRegisterStudentFace(): UseRegisterStudentFaceReturn {
 
       const result = await submitFaceRegistration({
         ...payload,
+        frames: orderedFrames,
         faceDescriptors,
       });
       setIsSubmitting(false);

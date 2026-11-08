@@ -801,7 +801,12 @@ export async function submitFaceRegistration(
     throw new Error('Guardian consent confirmation is required before registration.');
   }
 
-  if (!payload.frames || payload.frames.length < 3) {
+  const requiredAngles = ['front', 'left', 'right'];
+  if (
+    !payload.frames ||
+    payload.frames.length !== requiredAngles.length ||
+    requiredAngles.some(angle => payload.frames.filter(frame => frame.angle === angle).length !== 1)
+  ) {
     throw new Error('Incomplete face capture angles. Please capture all 3 required angles (front, left, right).');
   }
 
@@ -811,8 +816,8 @@ export async function submitFaceRegistration(
     throw new Error('Student record not found in system database.');
   }
 
-  if (isSupabaseConfigured && supabase && (!payload.faceDescriptors || payload.faceDescriptors.length === 0)) {
-    throw new Error('Face descriptors are required before cloud face registration can be saved. Please recapture the student face.');
+  if (!payload.faceDescriptors || payload.faceDescriptors.length !== 3) {
+    throw new Error('Face descriptors are required for all three capture angles before registration can be saved.');
   }
 
   // Convert frame blobs to compact, optimized Data URLs

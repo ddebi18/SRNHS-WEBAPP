@@ -111,6 +111,20 @@ describe('FaceNet matcher', () => {
     expect(findDuplicateStudentId(stranger, gallery, 'std-new')).toBeNull();
   });
 
+  it('compares every enrolled pose while keeping different students separate', () => {
+    const studentBLeft = unit(Array.from({ length: 128 }, (_, i) => (i === 7 ? 0.98 : 0.012)));
+    const result = scoreFaceNetMatch(studentBLeft, [
+      { label: 'std-a', descriptors: [studentA, studentAClose] },
+      { label: 'std-b', descriptors: [studentB, studentBLeft] },
+    ]);
+
+    expect(result.accepted).toBe(true);
+    expect(result.label).toBe('std-b');
+    expect(findDuplicateStudentId(studentAClose, [
+      { label: 'std-a', descriptors: [studentA, studentAClose] },
+    ], 'std-new')).toBe('std-a');
+  });
+
   it('ignores tiny or low-score detections so the camera loop can stay smooth', () => {
     expect(isFaceBoxUsable(40, 40, 0.9)).toBe(false);
     expect(isFaceBoxUsable(120, 120, 0.2)).toBe(false);

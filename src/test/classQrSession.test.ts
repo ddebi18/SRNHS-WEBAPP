@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { supabase } from '@/lib/supabase';
 import {
   createClassQrSession,
   revokeClassQrSession,
@@ -7,14 +8,54 @@ import {
   saveLocalClassQrSessions,
 } from '@/features/attendance/api/classQrApi';
 import { saveStoredStudents } from '@/features/faceRegistration/api';
+import {
+  matchesClassQrIdentity,
+  parseClassQrCheckinInput,
+} from '../../supabase/functions/_shared/classQrCheckin';
+
+vi.mock('@/lib/supabase', () => {
+  const query = {
+    update: vi.fn(() => query),
+    insert: vi.fn(() => query),
+    select: vi.fn(() => query),
+    eq: vi.fn(() => query),
+    is: vi.fn().mockResolvedValue({ error: null }),
+    single: vi.fn().mockResolvedValue({
+      data: { id: '00000000-0000-4000-8000-000000000004' },
+      error: null,
+    }),
+    then: (resolve: (value: { error: null }) => unknown, reject: (reason: unknown) => unknown) =>
+      Promise.resolve({ error: null }).then(resolve, reject),
+  };
+  return {
+    supabase: {
+      from: vi.fn(() => query),
+      functions: { invoke: vi.fn() },
+    },
+    isSupabaseConfigured: true,
+  };
+});
+
+const invokeCheckin = vi.mocked(supabase!.functions.invoke);
+
+function functionError(message: string) {
+  return {
+    message: 'Edge Function returned a non-2xx status code',
+    context: new Response(JSON.stringify({ message }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  };
+}
 
 describe('Feature 2: Class QR Sessions & Student Scan Check-In', () => {
-  const teacherId = 'teacher-101';
-  const sectionId = 'sec-grade10-ruby';
-  const subjectId = 'sub-math-10';
+  const teacherId = '00000000-0000-4000-8000-000000000001';
+  const sectionId = '00000000-0000-4000-8000-000000000002';
+  const subjectId = '00000000-0000-4000-8000-000000000003';
 
   beforeEach(() => {
     localStorage.clear();
+    invokeCheckin.mockReset();
     saveLocalClassQrSessions([]);
 
     // Seed mock students
@@ -25,7 +66,7 @@ describe('Feature 2: Class QR Sessions & Student Scan Check-In', () => {
         firstName: 'Juan',
         lastName: 'Dela Cruz',
         studentNumber: '109823456701',
-        sectionId: 'sec-grade10-ruby',
+        sectionId,
         sectionName: 'Grade 10 - Ruby',
         birthdate: '2008-05-15',
         face_registered: true,
@@ -36,7 +77,7 @@ describe('Feature 2: Class QR Sessions & Student Scan Check-In', () => {
         firstName: 'Maria',
         lastName: 'Santos',
         studentNumber: '109823456702',
-        sectionId: 'sec-grade10-emerald',
+        sectionId: '00000000-0000-4000-8000-000000000005',
         sectionName: 'Grade 10 - Emerald',
         birthdate: '2008-08-20',
         face_registered: true,
@@ -116,12 +157,23 @@ describe('Feature 2: Class QR Sessions & Student Scan Check-In', () => {
     expect(validation.reason).toContain('expired');
   });
 
-  it('successful check-in: verifies student LRN and last name, marking attendance', async () => {
+  it('submits check-in without requiring a local student roster', async () => {
     const session = await createClassQrSession({
       teacher_id: teacherId,
       section_id: sectionId,
       subject_id: subjectId,
       ttlSeconds: 90,
+    });
+
+    localStorage.clear();
+    invokeCheckin.mockResolvedValue({
+      data: {
+        success: true,
+        studentName: 'Juan Dela Cruz',
+        status: 'present',
+        message: 'Attendance marked as PRESENT!',
+      },
+      error: null,
     });
 
     const res = await recordStudentQrCheckIn({
@@ -133,17 +185,28 @@ describe('Feature 2: Class QR Sessions & Student Scan Check-In', () => {
     expect(res.success).toBe(true);
     expect(res.studentName).toBe('Juan Dela Cruz');
     expect(res.status).toBe('present');
+    expect(invokeCheckin).toHaveBeenCalledWith('class-qr-check-in', {
+      body: {
+        token: session.token,
+        lrn: '109823456701',
+        birthdateOrLastName: 'Dela Cruz',
+      },
+    });
   });
 
   it('rejects student not enrolled in that section', async () => {
     const session = await createClassQrSession({
       teacher_id: teacherId,
-      section_id: sectionId, // Ruby
+      section_id: sectionId,
       subject_id: subjectId,
       ttlSeconds: 90,
     });
 
-    // Maria is enrolled in Emerald, not Ruby
+    invokeCheckin.mockResolvedValue({
+      data: null,
+      error: functionError('You are not enrolled in this class section.') as never,
+    });
+
     const res = await recordStudentQrCheckIn({
       token: session.token,
       lrn: '109823456702',
@@ -154,13 +217,23 @@ describe('Feature 2: Class QR Sessions & Student Scan Check-In', () => {
     expect(res.message).toContain('not enrolled');
   });
 
-  it('prevents duplicate check-in for the same session', async () => {
+  it('returns the server daily duplicate rejection', async () => {
     const session = await createClassQrSession({
       teacher_id: teacherId,
       section_id: sectionId,
       subject_id: subjectId,
       ttlSeconds: 90,
     });
+
+    invokeCheckin
+      .mockResolvedValueOnce({
+        data: { success: true, studentName: 'Juan Dela Cruz', status: 'present' },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: null,
+        error: functionError('You have already checked in for this subject today.') as never,
+      });
 
     const first = await recordStudentQrCheckIn({
       token: session.token,
@@ -176,5 +249,26 @@ describe('Feature 2: Class QR Sessions & Student Scan Check-In', () => {
     });
     expect(second.success).toBe(false);
     expect(second.message).toContain('already checked in');
+  });
+});
+
+describe('Class QR check-in server input validation', () => {
+  it('requires a token, 12-digit LRN, and verifier', () => {
+    expect(parseClassQrCheckinInput({
+      token: ' active-token ',
+      lrn: '109823456701',
+      birthdateOrLastName: 'Dela Cruz',
+    })).toEqual({
+      token: 'active-token',
+      lrn: '109823456701',
+      verifier: 'Dela Cruz',
+    });
+    expect(parseClassQrCheckinInput({ token: 'token', lrn: '123', birthdateOrLastName: 'Name' })).toBeNull();
+  });
+
+  it('requires an exact last-name or birth-date match', () => {
+    expect(matchesClassQrIdentity('Dela Cruz', '2008-05-15', 'dela cruz')).toBe(true);
+    expect(matchesClassQrIdentity('Dela Cruz', '2008-05-15', '2008-05-15')).toBe(true);
+    expect(matchesClassQrIdentity('Dela Cruz', '2008-05-15', 'Dela Cruz extra')).toBe(false);
   });
 });

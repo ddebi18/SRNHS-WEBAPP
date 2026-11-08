@@ -18,6 +18,7 @@ interface ImportMetaEnv {
   readonly VITE_FACE_CROP_ADAPTIVE_RETRY?: string;
   readonly VITE_FACE_CROP_DETECTOR_INPUT_SIZE?: string;
   readonly VITE_FACE_MOTION_OPTIMIZATIONS?: string;
+  readonly VITE_FACE_REGISTRATION_POSE_CHECK?: string;
 }
 
 interface ImportMeta {

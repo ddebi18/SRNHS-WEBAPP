@@ -19,6 +19,20 @@ describe('useFaceCaptureSession', () => {
     mockExtractDescriptors.mockReset();
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       drawImage: vi.fn(),
+      getImageData: vi.fn(() => {
+        const data = new Uint8ClampedArray(8 * 8 * 4);
+        for (let y = 0; y < 8; y++) {
+          for (let x = 0; x < 8; x++) {
+            const value = (x + y) % 2 ? 220 : 40;
+            const offset = (y * 8 + x) * 4;
+            data[offset] = value;
+            data[offset + 1] = value;
+            data[offset + 2] = value;
+            data[offset + 3] = 255;
+          }
+        }
+        return { data, width: 8, height: 8 };
+      }),
     } as never);
     Object.defineProperty(HTMLCanvasElement.prototype, 'toBlob', {
       configurable: true,
@@ -39,6 +53,17 @@ describe('useFaceCaptureSession', () => {
     vi.unstubAllGlobals();
   });
 
+  const frontalFace = {
+    x: 120,
+    y: 80,
+    width: 200,
+    height: 200,
+    videoWidth: 640,
+    videoHeight: 480,
+    score: 0.9,
+    landmarks: [[100, 100], [200, 100], [150, 140], [120, 180], [180, 180]] as [number, number][],
+  };
+
   it('records a capture warning when it fails registration detection', async () => {
     mockExtractDescriptors.mockResolvedValue([{
       descriptor: null,
@@ -53,14 +78,14 @@ describe('useFaceCaptureSession', () => {
     });
 
     await act(async () => {
-      await result.current.captureCurrentAngle(video);
+      await result.current.captureCurrentAngle(video, frontalFace);
     });
 
-    expect(result.current.currentStep).toBe('left');
-    expect(result.current.capturedFrames.front).not.toBeNull();
+    expect(result.current.currentStep).toBe('front');
+    expect(result.current.capturedFrames.front).toBeNull();
     expect(result.current.capturedFrames.front?.descriptor).toBeUndefined();
     expect(result.current.captureErrors.front).toContain('confidence was too low');
-    expect(result.current.hasValidDescriptor).toBe(false);
+    expect(result.current.hasAllDescriptors).toBe(false);
     expect(result.current.isValidatingCapture).toBe(false);
   });
 
@@ -78,14 +103,14 @@ describe('useFaceCaptureSession', () => {
     });
 
     await act(async () => {
-      await result.current.captureCurrentAngle(video);
+      await result.current.captureCurrentAngle(video, frontalFace);
     });
 
     expect(result.current.currentStep).toBe('left');
     expect(result.current.capturedFrames.front?.descriptor?.[0]).toBeCloseTo(0.1);
     expect(result.current.capturedFrames.front?.descriptor?.[1]).toBeCloseTo(0.2);
     expect(result.current.captureErrors.front).toBeUndefined();
-    expect(result.current.hasValidDescriptor).toBe(true);
+    expect(result.current.hasAllDescriptors).toBe(false);
     expect(result.current.isValidatingCapture).toBe(false);
   });
 });

@@ -151,6 +151,7 @@ describe('face registration persistence', () => {
         { angle: 'right', blob: new Blob(['right']) },
       ],
       consentConfirmed: true,
+      faceDescriptors: [[0.1, 0.2, 0.3], [0.2, 0.3, 0.4], [0.3, 0.4, 0.5]],
     });
 
     expect(mockSupabaseState.updateCalls).toBe(0);
@@ -168,7 +169,7 @@ describe('face registration persistence', () => {
         { angle: 'right', blob: new Blob(['right']) },
       ],
       consentConfirmed: true,
-      faceDescriptors: [[0.3, 0.4, 0.5]],
+      faceDescriptors: [[0.3, 0.4, 0.5], [0.4, 0.5, 0.6], [0.5, 0.6, 0.7]],
     });
 
     expect(mockSupabaseState.updateCalls).toBe(1);
@@ -178,7 +179,7 @@ describe('face registration persistence', () => {
         'data:image/jpeg;base64,test',
         'data:image/jpeg;base64,test',
       ],
-      face_descriptors: [[0.3, 0.4, 0.5]],
+      face_descriptors: [[0.3, 0.4, 0.5], [0.4, 0.5, 0.6], [0.5, 0.6, 0.7]],
       face_descriptor_version: 2,
     });
     expect(getStoredStudents()[0]?.faceRegistrationStatus).toBe('registered');
@@ -200,7 +201,7 @@ describe('face registration persistence', () => {
         { angle: 'right', blob: new Blob(['right']) },
       ],
       consentConfirmed: true,
-      faceDescriptors: [[0.3, 0.4, 0.5]],
+      faceDescriptors: [[0.3, 0.4, 0.5], [0.4, 0.5, 0.6], [0.5, 0.6, 0.7]],
     })).rejects.toThrow('Face registration could not be saved to Supabase');
 
     expect(mockSupabaseState.updateCalls).toBe(1);
@@ -222,5 +223,48 @@ describe('face registration persistence', () => {
 
     expect(mockSupabaseState.updateCalls).toBe(0);
     expect(getStoredStudents()[0]?.faceRegistrationStatus).toBe('unregistered');
+  });
+
+  it('rejects fewer than three descriptors before saving', async () => {
+    saveStoredStudents([unregisteredStudent]);
+    await expect(submitFaceRegistration({
+      studentId: student.id,
+      sectionId: student.sectionId,
+      frames: [
+        { angle: 'front', blob: new Blob(['front']) },
+        { angle: 'left', blob: new Blob(['left']) },
+        { angle: 'right', blob: new Blob(['right']) },
+      ],
+      consentConfirmed: true,
+      faceDescriptors: [[0.3, 0.4, 0.5], [0.4, 0.5, 0.6]],
+    })).rejects.toThrow('Face descriptors are required for all three');
+
+    expect(mockSupabaseState.updateCalls).toBe(0);
+    expect(getStoredStudents()[0]?.faceRegistrationStatus).toBe('unregistered');
+  });
+
+  it('preserves the existing registration when replacement save fails', async () => {
+    mockSupabaseState.updateResult = {
+      data: null,
+      error: { message: 'permission denied' },
+    };
+
+    await expect(submitFaceRegistration({
+      studentId: student.id,
+      sectionId: student.sectionId,
+      frames: [
+        { angle: 'front', blob: new Blob(['new-front']) },
+        { angle: 'left', blob: new Blob(['new-left']) },
+        { angle: 'right', blob: new Blob(['new-right']) },
+      ],
+      consentConfirmed: true,
+      faceDescriptors: [[0.3, 0.4, 0.5], [0.4, 0.5, 0.6], [0.5, 0.6, 0.7]],
+    })).rejects.toThrow('Face registration could not be saved to Supabase');
+
+    expect(getStoredStudents()[0]).toMatchObject({
+      faceRegistrationStatus: 'registered',
+      faceDescriptors: student.faceDescriptors,
+      registeredPhotos: student.registeredPhotos,
+    });
   });
 });

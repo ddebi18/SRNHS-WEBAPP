@@ -9,7 +9,8 @@ interface CaptureControlsProps {
   isFaceDetected: boolean;
   isCentered: boolean;
   isAllCaptured: boolean;
-  hasValidDescriptor: boolean;
+  hasAllDescriptors: boolean;
+  isPoseReady: boolean;
   isSubmitting: boolean;
   isValidatingCapture: boolean;
   onCapture: () => void;
@@ -23,7 +24,8 @@ export const CaptureControls: React.FC<CaptureControlsProps> = ({
   isFaceDetected,
   isCentered: _isCentered,
   isAllCaptured,
-  hasValidDescriptor,
+  hasAllDescriptors,
+  isPoseReady,
   isSubmitting,
   isValidatingCapture,
   onCapture,
@@ -31,7 +33,8 @@ export const CaptureControls: React.FC<CaptureControlsProps> = ({
   onCancel,
 }) => {
   const needsCenteredFace = currentStep === 'front';
-  const isCaptureDisabled = !consentConfirmed || !isFaceDetected || (needsCenteredFace && !_isCentered) || isValidatingCapture;
+  const isCaptureDisabled = !consentConfirmed || !isFaceDetected || (needsCenteredFace && !_isCentered) ||
+    !isPoseReady || isValidatingCapture;
 
   return (
     <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
@@ -64,10 +67,10 @@ export const CaptureControls: React.FC<CaptureControlsProps> = ({
           <button
             type="button"
             onClick={onSubmit}
-            disabled={!isAllCaptured || !hasValidDescriptor || !consentConfirmed || isSubmitting}
+            disabled={!isAllCaptured || !hasAllDescriptors || !consentConfirmed || isSubmitting}
             className={cn(
               'px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 shadow-md transition-all cursor-pointer',
-              !isAllCaptured || !hasValidDescriptor || !consentConfirmed || isSubmitting
+              !isAllCaptured || !hasAllDescriptors || !consentConfirmed || isSubmitting
                 ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
                 : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white hover:brightness-110 active:scale-95 shadow-md shadow-emerald-900/20'
             )}

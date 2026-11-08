@@ -5,6 +5,12 @@ import {
   FACE_DESCRIPTOR_EXTRACTION_FAILURE_MESSAGES,
   extractDescriptorsFromBlobsWithDiagnostics,
 } from '@/features/attendance/lib/faceNetEngine';
+import {
+  checkRegistrationPose,
+  FACE_REGISTRATION_POSE_CHECK_ENABLED,
+  imageQualityGuidance,
+  measureImageQuality,
+} from '../lib/registrationChecks';
 
 export type SessionStep = 'consent' | 'front' | 'left' | 'right' | 'review';
 
@@ -13,7 +19,7 @@ export interface UseFaceCaptureSessionReturn {
   capturedFrames: Record<CaptureAngle, CapturedFrame | null>;
   consentConfirmed: boolean;
   isAllCaptured: boolean;
-  hasValidDescriptor: boolean;
+  hasAllDescriptors: boolean;
   isValidatingCapture: boolean;
   captureErrors: Partial<Record<CaptureAngle, string>>;
   setConsentConfirmed: (confirmed: boolean) => void;
@@ -63,6 +69,14 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     });
 
     try {
+      if (FACE_REGISTRATION_POSE_CHECK_ENABLED) {
+        const poseCheck = checkRegistrationPose(angle, faceBox);
+        if (!poseCheck.accepted) {
+          setCaptureErrors(prev => ({ ...prev, [angle]: poseCheck.guidance }));
+          return;
+        }
+      }
+
       const sourceWidth = video.videoWidth || 1280;
       const sourceHeight = video.videoHeight || 720;
       const canvas = document.createElement('canvas');
@@ -85,6 +99,16 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
 
+      if (FACE_REGISTRATION_POSE_CHECK_ENABLED) {
+        const qualityError = imageQualityGuidance(
+          measureImageQuality(ctx.getImageData(0, 0, canvas.width, canvas.height))
+        );
+        if (qualityError) {
+          setCaptureErrors(prev => ({ ...prev, [angle]: qualityError }));
+          return;
+        }
+      }
+
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
           result => result ? resolve(result) : reject(new Error('Could not encode the captured image.')),
@@ -95,8 +119,17 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
       const [attempt] = await extractDescriptorsFromBlobsWithDiagnostics([blob]);
       if (captureAttempt !== captureAttemptRef.current) return;
       if (!attempt?.descriptor) {
-        const reason = FACE_DESCRIPTOR_EXTRACTION_FAILURE_MESSAGES[attempt?.failure ?? 'inference_failed'];
-        setCaptureErrors(prev => ({ ...prev, [angle]: reason }));
+        const failure = attempt?.failure ?? 'inference_failed';
+        const guidance: Record<typeof failure, string> = {
+          no_face_detected: 'Keep your face centered and try again.',
+          inconsistent_landmarks: 'Adjust your position and try again.',
+          below_minimum_face_size: 'Move closer to the camera.',
+          below_detection_confidence: 'Hold still and try again.',
+          inference_failed: 'Face analysis failed. Retry this capture.',
+        };
+        const detail = FACE_DESCRIPTOR_EXTRACTION_FAILURE_MESSAGES[failure];
+        setCaptureErrors(prev => ({ ...prev, [angle]: `${guidance[failure]} (${detail})` }));
+        return;
       }
 
       const previewUrl = URL.createObjectURL(blob);
@@ -104,7 +137,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
         id: `frame-${angle}-${Date.now()}`,
         angle,
         blob,
-        descriptor: attempt?.descriptor ? Array.from(attempt.descriptor) : undefined,
+        descriptor: Array.from(attempt.descriptor),
         previewUrl,
         capturedAt: new Date().toISOString(),
       };
@@ -182,9 +215,9 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
   const isAllCaptured = Boolean(
     capturedFrames.front && capturedFrames.left && capturedFrames.right
   );
-  const hasValidDescriptor = Boolean(
-    capturedFrames.front?.descriptor ||
-    capturedFrames.left?.descriptor ||
+  const hasAllDescriptors = Boolean(
+    capturedFrames.front?.descriptor &&
+    capturedFrames.left?.descriptor &&
     capturedFrames.right?.descriptor
   );
 
@@ -193,7 +226,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     capturedFrames,
     consentConfirmed,
     isAllCaptured,
-    hasValidDescriptor,
+    hasAllDescriptors,
     isValidatingCapture,
     captureErrors,
     setConsentConfirmed,
