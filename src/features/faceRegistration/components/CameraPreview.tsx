@@ -14,6 +14,7 @@ interface CameraPreviewProps {
   allFaceBoxes?: FaceBox[];
   isFaceDetected: boolean;
   isCentered: boolean;
+  isCaptureReady: boolean;
   currentAngle: CaptureAngle | 'review';
   onRetryPermission?: () => void;
 }
@@ -29,6 +30,7 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
       allFaceBoxes,
       isFaceDetected,
       isCentered,
+      isCaptureReady,
       currentAngle,
       onRetryPermission,
     },
@@ -166,10 +168,18 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
               {/* Target Face Guide Oval */}
               <div className={cn(
                 'absolute inset-x-0 top-1/2 -translate-y-1/2 mx-auto w-48 h-60 rounded-[50%] border-2 border-dashed transition-all duration-300 flex items-center justify-center',
-                isFaceDetected && isCentered ? 'border-emerald-400 bg-emerald-500/10' : 'border-amber-400/60 bg-black/20'
+                isCaptureReady
+                  ? 'border-emerald-400 bg-emerald-500/10'
+                  : 'border-amber-400/60 bg-black/20'
               )}>
                 <div className="text-[10px] font-mono text-emerald-300 uppercase tracking-widest bg-slate-950/80 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                  {isFaceDetected ? (isCentered ? 'SCRFD Face Aligned' : 'Center Face') : 'Position Face'}
+                  {!isFaceDetected
+                    ? 'Position Face'
+                    : isCaptureReady
+                      ? 'Capture Ready'
+                      : isCentered
+                        ? 'Face Centered · Checking'
+                        : 'Adjust Face Position'}
                 </div>
               </div>
 
@@ -177,7 +187,11 @@ export const CameraPreview = React.forwardRef<HTMLVideoElement, CameraPreviewPro
               <div className="absolute top-3 left-4 right-4 flex items-center justify-between text-[10px] font-mono text-white/50 bg-slate-950/70 backdrop-blur px-3 py-1 rounded-xl border border-white/10">
                 <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  SCRFD-2.5G · ONNX Multi-Face Engine
+                  {faceBox?.detectorSource === 'scrfd'
+                    ? 'SCRFD · ONNX Face Detection'
+                    : faceBox?.detectorSource === 'fallback'
+                      ? 'MediaPipe Fallback · No Pose Landmarks'
+                      : 'Waiting for Face Detection'}
                 </span>
                 <span className="capitalize font-bold text-amber-300">
                   Target: {currentAngle} View

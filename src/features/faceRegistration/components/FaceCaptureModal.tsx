@@ -18,7 +18,6 @@ import {
   FACE_REGISTRATION_POSE_CHECK_ENABLED,
   imageQualityGuidance,
   measureDownscaledCanvasQuality,
-  REGISTRATION_MIN_BRIGHTNESS,
   type RegistrationCapturePreview,
 } from '../lib/registrationChecks';
 
@@ -70,10 +69,11 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   } | null>(null);
   const faceBoxRef = useRef(faceBox);
   faceBoxRef.current = faceBox;
-  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const captureCanvasRef = useRef<[HTMLCanvasElement, HTMLCanvasElement] | null>(null);
   const qualityCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const capturePreviewRef = useRef<RegistrationCapturePreview | null>(null);
   const capturePausedRef = useRef(false);
+  const activeCaptureCanvasIndexRef = useRef(0);
   const livePoseCheck = previewStatus?.poseCheck ?? null;
   const meanBrightness = previewStatus?.quality?.meanBrightness ?? null;
   const qualityGuidance = previewStatus?.quality
@@ -81,14 +81,24 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
     : null;
   const previewIsFresh = Boolean(
     capturePreviewRef.current &&
+    capturePreviewRef.current.angle === activeAngle &&
     performance.now() - capturePreviewRef.current.sampledAt <= 500
   );
   const isPoseReady = !FACE_REGISTRATION_POSE_CHECK_ENABLED || Boolean(
-    livePoseCheck?.accepted &&
-    previewStatus?.quality &&
-    !qualityGuidance &&
     previewIsFresh
   );
+  const captureBlockReason = !consentConfirmed
+    ? 'Confirm guardian consent before capturing.'
+    : !isFaceDetected
+      ? detectorError ?? 'No face detected. Position your face in the camera.'
+      : currentStep === 'front' && !isCentered
+        ? 'Center your face in the camera.'
+        : !isPoseReady
+          ? qualityGuidance ??
+            (livePoseCheck && !livePoseCheck.accepted
+              ? livePoseCheck.guidance
+              : 'Waiting for a fresh frame that passes the pose and image-quality checks.')
+          : null;
 
   // Start camera when modal opens, stop when closes
   useEffect(() => {
@@ -105,10 +115,15 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
   useEffect(() => {
     if (!isOpen || !stream) return;
-    const canvas = captureCanvasRef.current ??= document.createElement('canvas');
+    const canvases = captureCanvasRef.current ??= [
+      document.createElement('canvas'),
+      document.createElement('canvas'),
+    ];
     const qualityCanvas = qualityCanvasRef.current ??= document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('Could not initialize the registration capture canvas.');
+    const contexts = canvases.map(canvas => canvas.getContext('2d'));
+    if (contexts.some(context => !context)) {
+      throw new Error('Could not initialize the registration capture canvas.');
+    }
 
     const samplePreview = () => {
       if (capturePausedRef.current) return;
@@ -121,11 +136,13 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
         : { accepted: true, guidance: 'Pose checks are disabled.', pose: null };
       const poseMs = FACE_DIAGNOSTICS_ENABLED ? performance.now() - poseStartedAt : 0;
       if (!box || !poseCheck.accepted) {
-        capturePreviewRef.current = null;
         setPreviewStatus({ poseCheck, quality: null });
         return;
       }
 
+      const candidateCanvasIndex = 1 - activeCaptureCanvasIndexRef.current;
+      const canvas = canvases[candidateCanvasIndex]!;
+      const context = contexts[candidateCanvasIndex]!;
       const sourceWidth = video.videoWidth || 640;
       const sourceHeight = video.videoHeight || 480;
       const padX = box.width * 0.28;
@@ -160,6 +177,10 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               } : undefined
             )
           : null;
+        if (quality && imageQualityGuidance(quality)) {
+          setPreviewStatus({ poseCheck, quality });
+          return;
+        }
         const sample: RegistrationCapturePreview = {
           angle: activeAngle,
           canvas,
@@ -174,9 +195,9 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
           sharpnessMs,
         };
         capturePreviewRef.current = sample;
+        activeCaptureCanvasIndexRef.current = candidateCanvasIndex;
         setPreviewStatus({ poseCheck, quality });
       } catch (error) {
-        capturePreviewRef.current = null;
         setPreviewStatus({ poseCheck, quality: null });
         console.error('[FaceRegistration] Could not check the live capture frame:', error);
       }
@@ -345,10 +366,17 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                 {meanBrightness !== null && ` · brightness ${meanBrightness.toFixed(0)}/255`}
               </div>
               <div className="text-slate-600 dark:text-slate-300">
-                {meanBrightness !== null && meanBrightness < REGISTRATION_MIN_BRIGHTNESS
-                  ? 'Too dark. Improve the lighting before capture.'
-                  : qualityGuidance ?? livePoseCheck?.guidance ?? 'Checking the latest frame...'}
+                  {captureBlockReason
+                    ? `Capture blocked: ${captureBlockReason}`
+                    : 'Capture ready: using a recent frame that passed pose and image-quality checks.'}
               </div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Detector: {faceBox?.detectorSource === 'scrfd'
+                    ? 'SCRFD (pose landmarks available)'
+                    : faceBox?.detectorSource === 'fallback'
+                      ? 'MediaPipe fallback (pose landmarks unavailable)'
+                      : 'waiting for a face detection'}
+                </div>
               {previewStatus?.quality && (
                 <div className="text-[10px] text-slate-500 dark:text-slate-400">
                   Sharpness {previewStatus.quality.sharpness.toFixed(1)} / 50 minimum.
@@ -380,6 +408,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               allFaceBoxes={allFaceBoxes}
               isFaceDetected={isFaceDetected}
               isCentered={isCentered}
+              isCaptureReady={isPoseReady}
               currentAngle={activeAngle}
               onRetryPermission={startCamera}
             />
