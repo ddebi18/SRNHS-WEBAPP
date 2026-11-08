@@ -388,6 +388,9 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               </span>
             </div>
           )}
+          <div className="rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/30 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
+            Lighting tip: face a bright, even light source and avoid strong backlighting or shadows.
+          </div>
 
           {/* Step Progress Dots */}
           <CaptureProgressDots
