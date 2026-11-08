@@ -38,12 +38,14 @@ import {
   findDuplicateStudentClaimLosers,
   selectFaceDescriptorDetections,
   predictFaceTrackBox,
+  rotateFaceIndicesToFront,
   updateFaceTrackIdentity,
 } from '../lib/faceTracking';
 import { releaseFaceScan, tryAcquireFaceScan } from '../lib/faceScanLock';
 import { faceBoxOverlap } from '@/lib/faceOverlayGeometry';
 import {
   FACE_DIAGNOSTICS_ENABLED,
+  FACE_ATTEMPT_LOGS_ENABLED,
   FACE_CROP_RETRY_DIAGNOSTICS_ENABLED,
   FACE_CROP_PADDING_COMPARISON_ENABLED,
   FACE_CROP_ADAPTIVE_RETRY_ENABLED,
@@ -51,6 +53,7 @@ import {
   FACE_STARTUP_OPTIMIZATIONS_ENABLED,
   getFaceCropDetectorInputSize,
   getFaceDescriptorBudget,
+  getScanOverrunCooldownMs,
   isMobileDevice,
   isMobileFaceOptimizationActive,
 } from '../lib/faceOptimizationFlags';
@@ -66,15 +69,10 @@ export { computeCosineSimilarity, computeCosineDistance } from '../lib/faceNetMa
 
 const SCAN_INTERVAL_MS = 200;
 const STARTUP_TIMEOUT_MS = 15_000;
-const SCAN_OVERRUN_COOLDOWN_MIN_MS = 100;
 const MATCH_SWITCH_STABILITY_FRAMES = 5;
 const CONFIRMED_REVERIFY_INTERVAL_MS = 1000;
 const FAST_CONFIRM_ENABLED = import.meta.env.VITE_FACE_FAST_CONFIRM === 'true';
 const QUALITY_GATE_ENABLED = import.meta.env.VITE_FACE_QUALITY_GATE !== 'false';
-
-function scanOverrunCooldownMs(lastScanDurationMs: number): number {
-  return Math.max(SCAN_OVERRUN_COOLDOWN_MIN_MS, lastScanDurationMs * 0.5);
-}
 
 export interface RecognizedStudent {
   id: string;
@@ -167,6 +165,8 @@ type LiveDetectionFrameRef = Readonly<{
   current: {
     source: HTMLCanvasElement;
     capturedAt: number;
+    snapshotDurationMs: number;
+    scrfdDurationMs: number;
     frameTimestamp: number;
     resultArrivedAt: number;
     frameId: number;
@@ -244,6 +244,7 @@ export function useFaceRecognition(
   const faceTracksRef = useRef<FaceRecognitionTrack[]>([]);
   const nextFaceTrackIdRef = useRef(1);
   const descriptorRotationCursorRef = useRef(0);
+  const budgetRotationPendingRef = useRef(false);
   const processingRef = useRef(false);
   const lastMatchResultRef = useRef<{ reason: string; distance: number; secondDistance: number } | null>(null);
   const lastBoxRef = useRef<FaceRecognitionBox | null>(null);
@@ -685,6 +686,8 @@ export function useFaceRecognition(
         let scansInPerformanceWindow = 0;
         let updatesInPerformanceWindow = 0;
         let scanDurationInPerformanceWindow = 0;
+        const scanTimingSamples: Array<Record<string, number>> = [];
+        let previousSummaryLoggingMs = 0;
         const motionScanDurations: number[] = [];
         let recognitionDiagnosticWindowStartedAt = performance.now();
         const recognitionDiagnosticOutcomes: Record<string, number> = {};
@@ -758,6 +761,26 @@ export function useFaceRecognition(
         const scanFrame = async () => {
           const scanStartedAt = performance.now();
           let scanSnapshotStartedAt: number | null = null;
+          const scanTimings = {
+            snapshotMs: 0,
+            scrfdMs: 0,
+            qualityMs: 0,
+            initialMs: 0,
+            larger_padding_40Ms: 0,
+            lower_scoreMs: 0,
+            ssd_mobilenetMs: 0,
+            matchingMs: 0,
+            trackingMs: 0,
+            stateUpdatesMs: 0,
+            scanMs: 0,
+            consoleLoggingMs: 0,
+          };
+          let scanConsoleLoggingMs = 0;
+          const logScanConsole = (log: () => void) => {
+            const logStartedAt = performance.now();
+            log();
+            scanConsoleLoggingMs += performance.now() - logStartedAt;
+          };
           const video = videoRef.current;
           if (
             cancelled ||
@@ -863,16 +886,17 @@ export function useFaceRecognition(
               const capturedAt = detectionFrame?.capturedAt ??
                 regions.find(region => region.frameCapturedAt !== undefined)?.frameCapturedAt ??
                 frameCapturedAt;
-              console.debug('[FaceRecognition] Detection frame timing', {
+              if (FACE_ATTEMPT_LOGS_ENABLED) logScanConsole(() => console.debug('[FaceRecognition] Detection frame timing', {
                 frameTimestamp: detectionFrame?.frameTimestamp ?? regions[0]?.frameTimestamp ?? null,
                 detectorResultArrivedAt: detectionFrame?.resultArrivedAt ??
                   regions[0]?.detectionResultAt ?? null,
                 recognitionScanStartedAt: Number(scanStartedAt.toFixed(1)),
                 boxAgeAtScanMs: Number((performance.now() - capturedAt).toFixed(1)),
                 detectedBoxes: regions.length,
-              });
+              }));
             }
             const mobileOptimizationActive = isMobileFaceOptimizationActive();
+            const qualityStartedAt = performance.now();
             const qualityAssessments = regions.map((region, index) => {
               try {
                 const reusableCanvas = mobileOptimizationActive && !motionEnabled
@@ -914,6 +938,11 @@ export function useFaceRecognition(
                 };
               }
             });
+            scanTimings.qualityMs = performance.now() - qualityStartedAt;
+            scanTimings.snapshotMs = detectionFrame?.snapshotDurationMs ??
+              regions[0]?.snapshotDurationMs ?? 0;
+            scanTimings.scrfdMs = detectionFrame?.scrfdDurationMs ??
+              regions[0]?.scrfdDurationMs ?? detectorDurationMs ?? 0;
             let provisionalTracks: Array<FaceRecognitionTrack | undefined> = [];
             let qualityGateReasons: Array<string | undefined> = [];
             if (regions.length > 0) {
@@ -923,6 +952,7 @@ export function useFaceRecognition(
               const frameHeight = frameSource instanceof HTMLVideoElement
                 ? video.videoHeight || 480
                 : frameSource.height || 480;
+              const provisionalTrackingStartedAt = performance.now();
               const previousTracks = faceTracksRef.current;
               const detectionBoxes = regions.map(({ x, y, width, height }) => ({ x, y, width, height }));
               const initialAssignments = assignFaceDetectionTracks(
@@ -971,6 +1001,9 @@ export function useFaceRecognition(
                   }
                 }
               });
+              const budgetRotationStart = budgetRotationPendingRef.current
+                ? descriptorRotationCursorRef.current
+                : null;
               const selection = selectFaceDescriptorDetections(
                 provisionalTracks.map((track, index) => ({
                   confirmed: Boolean(track?.confirmedStudent),
@@ -1002,6 +1035,17 @@ export function useFaceRecognition(
                     regions[b]!.width * regions[b]!.height - regions[a]!.width * regions[a]!.height;
                 });
               }
+              if (budgetRotationStart !== null && selectedIndices.includes(budgetRotationStart)) {
+                selectedIndices.splice(
+                  0,
+                  selectedIndices.length,
+                  ...rotateFaceIndicesToFront(selectedIndices, budgetRotationStart)
+                );
+                budgetRotationPendingRef.current = false;
+              } else if (budgetRotationStart !== null) {
+                descriptorRotationCursorRef.current = budgetRotationStart;
+              }
+              scanTimings.trackingMs += performance.now() - provisionalTrackingStartedAt;
               setIsAnalyzing(true);
               setRecognizedFaces(regions.map((region, index) => ({
                 id: `scan-${Math.round(performance.now())}-${index}`,
@@ -1027,13 +1071,13 @@ export function useFaceRecognition(
                   motionEnabled ||
                   !track?.lastRetrySequenceAt ||
                   timestamp - track.lastRetrySequenceAt >= 1000;
-                if (import.meta.env.DEV && motionEnabled) {
-                  console.debug('[FaceRecognition] Motion snapshot-to-crop', {
+                if (FACE_ATTEMPT_LOGS_ENABLED && motionEnabled) {
+                  logScanConsole(() => console.debug('[FaceRecognition] Motion snapshot-to-crop', {
                     trackId: track?.id ?? `new-face-${index}`,
                     frameId: detectionFrameRef?.current?.frameId ?? null,
                     snapshotToCropMs: Number((performance.now() - frameCapturedAt).toFixed(1)),
                     usedBestFrame: Boolean(bestCandidate && bestCandidate.capturedAt !== frameCapturedAt),
-                  });
+                  }));
                 }
                 const result = await describePaddedFaceCrop(
                   extractionRegion,
@@ -1043,19 +1087,32 @@ export function useFaceRecognition(
                   undefined,
                   extractionSource,
                   allowRetries,
-                  motionEnabled || FACE_CROP_RETRY_DIAGNOSTICS_ENABLED
+                  FACE_CROP_ADAPTIVE_RETRY_ENABLED || motionEnabled || FACE_CROP_RETRY_DIAGNOSTICS_ENABLED
                     ? {
                         preferredStep: (motionEnabled || FACE_CROP_ADAPTIVE_RETRY_ENABLED) && track
                           ? lastSuccessfulCropStepByTrack.get(track.id)
                           : undefined,
                         maxDetectorPasses: motionEnabled || FACE_CROP_ADAPTIVE_RETRY_ENABLED ? 2 : undefined,
                         detectorInputSize: getFaceCropDetectorInputSize(),
-                        shouldStop: motionEnabled
-                          ? () => performance.now() - scanStartedAt >= (isMobileDevice() ? 90 : 120)
+                        shouldStop: motionEnabled || FACE_CROP_ADAPTIVE_RETRY_ENABLED
+                          ? () => performance.now() - extractionBudgetStartedAt >= (isMobileDevice() ? 90 : 120)
                           : undefined,
+                        logAttempts: FACE_ATTEMPT_LOGS_ENABLED,
+                        onConsoleLogDuration: duration => {
+                          scanConsoleLoggingMs += duration;
+                        },
                       }
                     : undefined
                 );
+                const retryAttempts = result.retryAttempts ?? [];
+                if (retryAttempts.length) {
+                  for (const retryAttempt of retryAttempts) {
+                    const timingKey = `${retryAttempt.step}Ms` as keyof typeof scanTimings;
+                    scanTimings[timingKey] += retryAttempt.durationMs;
+                  }
+                } else {
+                  scanTimings.initialMs += result.durationMs;
+                }
                 if (bestCandidate && result.status === 'descriptor') {
                   const dx = regions[index]!.x - bestCandidate.region.x;
                   const dy = regions[index]!.y - bestCandidate.region.y;
@@ -1070,11 +1127,13 @@ export function useFaceRecognition(
                 return result;
               };
               let selectedResults: FaceRegionRecognitionResult[];
-              if (motionEnabled) {
+              const extractionBudgetStartedAt = performance.now();
+              if (motionEnabled || FACE_CROP_ADAPTIVE_RETRY_ENABLED) {
                 selectedResults = [];
                 for (let position = 0; position < selectedIndices.length; position++) {
-                  if (performance.now() - scanStartedAt >= (isMobileDevice() ? 90 : 120)) {
+                  if (performance.now() - extractionBudgetStartedAt >= (isMobileDevice() ? 90 : 120)) {
                     descriptorRotationCursorRef.current = selectedIndices[position]!;
+                    budgetRotationPendingRef.current = true;
                     for (let skippedPosition = position; skippedPosition < selectedIndices.length; skippedPosition++) {
                       const skippedIndex = selectedIndices[skippedPosition]!;
                       selectedResults.push({
@@ -1090,6 +1149,7 @@ export function useFaceRecognition(
                   selectedResults.push(result);
                   if (result.status === 'skipped' && result.reason === 'motion_time_budget') {
                     descriptorRotationCursorRef.current = selectedIndices[position]!;
+                    budgetRotationPendingRef.current = true;
                     for (let skippedPosition = position + 1; skippedPosition < selectedIndices.length; skippedPosition++) {
                       const skippedIndex = selectedIndices[skippedPosition]!;
                       selectedResults.push({
@@ -1109,7 +1169,7 @@ export function useFaceRecognition(
               const resultByIndex = new Map(
                 selectedIndices.map((index, selectedIndex) => [index, selectedResults[selectedIndex]!])
               );
-              if (FACE_CROP_RETRY_DIAGNOSTICS_ENABLED || motionEnabled) {
+              if (FACE_CROP_RETRY_DIAGNOSTICS_ENABLED || motionEnabled || FACE_CROP_ADAPTIVE_RETRY_ENABLED) {
                 selectedResults.forEach((result, selectedIndex) => {
                   const track = provisionalTracks[selectedIndices[selectedIndex]!];
                   result.retryAttempts?.forEach(retryAttempt => {
@@ -1133,7 +1193,7 @@ export function useFaceRecognition(
                 durationMs: 0,
               });
 
-              if (import.meta.env.DEV && qualityScanLogCount < 10) {
+              if (FACE_ATTEMPT_LOGS_ENABLED && qualityScanLogCount < 10) {
                 qualityScanLogCount++;
                 regions.forEach((_, index) => {
                   const quality = qualityAssessments[index]!;
@@ -1165,7 +1225,7 @@ export function useFaceRecognition(
                   else qualityLogCounts.skipped++;
                   if (!wasSelected) qualityLogCounts.skippedByDescriptor++;
                   if (result) qualityLogCounts[result.status]++;
-                  console.info('[FaceRecognition] Quality scan', {
+                  logScanConsole(() => console.info('[FaceRecognition] Quality scan', {
                     scan: qualityScanLogCount,
                     face: index,
                     quality: {
@@ -1189,13 +1249,13 @@ export function useFaceRecognition(
                               : undefined,
                         }
                       : { status: 'skipped', reason: skippedWhy },
-                  });
+                  }));
                 });
                 if (qualityScanLogCount === 10) {
-                  console.info('[FaceRecognition] First 10 quality scan aggregate', qualityLogCounts);
+                  logScanConsole(() => console.info('[FaceRecognition] First 10 quality scan aggregate', qualityLogCounts));
                 }
               }
-              if (import.meta.env.DEV && cropAttemptLogCount < 50) {
+              if (FACE_ATTEMPT_LOGS_ENABLED && cropAttemptLogCount < 50) {
                 selectedIndices.forEach((index, selectedIndex) => {
                   const result = selectedResults[selectedIndex]!;
                   result.retryAttempts?.forEach(retryAttempt => {
@@ -1206,16 +1266,16 @@ export function useFaceRecognition(
                     } else if (result.status === 'descriptor') {
                       cropAttemptCounts.succeededByStep[retryAttempt.step]++;
                     }
-                    console.info('[FaceRecognition] Crop extraction attempt', {
+                    logScanConsole(() => console.info('[FaceRecognition] Crop extraction attempt', {
                       attempt: cropAttemptLogCount,
                       trackId: provisionalTracks[index]?.id ?? `new-face-${index}`,
                       step: retryAttempt.step,
                       failureReason: retryAttempt.failureReason,
                       error: retryAttempt.error,
                       retryStepSucceeded: result.retryStepSucceeded ?? null,
-                    });
+                    }));
                     if (cropAttemptLogCount === 50) {
-                      console.info('[FaceRecognition] First 50 crop extraction attempts aggregate', cropAttemptCounts);
+                      logScanConsole(() => console.info('[FaceRecognition] First 50 crop extraction attempts aggregate', cropAttemptCounts));
                     }
                   });
                 });
@@ -1225,6 +1285,7 @@ export function useFaceRecognition(
             }
 
             const attempts = regionResults;
+            const matchingStartedAt = performance.now();
             const frameWidth = frameSource instanceof HTMLVideoElement
             ? video.videoWidth || 640
             : frameSource.width || 640;
@@ -1238,6 +1299,8 @@ export function useFaceRecognition(
                 ? resolveMatch(attempt.detection.descriptor)
                 : null
             );
+            scanTimings.matchingMs = performance.now() - matchingStartedAt;
+            const trackingStartedAt = performance.now();
             const matches = decisions.map(decision => decision?.student ?? null);
             const trackAssignments = assignFaceDetectionTracks(
               attempts.map(attempt => attempt.region),
@@ -1453,7 +1516,7 @@ export function useFaceRecognition(
                   bucket.distances.push(bestDistance);
                   if (bestDistance > FACENET_DISTANCE_THRESHOLD) bucket.overThreshold++;
                 }
-                console.debug('[FaceRecognition] Recognition attempt', {
+                if (FACE_ATTEMPT_LOGS_ENABLED) logScanConsole(() => console.debug('[FaceRecognition] Recognition attempt', {
                   trackId: track.id,
                   bestMatchStudentId: bestStudentId,
                   bestDistance,
@@ -1476,36 +1539,40 @@ export function useFaceRecognition(
                         attempt.status === 'quality_rejected'
                       ? attempt.reason
                       : undefined,
-                });
+                }));
 
                 if ((FACE_CROP_RETRY_DIAGNOSTICS_ENABLED || motionEnabled) && attempt.status === 'descriptor') {
                   successfulExtractionsInWindow++;
                   detectorPassesForSuccessfulExtractionsInWindow +=
                     attempt.retryAttempts?.filter(retryAttempt => retryAttempt.detector).length ?? 0;
                 }
-                if ((FACE_CROP_PADDING_COMPARISON_ENABLED || motionEnabled) && attempt.status === 'descriptor') {
+                if ((FACE_CROP_PADDING_COMPARISON_ENABLED || motionEnabled) &&
+                  FACE_ATTEMPT_LOGS_ENABLED && attempt.status === 'descriptor') {
                   if (!paddingComparisonAtByTrack.has(track.id)) {
                     paddingComparisonAtByTrack.set(track.id, timestamp);
                     const comparisonStartedAt = performance.now();
                     void compareFacePaddingDescriptors(attempt.region, frameSource)
                       .then(comparison => {
-                        console.info('[FaceRecognition] Same-frame 20% vs 40% crop descriptor comparison', {
+                        if (!FACE_ATTEMPT_LOGS_ENABLED) return;
+                        logScanConsole(() => console.info('[FaceRecognition] Same-frame 20% vs 40% crop descriptor comparison', {
                           trackId: track.id,
                           distance: comparison.distance,
                           twentyPercentDescriptorAvailable: comparison.twentyPercent,
                           fortyPercentDescriptorAvailable: comparison.fortyPercent,
                           comparisonMs: Number((performance.now() - comparisonStartedAt).toFixed(1)),
                           adaptiveRetryEnabled: FACE_CROP_ADAPTIVE_RETRY_ENABLED,
-                        });
+                        }));
                         if (comparison.distance !== null && comparison.distance > 0.15) {
-                          console.warn('[FaceRecognition] Padding comparison exceeded 0.15; review paired live results before changing any default.', {
+                          logScanConsole(() => console.warn('[FaceRecognition] Padding comparison exceeded 0.15; review paired live results before changing any default.', {
                             trackId: track.id,
                             distance: comparison.distance,
-                          });
+                          }));
                         }
                       })
                       .catch(error => {
-                        console.warn('[FaceRecognition] Same-frame crop comparison failed:', error);
+                        if (FACE_ATTEMPT_LOGS_ENABLED) {
+                          logScanConsole(() => console.warn('[FaceRecognition] Same-frame crop comparison failed:', error));
+                        }
                       });
                   }
                 }
@@ -1517,7 +1584,7 @@ export function useFaceRecognition(
                 ) {
                   const reportKey = `${track.id}:${bestStudentId}`;
                   const lastReportAt = reportedStoredDistancesAt.get(reportKey) ?? 0;
-                  if (timestamp - lastReportAt >= 10_000) {
+                  if (FACE_ATTEMPT_LOGS_ENABLED && timestamp - lastReportAt >= 10_000) {
                     const stored = galleryRef.current.find(entry => entry.label === bestStudentId);
                     if (stored) {
                       reportedStoredDistancesAt.set(reportKey, timestamp);
@@ -1528,12 +1595,12 @@ export function useFaceRecognition(
                         index,
                         distance: euclideanDistance(attempt.detection.descriptor, storedDescriptor),
                       }));
-                      console.info('[FaceRecognition] Stored descriptors vs live frontal descriptor', {
+                      logScanConsole(() => console.info('[FaceRecognition] Stored descriptors vs live frontal descriptor', {
                         trackId: track.id,
                         studentId: bestStudentId,
                         yawDeg: pose.yawDeg,
-                      });
-                      console.table(descriptorRows);
+                      }));
+                      logScanConsole(() => console.table(descriptorRows));
                     }
                   }
                 }
@@ -1615,6 +1682,7 @@ export function useFaceRecognition(
               item.diagnostic.reason = 'duplicate_student_claim';
             }
             faceTracksRef.current = nextTracks;
+            scanTimings.trackingMs += performance.now() - trackingStartedAt;
             if (FACE_DIAGNOSTICS_ENABLED) {
               const activeTrackIds = new Set(nextTracks.map(track => track.id));
               for (const trackId of diagnosticTrackDistances.keys()) {
@@ -1625,19 +1693,20 @@ export function useFaceRecognition(
                   reportedStoredDistancesAt.delete(reportKey);
                 }
               }
-              for (const trackId of lastSuccessfulCropStepByTrack.keys()) {
-                if (!activeTrackIds.has(trackId)) lastSuccessfulCropStepByTrack.delete(trackId);
-              }
               for (const trackId of paddingComparisonAtByTrack.keys()) {
                 if (!activeTrackIds.has(trackId)) paddingComparisonAtByTrack.delete(trackId);
               }
+            }
+            const activeTrackIds = new Set(nextTracks.map(track => track.id));
+            for (const trackId of lastSuccessfulCropStepByTrack.keys()) {
+              if (!activeTrackIds.has(trackId)) lastSuccessfulCropStepByTrack.delete(trackId);
             }
             if (performance.now() <= overlapDebugUntilRef.current) {
               nextTracks.forEach((track, index) => {
                 nextTracks.slice(index + 1).forEach(otherTrack => {
                   const { iou, centerDistance } = faceBoxOverlap(track.box, otherTrack.box);
                   if (iou <= 0.3) return;
-                  console.debug('[FaceRecognition] Overlapping tracks', {
+                  if (FACE_ATTEMPT_LOGS_ENABLED) logScanConsole(() => console.debug('[FaceRecognition] Overlapping tracks', {
                     tracks: [
                       {
                         id: track.id,
@@ -1654,7 +1723,7 @@ export function useFaceRecognition(
                     ],
                     iou: Number(iou.toFixed(3)),
                     centerDistance: Number(centerDistance.toFixed(1)),
-                  });
+                  }));
                 });
               });
             }
@@ -1700,6 +1769,7 @@ export function useFaceRecognition(
             const primaryStudent = recognizedItems
               .find(item => item.student !== null)?.student ?? null;
 
+            const stateUpdatesStartedAt = performance.now();
             setRecognizedFaces(recognizedItems);
             updatesInPerformanceWindow++;
             setMatchedStudents(uniqueStudents);
@@ -1721,7 +1791,7 @@ export function useFaceRecognition(
                   } (limit ${FACENET_DISTANCE_THRESHOLD}).`
                 : '')
             );
-            if (import.meta.env.DEV) {
+            if (FACE_ATTEMPT_LOGS_ENABLED) {
               const regionStatusCounts = attempts.reduce<Record<string, number>>((counts, attempt) => {
                 const key = attempt.status === 'descriptor' ? 'ok' : `${attempt.status}:${attempt.reason}`;
                 counts[key] = (counts[key] ?? 0) + 1;
@@ -1776,16 +1846,19 @@ export function useFaceRecognition(
                   distance: item.diagnostic.distance,
                 })),
               };
-              if (regionResultLogCount < 8) {
+              if (FACE_ATTEMPT_LOGS_ENABLED && regionResultLogCount < 8) {
                 regionResultLogCount += 1;
-                if (FACE_DIAGNOSTICS_ENABLED) console.info('[FaceRecognition] Region results', scanDiagnostics);
+                logScanConsole(() => console.info('[FaceRecognition] Region results', scanDiagnostics));
               } else {
-                if (FACE_DIAGNOSTICS_ENABLED) console.debug('[FaceRecognition] Scan diagnostics', scanDiagnostics);
+                if (FACE_ATTEMPT_LOGS_ENABLED) {
+                  logScanConsole(() => console.debug('[FaceRecognition] Scan diagnostics', scanDiagnostics));
+                }
               }
             }
             setIsLive(uniqueStudents.length > 0);
             isLiveRef.current = uniqueStudents.length > 0;
             setIsAnalyzing(recognizedItems.some(item => item.isMatching));
+            scanTimings.stateUpdatesMs = performance.now() - stateUpdatesStartedAt;
           } catch (scanError) {
             setIsAnalyzing(false);
             const reason = scanError instanceof Error ? scanError.message : String(scanError);
@@ -1801,6 +1874,9 @@ export function useFaceRecognition(
             console.warn('[FaceRecognition] Live scan failed:', scanError);
           } finally {
             releaseFaceScan(processingRef);
+            scanTimings.scanMs = performance.now() - scanStartedAt;
+            scanTimings.consoleLoggingMs = scanConsoleLoggingMs;
+            scanTimingSamples.push(scanTimings);
             scansInPerformanceWindow++;
             const completedScanDuration = performance.now() -
               (FACE_MOTION_OPTIMIZATIONS_ENABLED && scanSnapshotStartedAt !== null
@@ -1825,6 +1901,7 @@ export function useFaceRecognition(
               (FACE_DIAGNOSTICS_ENABLED || (import.meta.env.DEV && FACE_MOTION_OPTIMIZATIONS_ENABLED)) &&
               recognitionDiagnosticWindowMs >= 10_000
             ) {
+              const summaryLoggingStartedAt = performance.now();
               console.groupCollapsed('[FaceRecognition] Recognition diagnostics (10-second window)');
               if (FACE_MOTION_OPTIMIZATIONS_ENABLED) {
                 console.info('[FaceRecognition] Motion scan metrics (10-second window)', {
@@ -1852,6 +1929,33 @@ export function useFaceRecognition(
                 };
               }));
               console.table(confirmedTrackReports);
+              console.table([
+                'snapshotMs',
+                'scrfdMs',
+                'qualityMs',
+                'initialMs',
+                'larger_padding_40Ms',
+                'lower_scoreMs',
+                'ssd_mobilenetMs',
+                'matchingMs',
+                'trackingMs',
+                'stateUpdatesMs',
+                'consoleLoggingMs',
+                'scanMs',
+              ].map(stage => ({
+                stage,
+                averageMs: scanTimingSamples.length
+                  ? Number((
+                      scanTimingSamples.reduce((sum, sample) => sum + (sample[stage] ?? 0), 0) /
+                      scanTimingSamples.length
+                    ).toFixed(1))
+                  : 0,
+                scans: scanTimingSamples.length,
+                note: stage === 'consoleLoggingMs'
+                  ? `Previous summary output took ${previousSummaryLoggingMs.toFixed(1)}ms`
+                  : undefined,
+              })));
+              scanTimingSamples.length = 0;
               if (FACE_CROP_RETRY_DIAGNOSTICS_ENABLED || FACE_MOTION_OPTIMIZATIONS_ENABLED) {
                 console.table(Array.from(cropRetryAttemptsByStep, ([step, attempts]) => ({
                   step,
@@ -1881,6 +1985,7 @@ export function useFaceRecognition(
                 detectorPassesForSuccessfulExtractionsInWindow = 0;
               }
               console.groupEnd();
+              previousSummaryLoggingMs = performance.now() - summaryLoggingStartedAt;
               for (const outcome of Object.keys(recognitionDiagnosticOutcomes)) {
                 delete recognitionDiagnosticOutcomes[outcome];
               }
@@ -1895,7 +2000,7 @@ export function useFaceRecognition(
             if (!cancelled && !shouldPause()) {
               const elapsed = performance.now() - scanStartedAt;
               const delay = elapsed > SCAN_INTERVAL_MS
-                ? scanOverrunCooldownMs(elapsed)
+                ? getScanOverrunCooldownMs(elapsed)
                 : Math.max(0, SCAN_INTERVAL_MS - elapsed);
               scheduleScan(delay);
             }

@@ -12,11 +12,14 @@ import { CaptureProgressDots } from './CaptureProgressDots';
 import { CapturedFrameThumbnails } from './CapturedFrameThumbnails';
 import { ConsentConfirmCheckbox } from './ConsentConfirmCheckbox';
 import { CaptureControls } from './CaptureControls';
+import { FACE_DIAGNOSTICS_ENABLED } from '@/features/attendance/lib/faceOptimizationFlags';
 import {
   checkRegistrationPose,
   FACE_REGISTRATION_POSE_CHECK_ENABLED,
-  measureImageQuality,
+  imageQualityGuidance,
+  measureDownscaledCanvasQuality,
   REGISTRATION_MIN_BRIGHTNESS,
+  type RegistrationCapturePreview,
 } from '../lib/registrationChecks';
 
 interface FaceCaptureModalProps {
@@ -43,6 +46,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
     isAllCaptured,
     hasAllDescriptors,
     isValidatingCapture,
+    captureProgress,
     captureErrors,
     setConsentConfirmed,
     captureCurrentAngle,
@@ -60,22 +64,37 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   );
 
   const { isSubmitting, error: submitError, submit, resetError } = useRegisterStudentFace();
-  const [meanBrightness, setMeanBrightness] = useState<number | null>(null);
+  const [previewStatus, setPreviewStatus] = useState<{
+    poseCheck: ReturnType<typeof checkRegistrationPose> | null;
+    quality: RegistrationCapturePreview['quality'];
+  } | null>(null);
   const faceBoxRef = useRef(faceBox);
   faceBoxRef.current = faceBox;
-  const livePoseCheck = FACE_REGISTRATION_POSE_CHECK_ENABLED && currentStep !== 'review'
-    ? checkRegistrationPose(activeAngle, faceBox)
+  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const qualityCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const capturePreviewRef = useRef<RegistrationCapturePreview | null>(null);
+  const capturePausedRef = useRef(false);
+  const livePoseCheck = previewStatus?.poseCheck ?? null;
+  const meanBrightness = previewStatus?.quality?.meanBrightness ?? null;
+  const qualityGuidance = previewStatus?.quality
+    ? imageQualityGuidance(previewStatus.quality)
     : null;
+  const previewIsFresh = Boolean(
+    capturePreviewRef.current &&
+    performance.now() - capturePreviewRef.current.sampledAt <= 500
+  );
   const isPoseReady = !FACE_REGISTRATION_POSE_CHECK_ENABLED || Boolean(
     livePoseCheck?.accepted &&
-    meanBrightness !== null &&
-    meanBrightness >= REGISTRATION_MIN_BRIGHTNESS
+    previewStatus?.quality &&
+    !qualityGuidance &&
+    previewIsFresh
   );
 
   // Start camera when modal opens, stop when closes
   useEffect(() => {
     if (isOpen && student) {
-      setMeanBrightness(null);
+      setPreviewStatus(null);
+      capturePreviewRef.current = null;
       resetSession();
       resetError();
       startCamera();
@@ -86,44 +105,90 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
   useEffect(() => {
     if (!isOpen || !stream) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = 32;
-    canvas.height = 32;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) {
-      console.warn('[FaceRegistration] Could not initialize the lighting preview.');
-      return;
-    }
+    const canvas = captureCanvasRef.current ??= document.createElement('canvas');
+    const qualityCanvas = qualityCanvasRef.current ??= document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not initialize the registration capture canvas.');
 
-    const sampleBrightness = () => {
+    const samplePreview = () => {
+      if (capturePausedRef.current) return;
       const video = videoRef.current;
       const box = faceBoxRef.current;
-      if (!video || !box || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      const poseStartedAt = FACE_DIAGNOSTICS_ENABLED ? performance.now() : 0;
+      const poseCheck = FACE_REGISTRATION_POSE_CHECK_ENABLED
+        ? checkRegistrationPose(activeAngle, box)
+        : { accepted: true, guidance: 'Pose checks are disabled.', pose: null };
+      const poseMs = FACE_DIAGNOSTICS_ENABLED ? performance.now() - poseStartedAt : 0;
+      if (!box || !poseCheck.accepted) {
+        capturePreviewRef.current = null;
+        setPreviewStatus({ poseCheck, quality: null });
+        return;
+      }
+
+      const sourceWidth = video.videoWidth || 640;
+      const sourceHeight = video.videoHeight || 480;
+      const padX = box.width * 0.28;
+      const padY = box.height * 0.35;
+      const sx = Math.max(0, box.x - padX);
+      const sy = Math.max(0, box.y - padY);
+      const sw = Math.min(sourceWidth - sx, box.width + padX * 2);
+      const sh = Math.min(sourceHeight - sy, box.height + padY * 2);
+      const width = Math.max(1, Math.round(sw));
+      const height = Math.max(1, Math.round(sh));
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+
+      const frameCopyStartedAt = FACE_DIAGNOSTICS_ENABLED ? performance.now() : 0;
       try {
-        context.drawImage(
-          video,
-          box.x,
-          box.y,
-          box.width,
-          box.height,
-          0,
-          0,
-          canvas.width,
-          canvas.height
-        );
-        setMeanBrightness(measureImageQuality(
-          context.getImageData(0, 0, canvas.width, canvas.height)
-        ).meanBrightness);
+        context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        const frameCopyMs = FACE_DIAGNOSTICS_ENABLED
+          ? performance.now() - frameCopyStartedAt
+          : 0;
+        let qualityCopyMs = 0;
+        let brightnessMs = 0;
+        let sharpnessMs = 0;
+        const quality = FACE_REGISTRATION_POSE_CHECK_ENABLED
+          ? measureDownscaledCanvasQuality(
+              canvas,
+              qualityCanvas,
+              0.9,
+              FACE_DIAGNOSTICS_ENABLED ? timings => {
+              qualityCopyMs = timings.qualityCopyMs;
+              brightnessMs = timings.brightnessMs;
+              sharpnessMs = timings.sharpnessMs;
+              } : undefined
+            )
+          : null;
+        const sample: RegistrationCapturePreview = {
+          angle: activeAngle,
+          canvas,
+          sampledAt: performance.now(),
+          face: box,
+          poseCheck,
+          quality,
+          frameCopyMs,
+          poseMs,
+          qualityCopyMs,
+          brightnessMs,
+          sharpnessMs,
+        };
+        capturePreviewRef.current = sample;
+        setPreviewStatus({ poseCheck, quality });
       } catch (error) {
-        setMeanBrightness(null);
-        console.warn('[FaceRegistration] Could not measure the live lighting level:', error);
+        capturePreviewRef.current = null;
+        setPreviewStatus({ poseCheck, quality: null });
+        console.error('[FaceRegistration] Could not check the live capture frame:', error);
       }
     };
 
-    sampleBrightness();
-    const interval = window.setInterval(sampleBrightness, 500);
-    return () => window.clearInterval(interval);
-  }, [isOpen, stream]);
+    samplePreview();
+    const interval = window.setInterval(samplePreview, 250);
+    return () => {
+      window.clearInterval(interval);
+      capturePreviewRef.current = null;
+    };
+  }, [isOpen, stream, activeAngle]);
 
   // Trap ESC key for modal closing
   useEffect(() => {
@@ -143,8 +208,11 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   };
 
   const handleCaptureFrame = async () => {
-    if (videoRef.current) {
-      await captureCurrentAngle(videoRef.current, faceBox);
+    capturePausedRef.current = true;
+    try {
+      await captureCurrentAngle(capturePreviewRef.current);
+    } finally {
+      capturePausedRef.current = false;
     }
   };
 
@@ -279,8 +347,13 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               <div className="text-slate-600 dark:text-slate-300">
                 {meanBrightness !== null && meanBrightness < REGISTRATION_MIN_BRIGHTNESS
                   ? 'Too dark. Improve the lighting before capture.'
-                  : livePoseCheck?.guidance ?? 'Pose checks are disabled.'}
+                  : qualityGuidance ?? livePoseCheck?.guidance ?? 'Checking the latest frame...'}
               </div>
+              {previewStatus?.quality && (
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Sharpness {previewStatus.quality.sharpness.toFixed(1)} / 50 minimum.
+                </div>
+              )}
               <div className="text-[10px] text-slate-500 dark:text-slate-400">
                 Approximation: (left nose-eye distance − right nose-eye distance) ÷ their sum × 90° for yaw; eye-line angle for roll.
                 Front ±10°; left/right 15–35°; roll ≤15°.
@@ -331,6 +404,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             isPoseReady={isPoseReady}
             isSubmitting={isSubmitting}
             isValidatingCapture={isValidatingCapture}
+            captureProgress={captureProgress}
             onCapture={handleCaptureFrame}
             onSubmit={handleSubmit}
             onCancel={handleClose}

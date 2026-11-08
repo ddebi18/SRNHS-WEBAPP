@@ -1,18 +1,26 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { CaptureAngle, CapturedFrame } from '../types';
-import { FaceBox } from './useFaceDetection';
 import {
   FACE_DESCRIPTOR_EXTRACTION_FAILURE_MESSAGES,
+  type FaceDescriptorExtractionPass,
   extractDescriptorsFromBlobsWithDiagnostics,
 } from '@/features/attendance/lib/faceNetEngine';
+import { FACE_DIAGNOSTICS_ENABLED } from '@/features/attendance/lib/faceOptimizationFlags';
 import {
-  checkRegistrationPose,
   FACE_REGISTRATION_POSE_CHECK_ENABLED,
+  getMinimumPoseDescriptorDistance,
   imageQualityGuidance,
-  measureImageQuality,
+  REGISTRATION_MIN_POSE_DESCRIPTOR_DISTANCE,
+  type RegistrationCapturePreview,
 } from '../lib/registrationChecks';
 
 export type SessionStep = 'consent' | 'front' | 'left' | 'right' | 'review';
+
+const CAPTURE_PREVIEW_MAX_AGE_MS = 500;
+
+function yieldToMain(): Promise<void> {
+  return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
 
 export interface UseFaceCaptureSessionReturn {
   currentStep: SessionStep;
@@ -21,9 +29,10 @@ export interface UseFaceCaptureSessionReturn {
   isAllCaptured: boolean;
   hasAllDescriptors: boolean;
   isValidatingCapture: boolean;
+  captureProgress: string | null;
   captureErrors: Partial<Record<CaptureAngle, string>>;
   setConsentConfirmed: (confirmed: boolean) => void;
-  captureCurrentAngle: (videoElement: HTMLVideoElement, faceBox?: FaceBox | null) => Promise<void>;
+  captureCurrentAngle: (preview: RegistrationCapturePreview | null) => Promise<void>;
   retakeAngle: (angle: CaptureAngle) => void;
   goToStep: (step: SessionStep) => void;
   resetSession: () => void;
@@ -33,6 +42,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
   const [currentStep, setCurrentStep] = useState<SessionStep>('front');
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [isValidatingCapture, setIsValidatingCapture] = useState(false);
+  const [captureProgress, setCaptureProgress] = useState<string | null>(null);
   const [captureErrors, setCaptureErrors] = useState<Partial<Record<CaptureAngle, string>>>({});
   const [capturedFrames, setCapturedFrames] = useState<Record<CaptureAngle, CapturedFrame | null>>({
     front: null,
@@ -56,12 +66,26 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     };
   }, []);
 
-  const captureCurrentAngle = useCallback(async (video: HTMLVideoElement, faceBox?: FaceBox | null) => {
+  const captureCurrentAngle = useCallback(async (preview: RegistrationCapturePreview | null) => {
     if (captureInProgressRef.current || currentStep === 'review' || currentStep === 'consent') return;
     const angle = currentStep as CaptureAngle;
+    const captureStartedAt = FACE_DIAGNOSTICS_ENABLED ? performance.now() : 0;
+    const descriptorPasses: FaceDescriptorExtractionPass[] = [];
+    const timings = {
+      frameCopyMs: preview?.frameCopyMs ?? 0,
+      poseMs: preview?.poseMs ?? 0,
+      qualityCopyMs: preview?.qualityCopyMs ?? 0,
+      sharpnessMs: preview?.sharpnessMs ?? 0,
+      brightnessMs: preview?.brightnessMs ?? 0,
+      blobEncodingMs: 0,
+      descriptorExtractionMs: 0,
+      descriptorSeparationMs: 0,
+      stateUpdateMs: 0,
+    };
     const captureAttempt = ++captureAttemptRef.current;
     captureInProgressRef.current = true;
     setIsValidatingCapture(true);
+    setCaptureProgress('Checking pose...');
     setCaptureErrors(prev => {
       const next = { ...prev };
       delete next[angle];
@@ -69,54 +93,56 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     });
 
     try {
+      await yieldToMain();
+      if (!preview || preview.angle !== angle ||
+        performance.now() - preview.sampledAt > CAPTURE_PREVIEW_MAX_AGE_MS) {
+        setCaptureErrors(prev => ({
+          ...prev,
+          [angle]: 'Hold still and try again so the latest checked frame can be captured.',
+        }));
+        return;
+      }
       if (FACE_REGISTRATION_POSE_CHECK_ENABLED) {
-        const poseCheck = checkRegistrationPose(angle, faceBox);
-        if (!poseCheck.accepted) {
-          setCaptureErrors(prev => ({ ...prev, [angle]: poseCheck.guidance }));
+        if (!preview.poseCheck.accepted) {
+          setCaptureErrors(prev => ({ ...prev, [angle]: preview.poseCheck.guidance }));
           return;
         }
-      }
-
-      const sourceWidth = video.videoWidth || 1280;
-      const sourceHeight = video.videoHeight || 720;
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Could not prepare the captured image.');
-
-      if (faceBox && faceBox.width > 0 && faceBox.height > 0) {
-        const padX = faceBox.width * 0.28;
-        const padY = faceBox.height * 0.35;
-        const sx = Math.max(0, faceBox.x - padX);
-        const sy = Math.max(0, faceBox.y - padY);
-        const sw = Math.min(sourceWidth - sx, faceBox.width + padX * 2);
-        const sh = Math.min(sourceHeight - sy, faceBox.height + padY * 2);
-        canvas.width = Math.max(1, Math.round(sw));
-        canvas.height = Math.max(1, Math.round(sh));
-        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-      } else {
-        canvas.width = sourceWidth;
-        canvas.height = sourceHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      }
-
-      if (FACE_REGISTRATION_POSE_CHECK_ENABLED) {
-        const qualityError = imageQualityGuidance(
-          measureImageQuality(ctx.getImageData(0, 0, canvas.width, canvas.height))
-        );
+        setCaptureProgress('Checking image...');
+        await yieldToMain();
+        const qualityError = preview.quality ? imageQualityGuidance(preview.quality) : 'Hold still and try again.';
         if (qualityError) {
           setCaptureErrors(prev => ({ ...prev, [angle]: qualityError }));
           return;
         }
       }
 
+      setCaptureProgress('Reading face...');
+      await yieldToMain();
+      const encodeStartedAt = FACE_DIAGNOSTICS_ENABLED ? performance.now() : 0;
       const blob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob(
+        preview.canvas.toBlob(
           result => result ? resolve(result) : reject(new Error('Could not encode the captured image.')),
           'image/jpeg',
           0.92
         );
       });
-      const [attempt] = await extractDescriptorsFromBlobsWithDiagnostics([blob]);
+      timings.blobEncodingMs = FACE_DIAGNOSTICS_ENABLED
+        ? performance.now() - encodeStartedAt
+        : 0;
+      const extractionStartedAt = FACE_DIAGNOSTICS_ENABLED ? performance.now() : 0;
+      const [attempt] = await extractDescriptorsFromBlobsWithDiagnostics([blob], {
+        maxPasses: 2,
+        onPassStart: async step => {
+          setCaptureProgress(step === 'initial' ? 'Reading face (first pass)...' : 'Reading face (retry)...');
+          await yieldToMain();
+        },
+        onPassComplete: FACE_DIAGNOSTICS_ENABLED
+          ? pass => descriptorPasses.push(pass)
+          : undefined,
+      });
+      timings.descriptorExtractionMs = FACE_DIAGNOSTICS_ENABLED
+        ? performance.now() - extractionStartedAt
+        : 0;
       if (captureAttempt !== captureAttemptRef.current) return;
       if (!attempt?.descriptor) {
         const failure = attempt?.failure ?? 'inference_failed';
@@ -128,7 +154,33 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
           inference_failed: 'Face analysis failed. Retry this capture.',
         };
         const detail = FACE_DESCRIPTOR_EXTRACTION_FAILURE_MESSAGES[failure];
-        setCaptureErrors(prev => ({ ...prev, [angle]: `${guidance[failure]} (${detail})` }));
+        setCaptureErrors(prev => ({
+          ...prev,
+          [angle]: `${guidance[failure]} Hold still and try again. (${detail})`,
+        }));
+        return;
+      }
+
+      setCaptureProgress('Checking descriptor separation...');
+      await yieldToMain();
+      const separationStartedAt = FACE_DIAGNOSTICS_ENABLED ? performance.now() : 0;
+      const existingDescriptors = (['front', 'left', 'right'] as const)
+        .flatMap(existingAngle => {
+          if (existingAngle === angle) return [];
+          const descriptor = capturedFramesRef.current[existingAngle]?.descriptor;
+          return descriptor ? [descriptor] : [];
+        });
+      const allDescriptors = [...existingDescriptors, Array.from(attempt.descriptor)];
+      const minimumDistance = getMinimumPoseDescriptorDistance(allDescriptors);
+      timings.descriptorSeparationMs = FACE_DIAGNOSTICS_ENABLED
+        ? performance.now() - separationStartedAt
+        : 0;
+      if (FACE_REGISTRATION_POSE_CHECK_ENABLED &&
+        minimumDistance <= REGISTRATION_MIN_POSE_DESCRIPTOR_DISTANCE) {
+        setCaptureErrors(prev => ({
+          ...prev,
+          [angle]: 'This view is too similar to a previous capture. Turn slightly and try again.',
+        }));
         return;
       }
 
@@ -142,6 +194,9 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
         capturedAt: new Date().toISOString(),
       };
 
+      setCaptureProgress('Saving capture...');
+      await yieldToMain();
+      const stateUpdateStartedAt = FACE_DIAGNOSTICS_ENABLED ? performance.now() : 0;
       setCapturedFrames(prev => {
         if (prev[angle]?.previewUrl) {
           URL.revokeObjectURL(prev[angle]!.previewUrl);
@@ -156,6 +211,9 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
       } else if (angle === 'right') {
         setCurrentStep('review');
       }
+      timings.stateUpdateMs = FACE_DIAGNOSTICS_ENABLED
+        ? performance.now() - stateUpdateStartedAt
+        : 0;
     } catch (error) {
       console.error('[FaceRegistration] Capture validation failed:', error);
       if (captureAttempt === captureAttemptRef.current) {
@@ -165,9 +223,43 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
         }));
       }
     } finally {
+      if (FACE_DIAGNOSTICS_ENABLED) {
+        const totalMs = performance.now() - captureStartedAt;
+        const phases = [
+          ['frameCopy', timings.frameCopyMs],
+          ['poseEstimate', timings.poseMs],
+          ['qualityDownscaleAndReadback', timings.qualityCopyMs],
+          ['brightness', timings.brightnessMs],
+          ['sharpness', timings.sharpnessMs],
+          ['blobEncoding', timings.blobEncodingMs],
+          ['descriptorExtraction', timings.descriptorExtractionMs],
+          ['descriptorSeparation', timings.descriptorSeparationMs],
+          ['stateUpdate', timings.stateUpdateMs],
+        ] as const;
+        const biggestContributor = [...phases].sort((a, b) => b[1] - a[1])[0];
+        console.info('[FaceRegistration] Capture timing', {
+          angle,
+          totalCaptureMs: Number(totalMs.toFixed(1)),
+          biggestContributor: biggestContributor?.[0] ?? null,
+          phases: Object.fromEntries(phases.map(([name, durationMs]) => [
+            name,
+            Number(durationMs.toFixed(1)),
+          ])),
+          descriptorPasses: descriptorPasses.map(pass => ({
+            step: pass.step,
+            detector: pass.detector,
+            sourceStep: pass.sourceStep,
+            durationMs: Number(pass.durationMs.toFixed(1)),
+            result: pass.result,
+            failure: pass.failure,
+          })),
+          previewPhasesPrecedeCapture: true,
+        });
+      }
       if (captureAttempt === captureAttemptRef.current) {
         captureInProgressRef.current = false;
         setIsValidatingCapture(false);
+        setCaptureProgress(null);
       }
     }
   }, [currentStep]);
@@ -176,6 +268,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     captureAttemptRef.current++;
     captureInProgressRef.current = false;
     setIsValidatingCapture(false);
+    setCaptureProgress(null);
     setCaptureErrors(prev => {
       const next = { ...prev };
       delete next[angle];
@@ -194,6 +287,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     captureAttemptRef.current++;
     captureInProgressRef.current = false;
     setIsValidatingCapture(false);
+    setCaptureProgress(null);
     setCurrentStep(step);
   }, []);
 
@@ -201,6 +295,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     captureAttemptRef.current++;
     captureInProgressRef.current = false;
     setIsValidatingCapture(false);
+    setCaptureProgress(null);
     setCaptureErrors({});
     Object.values(capturedFramesRef.current).forEach(frame => {
       if (frame?.previewUrl) {
@@ -228,6 +323,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     isAllCaptured,
     hasAllDescriptors,
     isValidatingCapture,
+    captureProgress,
     captureErrors,
     setConsentConfirmed,
     captureCurrentAngle,

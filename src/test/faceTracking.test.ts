@@ -13,6 +13,7 @@ import {
   canFastConfirmFaceMatch,
   findDuplicateStudentClaimLosers,
   predictFaceTrackBox,
+  rotateFaceIndicesToFront,
   selectFaceDescriptorDetections,
   updateFaceTrackIdentity,
 } from '@/features/attendance/lib/faceTracking';
@@ -133,6 +134,10 @@ describe('live face tracking', () => {
       { confirmed: false, lastDescriptorAt: 0 },
     ];
     expect(selectFaceDescriptorDetections(withDueConfirmed, 1000, 0, 2, 1000).indices).toEqual([1, 0]);
+  });
+
+  it('moves a time-budget-skipped face to the front of the next extraction order', () => {
+    expect(rotateFaceIndicesToFront([2, 0, 3], 3)).toEqual([3, 2, 0]);
   });
 
   it('prioritizes the most frontal unconfirmed faces for descriptor attempts', () => {

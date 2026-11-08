@@ -39,6 +39,26 @@ export interface ImageQuality {
   sharpness: number;
 }
 
+export interface ImageQualityTimings {
+  qualityCopyMs: number;
+  brightnessMs: number;
+  sharpnessMs: number;
+}
+
+export interface RegistrationCapturePreview {
+  angle: CaptureAngle;
+  canvas: HTMLCanvasElement;
+  sampledAt: number;
+  face: RegistrationFaceBox;
+  poseCheck: RegistrationPoseCheck;
+  quality: ImageQuality | null;
+  frameCopyMs: number;
+  poseMs: number;
+  qualityCopyMs: number;
+  brightnessMs: number;
+  sharpnessMs: number;
+}
+
 export function estimateScrfdPose(landmarks?: [number, number][]): FacePose | null {
   if (!landmarks || landmarks.length < 3) return null;
   const [leftEye, rightEye, nose] = landmarks;
@@ -100,11 +120,14 @@ export function checkRegistrationPose(
   };
 }
 
-export function measureImageQuality(image: ImageData): ImageQuality {
+export function measureImageQuality(
+  image: ImageData,
+  onTimings?: (timings: ImageQualityTimings) => void
+): ImageQuality {
   const { data, width, height } = image;
+  const brightnessStartedAt = onTimings ? performance.now() : 0;
   let brightnessTotal = 0;
   const grayscale = new Uint8Array(width * height);
-  const laplacianValues: number[] = [];
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -117,6 +140,11 @@ export function measureImageQuality(image: ImageData): ImageQuality {
     }
   }
 
+  const brightnessMs = onTimings ? performance.now() - brightnessStartedAt : 0;
+  const sharpnessStartedAt = onTimings ? performance.now() : 0;
+  let laplacianMean = 0;
+  let laplacianSquaredDelta = 0;
+  let laplacianCount = 0;
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const center = grayscale[y * width + x]!;
@@ -124,21 +152,50 @@ export function measureImageQuality(image: ImageData): ImageQuality {
       const right = grayscale[y * width + x + 1]!;
       const up = grayscale[(y - 1) * width + x]!;
       const down = grayscale[(y + 1) * width + x]!;
-      laplacianValues.push(left + right + up + down - 4 * center);
+      const laplacian = left + right + up + down - 4 * center;
+      laplacianCount++;
+      const delta = laplacian - laplacianMean;
+      laplacianMean += delta / laplacianCount;
+      laplacianSquaredDelta += delta * (laplacian - laplacianMean);
     }
   }
-
-  const mean = laplacianValues.length
-    ? laplacianValues.reduce((sum, value) => sum + value, 0) / laplacianValues.length
+  const sharpness = laplacianCount
+    ? laplacianSquaredDelta / laplacianCount
     : 0;
-  const sharpness = laplacianValues.length
-    ? laplacianValues.reduce((sum, value) => sum + (value - mean) ** 2, 0) / laplacianValues.length
-    : 0;
+  if (onTimings) {
+    onTimings({
+      qualityCopyMs: 0,
+      brightnessMs,
+      sharpnessMs: performance.now() - sharpnessStartedAt,
+    });
+  }
 
   return {
     meanBrightness: data.length ? brightnessTotal / (data.length / 4) : 0,
     sharpness,
   };
+}
+
+export function measureDownscaledCanvasQuality(
+  source: HTMLCanvasElement,
+  qualityCanvas: HTMLCanvasElement,
+  scale = 0.9,
+  onTimings?: (timings: ImageQualityTimings) => void
+): ImageQuality {
+  const downscale = Math.min(1, Math.max(0.1, scale));
+  const width = Math.max(1, Math.round(source.width * downscale));
+  const height = Math.max(1, Math.round(source.height * downscale));
+  if (qualityCanvas.width !== width) qualityCanvas.width = width;
+  if (qualityCanvas.height !== height) qualityCanvas.height = height;
+  const context = qualityCanvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('Could not initialize the registration quality canvas.');
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  const qualityCopyStartedAt = onTimings ? performance.now() : 0;
+  context.drawImage(source, 0, 0, width, height);
+  const image = context.getImageData(0, 0, width, height);
+  const qualityCopyMs = onTimings ? performance.now() - qualityCopyStartedAt : 0;
+  return measureImageQuality(image, timings => onTimings?.({ ...timings, qualityCopyMs }));
 }
 
 export function imageQualityGuidance(quality: ImageQuality): string | null {

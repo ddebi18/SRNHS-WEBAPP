@@ -8,10 +8,12 @@ export const FACE_DIAGNOSTICS_ENABLED =
   import.meta.env.DEV && import.meta.env.VITE_FACE_DIAGNOSTICS === 'true';
 export const FACE_CROP_RETRY_DIAGNOSTICS_ENABLED =
   FACE_DIAGNOSTICS_ENABLED && import.meta.env.VITE_FACE_CROP_RETRY_DIAGNOSTICS === 'true';
+export const FACE_ATTEMPT_LOGS_ENABLED =
+  FACE_DIAGNOSTICS_ENABLED && import.meta.env.VITE_FACE_ATTEMPT_LOGS === 'true';
 export const FACE_CROP_PADDING_COMPARISON_ENABLED =
   FACE_DIAGNOSTICS_ENABLED && import.meta.env.VITE_FACE_CROP_PADDING_COMPARISON === 'true';
 export const FACE_CROP_ADAPTIVE_RETRY_ENABLED =
-  FACE_CROP_RETRY_DIAGNOSTICS_ENABLED && import.meta.env.VITE_FACE_CROP_ADAPTIVE_RETRY === 'true';
+  import.meta.env.VITE_FACE_CROP_ADAPTIVE_RETRY !== 'false';
 export const FACE_MOTION_OPTIMIZATIONS_ENABLED =
   import.meta.env.VITE_FACE_MOTION_OPTIMIZATIONS === 'true';
 
@@ -37,6 +39,14 @@ export function isMobileFaceOptimizationActive(): boolean {
 
 export function getFaceDescriptorBudget(isMobileOptimized: boolean): number {
   return isMobileOptimized ? 2 : 3;
+}
+
+export function getScanOverrunCooldownMs(
+  lastScanDurationMs: number,
+  minimumMs = 100,
+  maximumMs = 200
+): number {
+  return Math.min(maximumMs, Math.max(minimumMs, lastScanDurationMs * 0.5));
 }
 
 export function getScrfdInputSize(isMobileOptimized: boolean, configuredSize?: string): 640 | 480 | 320 {

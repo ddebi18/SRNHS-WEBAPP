@@ -3,6 +3,7 @@ import {
   getFaceDescriptorBudget,
   getFaceCropDetectorInputSize,
   getScrfdInputSize,
+  getScanOverrunCooldownMs,
   isRecentFaceDetection,
   isMobileDevice,
 } from '@/features/attendance/lib/faceOptimizationFlags';
@@ -11,6 +12,12 @@ describe('face optimization flags', () => {
   it('uses the mobile recognition budget only when mobile optimization is active', () => {
     expect(getFaceDescriptorBudget(false)).toBe(3);
     expect(getFaceDescriptorBudget(true)).toBe(2);
+  });
+
+  it('bounds scan overrun cooldowns between 100ms and 200ms', () => {
+    expect(getScanOverrunCooldownMs(20)).toBe(100);
+    expect(getScanOverrunCooldownMs(300)).toBe(150);
+    expect(getScanOverrunCooldownMs(4400)).toBe(200);
   });
 
   it('keeps SCRFD at 640 unless a supported mobile test size is selected', () => {

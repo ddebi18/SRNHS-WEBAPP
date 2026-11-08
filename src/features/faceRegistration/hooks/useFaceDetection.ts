@@ -12,6 +12,7 @@ import {
 import { captureFaceFrame } from '@/features/attendance/lib/faceNetEngine';
 import {
   FACE_DIAGNOSTICS_ENABLED,
+  FACE_ATTEMPT_LOGS_ENABLED,
   FACE_MOTION_OPTIMIZATIONS_ENABLED,
   FACE_STARTUP_OPTIMIZATIONS_ENABLED,
   isRecentFaceDetection,
@@ -32,11 +33,15 @@ export interface FaceBox {
   frameCapturedAt?: number;
   detectionResultAt?: number;
   frameTimestamp?: number;
+  snapshotDurationMs?: number;
+  scrfdDurationMs?: number;
 }
 
 export interface FaceDetectionFrame {
   source: HTMLCanvasElement;
   capturedAt: number;
+  snapshotDurationMs: number;
+  scrfdDurationMs: number;
   frameTimestamp: number;
   resultArrivedAt: number;
   frameId: number;
@@ -202,17 +207,21 @@ export function useFaceDetection(
         const vh = video.videoHeight || 480;
         const useMotionSnapshot = FACE_MOTION_OPTIMIZATIONS_ENABLED &&
           options?.motionRecognitionFeed === true;
+        const snapshotStartedAt = performance.now();
         const snapshot = useMotionSnapshot ? captureFaceFrame(video) : null;
+        const snapshotDurationMs = performance.now() - snapshotStartedAt;
         let motionSnapshot = snapshot?.source ?? null;
         let detectionSource = motionSnapshot ?? video;
         let capturedAt = snapshot?.capturedAt ?? performance.now();
         let frameTimestamp = snapshot?.frameTimestamp ?? video.currentTime;
         let detectedBoxes: FaceBox[] = [];
         let scrfdFailed = false;
+        let scrfdDurationMs = 0;
 
         // 1. Try SCRFD ONNX Detection
         if (scrfdSessionRef.current) {
           try {
+            const scrfdStartedAt = performance.now();
             const rawScrfdBoxes: ScrfdFaceBox[] = await detectFacesWithScrfd(
               scrfdSessionRef.current,
               detectionSource,
@@ -222,13 +231,16 @@ export function useFaceDetection(
                 if (!FACE_DIAGNOSTICS_ENABLED) return;
                 scrfdTimingSamples.push(timing);
                 if (scrfdTimingSamples.length > 100) scrfdTimingSamples.shift();
-                console.debug('[FaceDetection] SCRFD stage timing', {
-                  frameTimestamp,
-                  resultArrivedAt: Number(performance.now().toFixed(1)),
-                  ...timing,
-                });
+                if (FACE_ATTEMPT_LOGS_ENABLED) {
+                  console.debug('[FaceDetection] SCRFD stage timing', {
+                    frameTimestamp,
+                    resultArrivedAt: Number(performance.now().toFixed(1)),
+                    ...timing,
+                  });
+                }
               }
             );
+            scrfdDurationMs = performance.now() - scrfdStartedAt;
             detectedBoxes = rawScrfdBoxes.map((b) => ({
               x: b.x,
               y: b.y,
@@ -294,12 +306,16 @@ export function useFaceDetection(
           frameCapturedAt: capturedAt,
           detectionResultAt: resultArrivedAt,
           frameTimestamp,
+          snapshotDurationMs,
+          scrfdDurationMs,
         }));
         if (detectedBoxes.length > 0) lastFaceDetectionAtRef.current = resultArrivedAt;
         if (motionSnapshot) {
           detectionFrameRef.current = {
             source: motionSnapshot,
             capturedAt,
+            snapshotDurationMs,
+            scrfdDurationMs,
             frameTimestamp,
             resultArrivedAt,
             frameId: ++nextFrameIdRef.current,

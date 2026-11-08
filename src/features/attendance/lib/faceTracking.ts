@@ -157,6 +157,13 @@ export function selectFaceDescriptorDetections(
   };
 }
 
+export function rotateFaceIndicesToFront(indices: number[], firstIndex: number): number[] {
+  const firstPosition = indices.indexOf(firstIndex);
+  return firstPosition > 0
+    ? [...indices.slice(firstPosition), ...indices.slice(0, firstPosition)]
+    : indices;
+}
+
 export function findDuplicateStudentClaimLosers(
   claims: Array<{ studentId: string | null; distance: number }>
 ): number[] {

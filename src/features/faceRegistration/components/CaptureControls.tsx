@@ -13,6 +13,7 @@ interface CaptureControlsProps {
   isPoseReady: boolean;
   isSubmitting: boolean;
   isValidatingCapture: boolean;
+  captureProgress: string | null;
   onCapture: () => void;
   onSubmit: () => void;
   onCancel: () => void;
@@ -28,6 +29,7 @@ export const CaptureControls: React.FC<CaptureControlsProps> = ({
   isPoseReady,
   isSubmitting,
   isValidatingCapture,
+  captureProgress,
   onCapture,
   onSubmit,
   onCancel,
@@ -61,7 +63,9 @@ export const CaptureControls: React.FC<CaptureControlsProps> = ({
             )}
           >
             <Camera className="w-4 h-4" />
-            {isValidatingCapture ? 'Checking capture…' : `Capture ${currentStep.toUpperCase()} Angle`}
+            {isValidatingCapture
+              ? captureProgress ?? 'Checking capture…'
+              : `Capture ${currentStep.toUpperCase()} Angle`}
           </button>
         ) : (
           <button

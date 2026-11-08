@@ -10,7 +10,6 @@ import {
   evaluateFacePartConsistency,
 } from './faceNetMatcher';
 import {
-  FACE_CROP_RETRY_DIAGNOSTICS_ENABLED,
   FACE_DIAGNOSTICS_ENABLED,
   FACE_SELF_HOSTED_MODELS_ENABLED,
   FACE_STARTUP_OPTIMIZATIONS_ENABLED,
@@ -196,6 +195,8 @@ export interface FaceDetectionRegion {
   frameCapturedAt?: number;
   detectionResultAt?: number;
   frameTimestamp?: number;
+  snapshotDurationMs?: number;
+  scrfdDurationMs?: number;
 }
 
 export type FaceRegionQualityRejection =
@@ -977,6 +978,8 @@ export async function describePaddedFaceCrop(
     maxDetectorPasses?: number;
     detectorInputSize?: number;
     shouldStop?: () => boolean;
+    logAttempts?: boolean;
+    onConsoleLogDuration?: (durationMs: number) => void;
   }
 ): Promise<FaceRegionRecognitionResult> {
   const startedAt = performance.now();
@@ -1015,11 +1018,11 @@ export async function describePaddedFaceCrop(
       if (detector === 'ssd' && !faceapi.nets.ssdMobilenetv1.isLoaded) {
         throw new Error('SSD Mobilenet is not loaded.');
       }
-      const options = detector === 'tiny'
+      const detectorOptions = detector === 'tiny'
         ? new faceapi.TinyFaceDetectorOptions({ inputSize: detectorInputSize, scoreThreshold })
         : new faceapi.SsdMobilenetv1Options({ minConfidence: scoreThreshold });
       const detection = await faceapi
-        .detectSingleFace(targetCrop, options)
+        .detectSingleFace(targetCrop, detectorOptions)
         .withFaceLandmarks()
         .withFaceDescriptor();
       if (!detection) {
@@ -1051,13 +1054,16 @@ export async function describePaddedFaceCrop(
           ...(centerDriftPx === null ? {} : { centerDriftPx }),
           faceSizePx,
         });
-        if (failureReason === 'misaligned' && FACE_CROP_RETRY_DIAGNOSTICS_ENABLED) {
+        if (failureReason === 'misaligned' && options?.logAttempts) {
+          const logStartedAt = performance.now();
           console.info('[FaceRecognition] Misaligned crop rejection (threshold unchanged)', {
             step,
             centerDriftPx,
             faceSizePx,
             detectorInputSize,
+            reason: 'Face landmarks failed evaluateFacePartConsistency; centerDriftPx is diagnostic only.',
           });
+          options.onConsoleLogDuration?.(performance.now() - logStartedAt);
         }
         return { region, status: 'quality_rejected', reason: rejection, durationMs: 0 };
       }
@@ -1354,80 +1360,97 @@ export interface FaceDescriptorExtractionAttempt {
   failure: FaceDescriptorExtractionFailure | null;
 }
 
+export interface FaceDescriptorExtractionPass {
+  step: 'initial' | 'enhanced';
+  detector: 'ssd_mobilenet' | 'tiny_face_detector';
+  sourceStep: 'initial' | 'enhanced';
+  durationMs: number;
+  result: 'descriptor' | 'failed';
+  failure: FaceDescriptorExtractionFailure | null;
+}
+
+export interface FaceDescriptorExtractionOptions {
+  maxPasses?: number;
+  onPassStart?: (step: FaceDescriptorExtractionPass['step']) => void | Promise<void>;
+  onPassComplete?: (pass: FaceDescriptorExtractionPass) => void;
+}
+
+interface FaceDescriptorPassBudget {
+  remaining: number;
+  onPassStart?: FaceDescriptorExtractionOptions['onPassStart'];
+  onPassComplete?: FaceDescriptorExtractionOptions['onPassComplete'];
+}
+
 async function detectAccurateFaceWithDiagnostics(
   input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
-  minScore: number
+  minScore: number,
+  budget?: FaceDescriptorPassBudget,
+  sourceStep: FaceDescriptorExtractionPass['step'] = 'initial'
 ): Promise<{ detection: DetectionWithDescriptor | null; failure: FaceDescriptorExtractionFailure | null }> {
   const enhancedInput = (typeof HTMLVideoElement !== 'undefined' && input instanceof HTMLVideoElement && isLowLightVideo(input))
     ? renderVideoToCanvas(input, LOW_LIGHT_GAMMA)
     : null;
   let failure: FaceDescriptorExtractionFailure = 'no_face_detected';
-
-  if (faceapi.nets.ssdMobilenetv1.isLoaded) {
+  const tryDetector = async (
+    detector: FaceDescriptorExtractionPass['detector'],
+    source: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
+    variant: 'initial' | 'enhanced'
+  ): Promise<{ detection: DetectionWithDescriptor | null; inferenceFailed: boolean }> => {
+    const netLoaded = detector === 'ssd_mobilenet'
+      ? faceapi.nets.ssdMobilenetv1.isLoaded
+      : faceapi.nets.tinyFaceDetector.isLoaded;
+    if (!netLoaded || (budget && budget.remaining <= 0)) {
+      return { detection: null, inferenceFailed: false };
+    }
+    await budget?.onPassStart?.(variant);
+    if (budget) budget.remaining--;
+    const shouldTime = Boolean(budget?.onPassComplete);
+    const startedAt = shouldTime ? performance.now() : 0;
+    let passFailure: FaceDescriptorExtractionFailure = 'no_face_detected';
+    let accepted: DetectionWithDescriptor | null = null;
+    let inferenceFailed = false;
     try {
-      const options = new faceapi.SsdMobilenetv1Options({ minConfidence: minScore });
-      if (await hasAtLeastOneFace(input, options)) {
+      const options = detector === 'ssd_mobilenet'
+        ? new faceapi.SsdMobilenetv1Options({ minConfidence: minScore })
+        : new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: minScore });
+      if (await hasAtLeastOneFace(source, options)) {
         const detection = await faceapi
-          .detectSingleFace(input, options)
+          .detectSingleFace(source, options)
           .withFaceLandmarks()
           .withFaceDescriptor();
         if (detection) {
           const rejection = getQualityRejection(detection, minScore, MIN_FACE_SIZE_PX);
-          if (!rejection && !enhancedInput) return { detection, failure: null };
-          if (rejection) failure = rejection;
-        }
-      }
-      if (enhancedInput) {
-        if (await hasAtLeastOneFace(enhancedInput, options)) {
-          const enhancedDetection = await faceapi
-            .detectSingleFace(enhancedInput, options)
-            .withFaceLandmarks()
-            .withFaceDescriptor();
-          if (enhancedDetection) {
-            const rejection = getQualityRejection(enhancedDetection, minScore, MIN_FACE_SIZE_PX);
-            if (!rejection) return { detection: enhancedDetection, failure: null };
-            failure = rejection;
-          }
+          if (!rejection) accepted = detection;
+          else passFailure = rejection;
         }
       }
     } catch {
-      failure = 'inference_failed';
-    }
-  }
-
-  if (faceapi.nets.tinyFaceDetector.isLoaded) {
-    try {
-      const options = new faceapi.TinyFaceDetectorOptions({
-          inputSize: 416,
-          scoreThreshold: minScore,
+      passFailure = 'inference_failed';
+      inferenceFailed = true;
+    } finally {
+      if (budget?.onPassComplete) {
+        budget.onPassComplete({
+          step: sourceStep,
+          detector,
+          sourceStep: variant,
+          durationMs: performance.now() - startedAt,
+          result: accepted ? 'descriptor' : 'failed',
+          failure: accepted ? null : passFailure,
         });
-      if (await hasAtLeastOneFace(input, options)) {
-        const detection = await faceapi
-          .detectSingleFace(input, options)
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-        if (detection) {
-          const rejection = getQualityRejection(detection, minScore, MIN_FACE_SIZE_PX);
-          if (!rejection && !enhancedInput) return { detection, failure: null };
-          if (rejection) failure = rejection;
-        }
       }
-      if (enhancedInput) {
-        if (await hasAtLeastOneFace(enhancedInput, options)) {
-          const enhancedDetection = await faceapi
-            .detectSingleFace(enhancedInput, options)
-            .withFaceLandmarks()
-            .withFaceDescriptor();
-          if (enhancedDetection) {
-            const rejection = getQualityRejection(enhancedDetection, minScore, MIN_FACE_SIZE_PX);
-            if (!rejection) return { detection: enhancedDetection, failure: null };
-            failure = rejection;
-          }
-        }
-      }
-    } catch {
-      failure = 'inference_failed';
     }
+    if (!accepted && passFailure !== 'no_face_detected') failure = passFailure;
+    return { detection: accepted, inferenceFailed };
+  };
+
+  for (const detector of ['ssd_mobilenet', 'tiny_face_detector'] as const) {
+    const primary = await tryDetector(detector, input, 'initial');
+    if (primary.detection && !enhancedInput) return { detection: primary.detection, failure: null };
+    if (enhancedInput && !primary.inferenceFailed) {
+      const enhanced = await tryDetector(detector, enhancedInput, 'enhanced');
+      if (enhanced.detection) return { detection: enhanced.detection, failure: null };
+    }
+    if (budget?.remaining === 0) break;
   }
 
   return { detection: null, failure };
@@ -1449,14 +1472,29 @@ export async function extractDescriptorFromImage(
 
 async function extractDescriptorFromImageWithDiagnostics(
   img: HTMLImageElement,
-  minScore: number
+  minScore: number,
+  options?: FaceDescriptorExtractionOptions
 ): Promise<FaceDescriptorExtractionAttempt> {
+  const budget: FaceDescriptorPassBudget = {
+    remaining: options?.maxPasses === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.min(2, Math.max(1, Math.floor(options.maxPasses))),
+    onPassStart: options?.onPassStart,
+    onPassComplete: options?.onPassComplete,
+  };
+  const runPass = async (
+    step: FaceDescriptorExtractionPass['step'],
+    canvas: HTMLCanvasElement
+  ) => {
+    return detectAccurateFaceWithDiagnostics(canvas, minScore, budget, step);
+  };
   const canvas = renderToCanvas(img, 1.0);
-  const primary = await detectAccurateFaceWithDiagnostics(canvas, minScore);
+  const primary = await runPass('initial', canvas);
   if (primary.detection) return { descriptor: primary.detection.descriptor, failure: null };
+  if (budget.remaining <= 0) return { descriptor: null, failure: primary.failure };
 
   const enhanced = renderToCanvas(img, 0.7);
-  const boosted = await detectAccurateFaceWithDiagnostics(enhanced, minScore);
+  const boosted = await runPass('enhanced', enhanced);
   if (boosted.detection) return { descriptor: boosted.detection.descriptor, failure: null };
 
   const failures = [primary.failure, boosted.failure];
@@ -1472,7 +1510,8 @@ export async function extractDescriptorsFromBlobs(blobs: Blob[]): Promise<Float3
 }
 
 export async function extractDescriptorsFromBlobsWithDiagnostics(
-  blobs: Blob[]
+  blobs: Blob[],
+  options?: FaceDescriptorExtractionOptions
 ): Promise<FaceDescriptorExtractionAttempt[]> {
   await ensureFaceNetModels();
   const attempts: FaceDescriptorExtractionAttempt[] = [];
@@ -1481,7 +1520,7 @@ export async function extractDescriptorsFromBlobsWithDiagnostics(
     const url = URL.createObjectURL(blob);
     try {
       const image = await loadImage(url);
-      attempts.push(await extractDescriptorFromImageWithDiagnostics(image, MIN_PHOTO_DETECTION_SCORE));
+      attempts.push(await extractDescriptorFromImageWithDiagnostics(image, MIN_PHOTO_DETECTION_SCORE, options));
     } catch (error) {
       console.warn('[FaceNet] Skipping a registration frame that could not be converted to a descriptor:', error);
       attempts.push({ descriptor: null, failure: 'inference_failed' });
