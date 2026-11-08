@@ -77,6 +77,11 @@ try {
 
 const sessionCache = new Map<string, ort.InferenceSession>();
 const sessionLoadingPromises = new Map<string, Promise<ort.InferenceSession>>();
+const sessionModelUrls = new WeakMap<ort.InferenceSession, string>();
+
+export function getScrfdSessionModelUrl(session: ort.InferenceSession): string {
+  return sessionModelUrls.get(session) ?? 'unknown SCRFD model';
+}
 
 export async function getScrfdSession(
   modelUrl: string = '/models/scrfd/scrfd_2.5g_bnkps.onnx'
@@ -154,6 +159,7 @@ export async function getScrfdSession(
     }
 
     sessionCache.set(modelUrl, session);
+    sessionModelUrls.set(session, modelUrl);
     return session;
   })();
 

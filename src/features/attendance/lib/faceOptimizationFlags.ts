@@ -6,6 +6,8 @@ export const FACE_SELF_HOSTED_MODELS_ENABLED =
   import.meta.env.VITE_FACE_SELF_HOSTED_MODELS === 'true';
 export const FACE_DIAGNOSTICS_ENABLED =
   import.meta.env.DEV && import.meta.env.VITE_FACE_DIAGNOSTICS === 'true';
+export const FACE_REGISTRATION_SCRFD_500M_ENABLED =
+  import.meta.env.VITE_FACE_REGISTRATION_SCRFD_500M === 'true';
 export const FACE_CROP_RETRY_DIAGNOSTICS_ENABLED =
   FACE_DIAGNOSTICS_ENABLED && import.meta.env.VITE_FACE_CROP_RETRY_DIAGNOSTICS === 'true';
 export const FACE_ATTEMPT_LOGS_ENABLED =

@@ -21,6 +21,7 @@ export interface RegistrationFaceBox {
   height: number;
   score?: number;
   landmarks?: [number, number][];
+  detectionResultAt?: number;
 }
 
 export interface FacePose {
@@ -57,6 +58,15 @@ export interface RegistrationCapturePreview {
   qualityCopyMs: number;
   brightnessMs: number;
   sharpnessMs: number;
+}
+
+export function getRegistrationPreviewAgeMs(
+  preview: RegistrationCapturePreview | null,
+  now = performance.now()
+): number {
+  return preview
+    ? now - (preview.face.detectionResultAt ?? preview.sampledAt)
+    : Number.POSITIVE_INFINITY;
 }
 
 export function estimateScrfdPose(landmarks?: [number, number][]): FacePose | null {

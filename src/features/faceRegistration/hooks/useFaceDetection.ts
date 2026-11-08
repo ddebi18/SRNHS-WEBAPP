@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { FaceDetector } from '@mediapipe/tasks-vision';
 import * as ort from 'onnxruntime-web';
 import { CaptureAngle } from '../types';
 import {
   getScrfdSession,
+  getScrfdSessionModelUrl,
   detectFacesWithScrfd,
   ScrfdFaceBox,
   type ScrfdStageTimings,
@@ -19,6 +20,7 @@ import {
   isMobileFaceOptimizationActive,
 } from '@/features/attendance/lib/faceOptimizationFlags';
 import { getMedianAndP90 } from '@/features/attendance/lib/faceRecognitionDiagnostics';
+import { estimateScrfdPose } from '../lib/registrationChecks';
 
 export interface FaceBox {
   x: number;
@@ -57,6 +59,8 @@ export interface UseFaceDetectionReturn {
   detectionFrameRef: React.MutableRefObject<FaceDetectionFrame | null>;
   warningMessage: string | null;
   detectorError: string | null;
+  averageDetectionMs: number;
+  refreshFaceDetection: () => Promise<FaceBox | null>;
   startupTimings: { scrfdLoadMs: number | null; mediaPipeLoadMs: number | null };
 }
 
@@ -79,6 +83,7 @@ export function useFaceDetection(
   const [allFaceBoxes, setAllFaceBoxes] = useState<FaceBox[]>([]);
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
   const [detectorError, setDetectorError] = useState<string | null>(null);
+  const [averageDetectionMs, setAverageDetectionMs] = useState(0);
   const [startupTimings, setStartupTimings] = useState<UseFaceDetectionReturn['startupTimings']>({
     scrfdLoadMs: null,
     mediaPipeLoadMs: null,
@@ -94,6 +99,10 @@ export function useFaceDetection(
   const faceBoxRef = useRef<FaceBox | null>(null);
   const lastFaceDetectionAtRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
+  const currentDetectionPromiseRef = useRef<Promise<FaceBox | null> | null>(null);
+  const refreshDetectionRef = useRef<() => Promise<FaceBox | null>>(() => Promise.resolve(null));
+  const recentDetectionDurationsRef = useRef<number[]>([]);
+  const refreshFaceDetection = useCallback(() => refreshDetectionRef.current(), []);
 
   const MAX_MISSED_FRAMES = options?.maxMissedFrames ?? 4;
 
@@ -195,12 +204,18 @@ export function useFaceDetection(
       return;
     }
 
-    const checkFace = async () => {
+    const checkFace = async (): Promise<FaceBox | null> => {
       const video = videoRef.current;
-      if (shouldPause() || !video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
-      if (isProcessingRef.current) return;
+      if (shouldPause() || !video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
+      if (isProcessingRef.current) return currentDetectionPromiseRef.current ?? faceBoxRef.current;
 
       isProcessingRef.current = true;
+      const detectionStartedAt = performance.now();
+      let detectionResult: FaceBox | null = null;
+      let resolveCurrentDetection!: (box: FaceBox | null) => void;
+      currentDetectionPromiseRef.current = new Promise(resolve => {
+        resolveCurrentDetection = resolve;
+      });
 
       try {
         const vw = video.videoWidth || 640;
@@ -299,7 +314,7 @@ export function useFaceDetection(
           }
         }
 
-        if (cancelled || shouldPause()) return;
+        if (cancelled || shouldPause()) return null;
         const resultArrivedAt = performance.now();
         detectedBoxes = detectedBoxes.map(box => ({
           ...box,
@@ -392,6 +407,7 @@ export function useFaceDetection(
           } else if (currentAngle === 'right') {
             setWarningMessage('Slight right tilt recognized. Hold position for capture.');
           }
+          detectionResult = targetBox;
         } else {
           allFaceBoxesRef.current = [];
           setAllFaceBoxes([]);
@@ -400,12 +416,40 @@ export function useFaceDetection(
             resetDetection();
           }
         }
+        if (FACE_DIAGNOSTICS_ENABLED && scrfdSessionRef.current) {
+          console.info(
+            `[FaceRegistration] SCRFD model=${getScrfdSessionModelUrl(scrfdSessionRef.current)} ` +
+            `inferenceMs=${scrfdDurationMs.toFixed(1)} detectedFaces=${detectedBoxes.length} ` +
+            `faceSizesPx=${detectedBoxes.map(box => `${Math.round(box.width)}x${Math.round(box.height)}`).join(',') || 'none'} ` +
+            `yawDeg=${detectedBoxes.map(box => {
+              const pose = estimateScrfdPose(box.landmarks);
+              return pose ? pose.yawDeg.toFixed(1) : 'unavailable';
+            }).join(',') || 'none'}`
+          );
+        }
+        return detectionResult;
       } catch (error) {
         resetDetection();
         setDetectorError(error instanceof Error ? error.message : 'Face detection failed while reading camera.');
+        return null;
       } finally {
         isProcessingRef.current = false;
+        const durationMs = performance.now() - detectionStartedAt;
+        recentDetectionDurationsRef.current.push(durationMs);
+        if (recentDetectionDurationsRef.current.length > 5) recentDetectionDurationsRef.current.shift();
+        setAverageDetectionMs(
+          recentDetectionDurationsRef.current.reduce((sum, duration) => sum + duration, 0) /
+          recentDetectionDurationsRef.current.length
+        );
+        resolveCurrentDetection(detectionResult);
+        currentDetectionPromiseRef.current = null;
       }
+    };
+    refreshDetectionRef.current = async () => {
+      if (currentDetectionPromiseRef.current) {
+        await currentDetectionPromiseRef.current;
+      }
+      return checkFace();
     };
 
     const initializeDetectors = async () => {
@@ -507,6 +551,7 @@ export function useFaceDetection(
 
     return () => {
       cancelled = true;
+      refreshDetectionRef.current = () => Promise.resolve(null);
       cancelScheduledDetection();
       if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler);
       mediaPipeDetectorRef.current?.close();
@@ -530,6 +575,8 @@ export function useFaceDetection(
     detectionFrameRef,
     warningMessage,
     detectorError,
+    averageDetectionMs,
+    refreshFaceDetection,
     startupTimings,
   };
 }

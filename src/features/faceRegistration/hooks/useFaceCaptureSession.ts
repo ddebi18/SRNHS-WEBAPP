@@ -9,14 +9,13 @@ import { FACE_DIAGNOSTICS_ENABLED } from '@/features/attendance/lib/faceOptimiza
 import {
   FACE_REGISTRATION_POSE_CHECK_ENABLED,
   getMinimumPoseDescriptorDistance,
+  getRegistrationPreviewAgeMs,
   imageQualityGuidance,
   REGISTRATION_MIN_POSE_DESCRIPTOR_DISTANCE,
   type RegistrationCapturePreview,
 } from '../lib/registrationChecks';
 
 export type SessionStep = 'consent' | 'front' | 'left' | 'right' | 'review';
-
-const CAPTURE_PREVIEW_MAX_AGE_MS = 500;
 
 function yieldToMain(): Promise<void> {
   return new Promise(resolve => requestAnimationFrame(() => resolve()));
@@ -32,7 +31,11 @@ export interface UseFaceCaptureSessionReturn {
   captureProgress: string | null;
   captureErrors: Partial<Record<CaptureAngle, string>>;
   setConsentConfirmed: (confirmed: boolean) => void;
-  captureCurrentAngle: (preview: RegistrationCapturePreview | null) => Promise<void>;
+  captureCurrentAngle: (
+    preview: RegistrationCapturePreview | null,
+    maxPreviewAgeMs?: number,
+    refreshPreview?: () => Promise<RegistrationCapturePreview | null>
+  ) => Promise<void>;
   retakeAngle: (angle: CaptureAngle) => void;
   goToStep: (step: SessionStep) => void;
   resetSession: () => void;
@@ -66,11 +69,25 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     };
   }, []);
 
-  const captureCurrentAngle = useCallback(async (preview: RegistrationCapturePreview | null) => {
-    if (captureInProgressRef.current || currentStep === 'review' || currentStep === 'consent') return;
+  const captureCurrentAngle = useCallback(async (
+    initialPreview: RegistrationCapturePreview | null,
+    maxPreviewAgeMs = 1500,
+    refreshPreview: () => Promise<RegistrationCapturePreview | null> = async () => null
+  ) => {
+    if (currentStep === 'review' || currentStep === 'consent') {
+      if (FACE_DIAGNOSTICS_ENABLED) {
+        console.info(
+          `[FaceRegistration] Capture timing angle=${currentStep} totalCaptureMs=0.0 ` +
+          'exitReason=invalid_capture_step phases=[] descriptorPasses=[none]'
+        );
+      }
+      return;
+    }
     const angle = currentStep as CaptureAngle;
     const captureStartedAt = FACE_DIAGNOSTICS_ENABLED ? performance.now() : 0;
     const descriptorPasses: FaceDescriptorExtractionPass[] = [];
+    let exitReason = 'accepted';
+    let preview = initialPreview;
     const timings = {
       frameCopyMs: preview?.frameCopyMs ?? 0,
       poseMs: preview?.poseMs ?? 0,
@@ -81,7 +98,34 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
       descriptorExtractionMs: 0,
       descriptorSeparationMs: 0,
       stateUpdateMs: 0,
+      freshDetectionMs: 0,
     };
+    const logTiming = (reason: string) => {
+      if (!FACE_DIAGNOSTICS_ENABLED) return;
+      const totalMs = performance.now() - captureStartedAt;
+      const phases = Object.entries(timings)
+        .map(([name, durationMs]) => `${name}=${durationMs.toFixed(1)}ms`)
+        .join(' ');
+      const passes = descriptorPasses.length
+        ? descriptorPasses.map(pass =>
+          `${pass.step}/${pass.detector}:${pass.result}${pass.failure ? `(${pass.failure})` : ''}=${pass.durationMs.toFixed(1)}ms`
+        ).join(',')
+        : 'none';
+      console.info(
+        `[FaceRegistration] Capture timing angle=${angle} totalCaptureMs=${totalMs.toFixed(1)} ` +
+        `exitReason=${reason} phases=[${phases}] descriptorPasses=[${passes}]`
+      );
+    };
+
+    if (captureInProgressRef.current) {
+      exitReason = 'capture_already_running';
+      setCaptureErrors(prev => ({
+        ...prev,
+        [angle]: 'A capture is already being checked. Wait for it to finish.',
+      }));
+      logTiming(exitReason);
+      return;
+    }
     const captureAttempt = ++captureAttemptRef.current;
     captureInProgressRef.current = true;
     setIsValidatingCapture(true);
@@ -95,22 +139,37 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
     try {
       await yieldToMain();
       if (!preview || preview.angle !== angle ||
-        performance.now() - preview.sampledAt > CAPTURE_PREVIEW_MAX_AGE_MS) {
+        getRegistrationPreviewAgeMs(preview) > maxPreviewAgeMs) {
+        setCaptureProgress('Checking current frame...');
+        const freshDetectionStartedAt = FACE_DIAGNOSTICS_ENABLED ? performance.now() : 0;
+        preview = await refreshPreview();
+        timings.freshDetectionMs = FACE_DIAGNOSTICS_ENABLED
+          ? performance.now() - freshDetectionStartedAt
+          : 0;
+      }
+      if (!preview || preview.angle !== angle ||
+        getRegistrationPreviewAgeMs(preview) > maxPreviewAgeMs) {
+        exitReason = 'fresh_detection_failed';
         setCaptureErrors(prev => ({
           ...prev,
-          [angle]: 'Hold still and try again so the latest checked frame can be captured.',
+          [angle]: 'Could not get a fresh face detection. Keep your face visible and try again.',
         }));
         return;
       }
+      const checkedPreview = preview;
       if (FACE_REGISTRATION_POSE_CHECK_ENABLED) {
-        if (!preview.poseCheck.accepted) {
-          setCaptureErrors(prev => ({ ...prev, [angle]: preview.poseCheck.guidance }));
+        if (!checkedPreview.poseCheck.accepted) {
+          exitReason = 'failed_check';
+          setCaptureErrors(prev => ({ ...prev, [angle]: checkedPreview.poseCheck.guidance }));
           return;
         }
         setCaptureProgress('Checking image...');
         await yieldToMain();
-        const qualityError = preview.quality ? imageQualityGuidance(preview.quality) : 'Hold still and try again.';
+        const qualityError = checkedPreview.quality
+          ? imageQualityGuidance(checkedPreview.quality)
+          : 'Hold still and try again.';
         if (qualityError) {
+          exitReason = 'failed_check';
           setCaptureErrors(prev => ({ ...prev, [angle]: qualityError }));
           return;
         }
@@ -120,7 +179,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
       await yieldToMain();
       const encodeStartedAt = FACE_DIAGNOSTICS_ENABLED ? performance.now() : 0;
       const blob = await new Promise<Blob>((resolve, reject) => {
-        preview.canvas.toBlob(
+        checkedPreview.canvas.toBlob(
           result => result ? resolve(result) : reject(new Error('Could not encode the captured image.')),
           'image/jpeg',
           0.92
@@ -143,8 +202,16 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
       timings.descriptorExtractionMs = FACE_DIAGNOSTICS_ENABLED
         ? performance.now() - extractionStartedAt
         : 0;
-      if (captureAttempt !== captureAttemptRef.current) return;
+      if (captureAttempt !== captureAttemptRef.current) {
+        exitReason = 'capture_cancelled';
+        setCaptureErrors(prev => ({
+          ...prev,
+          [angle]: 'Capture was cancelled before it could be saved. Try again.',
+        }));
+        return;
+      }
       if (!attempt?.descriptor) {
+        exitReason = 'missing_descriptor';
         const failure = attempt?.failure ?? 'inference_failed';
         const guidance: Record<typeof failure, string> = {
           no_face_detected: 'Keep your face centered and try again.',
@@ -177,6 +244,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
         : 0;
       if (FACE_REGISTRATION_POSE_CHECK_ENABLED &&
         minimumDistance <= REGISTRATION_MIN_POSE_DESCRIPTOR_DISTANCE) {
+        exitReason = 'failed_check';
         setCaptureErrors(prev => ({
           ...prev,
           [angle]: 'This view is too similar to a previous capture. Turn slightly and try again.',
@@ -215,6 +283,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
         ? performance.now() - stateUpdateStartedAt
         : 0;
     } catch (error) {
+      exitReason = 'error';
       console.error('[FaceRegistration] Capture validation failed:', error);
       if (captureAttempt === captureAttemptRef.current) {
         setCaptureErrors(prev => ({
@@ -223,39 +292,7 @@ export function useFaceCaptureSession(): UseFaceCaptureSessionReturn {
         }));
       }
     } finally {
-      if (FACE_DIAGNOSTICS_ENABLED) {
-        const totalMs = performance.now() - captureStartedAt;
-        const phases = [
-          ['frameCopy', timings.frameCopyMs],
-          ['poseEstimate', timings.poseMs],
-          ['qualityDownscaleAndReadback', timings.qualityCopyMs],
-          ['brightness', timings.brightnessMs],
-          ['sharpness', timings.sharpnessMs],
-          ['blobEncoding', timings.blobEncodingMs],
-          ['descriptorExtraction', timings.descriptorExtractionMs],
-          ['descriptorSeparation', timings.descriptorSeparationMs],
-          ['stateUpdate', timings.stateUpdateMs],
-        ] as const;
-        const biggestContributor = [...phases].sort((a, b) => b[1] - a[1])[0];
-        console.info('[FaceRegistration] Capture timing', {
-          angle,
-          totalCaptureMs: Number(totalMs.toFixed(1)),
-          biggestContributor: biggestContributor?.[0] ?? null,
-          phases: Object.fromEntries(phases.map(([name, durationMs]) => [
-            name,
-            Number(durationMs.toFixed(1)),
-          ])),
-          descriptorPasses: descriptorPasses.map(pass => ({
-            step: pass.step,
-            detector: pass.detector,
-            sourceStep: pass.sourceStep,
-            durationMs: Number(pass.durationMs.toFixed(1)),
-            result: pass.result,
-            failure: pass.failure,
-          })),
-          previewPhasesPrecedeCapture: true,
-        });
-      }
+      logTiming(exitReason);
       if (captureAttempt === captureAttemptRef.current) {
         captureInProgressRef.current = false;
         setIsValidatingCapture(false);
